@@ -917,12 +917,12 @@ export default function SubjectNotes({
                                                         <span className={`text-xs sm:text-sm font-black ${btnStyles.scoreText}`}>
                                                           {stats.bestScore}/{stats.totalQuestions}
                                                         </span>
-                                                        <span className={`text-[9px] font-bold ${btnStyles.scoreSubtext}`}>
+                                                        <span className={`text-[9px] font-bold ${btnStyles.labelText}`}>
                                                           {stats.bestPercentage}% • Best
                                                         </span>
                                                       </div>
                                                     ) : (
-                                                      <span className={`text-xs font-black ${btnStyles.actionText}`}>
+                                                      <span className={`text-xs font-black ${btnStyles.labelText}`}>
                                                         {isAdmin ? "Topic Test" : "Practice Test"}
                                                       </span>
                                                     )}
