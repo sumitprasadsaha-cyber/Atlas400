@@ -30,8 +30,7 @@ import {
 } from "lucide-react";
 import { ChapterNote, Student, TestAttemptRecord } from "../types";
 import { uploadPdfToStorage, sanitizeStoragePath, getBucketName } from "../lib/storageService";
-import PdfViewer from "./PdfViewer";
-import { isImageFile } from "../lib/nativePdfService";
+import { isImageFile, openNoteInNativeViewer } from "../lib/nativePdfService";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import SelectStudentsModal from "./SelectStudentsModal";
 import { groupAndSortChapterNotes, getFormattedTopicLabel, isFileNameRedundant } from "../utils/chapterNotesHelper";
@@ -285,17 +284,8 @@ export default function SubjectNotes({
   const [isEditingSaving, setIsEditingSaving] = useState(false);
   const [editError, setEditError] = useState("");
 
-  // PDF / Image Preview state
-  const [activePreviewPdf, setActivePreviewPdf] = useState<{
-    url: string;
-    title: string;
-    noteId?: string;
-    storagePath?: string;
-    bucket?: string;
-    fileName?: string;
-    mimeType?: string;
-    fileType?: "pdf" | "image" | string;
-  } | null>(null);
+  // Note opening loading state
+  const [openingNoteId, setOpeningNoteId] = useState<string | null>(null);
 
   // Delete Confirmation Modal state
   const [deleteModalNoteId, setDeleteModalNoteId] = useState<string | null>(null);
@@ -409,7 +399,7 @@ export default function SubjectNotes({
     "active"
   ).toLowerCase();
 
-  const handlePreviewPdf = (note: ChapterNote) => {
+  const handlePreviewPdf = async (note: ChapterNote) => {
     if (!isAdmin) {
       if (currentServiceStatus === "paused") {
         alert("Your learning services are temporarily paused. Please contact the academy for assistance.");
@@ -427,7 +417,10 @@ export default function SubjectNotes({
       return;
     }
 
-    if (!note.pdfUrl && !note.storagePath) return;
+    if (!note.pdfUrl && !note.storagePath) {
+      alert("This note has no file attached.");
+      return;
+    }
     let url = note.pdfUrl || "";
     let storagePath = note.storagePath;
     let bucket = note.bucket;
@@ -444,19 +437,24 @@ export default function SubjectNotes({
     const topicFormatted = getFormattedTopicLabel(note);
     const title = topicFormatted || `Chapter ${note.chapterNo} - ${note.chapterName}`;
 
-    setActivePreviewPdf({
-      url,
-      title,
-      noteId: note.id,
-      storagePath: storagePath || url,
-      bucket: bucket,
-      fileName: note.pdfFileName || note.fileName,
-      mimeType: note.mimeType,
-      fileType: note.fileType
-    });
-
-    if (note.id && studentId) {
-      recordNoteOpenedOrDownloaded(studentId, subject, note.id);
+    setOpeningNoteId(note.id);
+    try {
+      await openNoteInNativeViewer({
+        url,
+        title,
+        noteId: note.id,
+        storagePath: storagePath || url,
+        bucket: bucket,
+        fileName: note.pdfFileName || note.fileName || `${note.chapterName || "Note"}.${note.fileType === "image" ? "jpg" : "pdf"}`,
+        mimeType: note.mimeType,
+        fileType: note.fileType,
+        studentId: studentId,
+        subject: subject,
+      });
+    } catch (err) {
+      console.error("[SubjectNotes] Error opening note natively:", err);
+    } finally {
+      setOpeningNoteId(null);
     }
   };
 
@@ -1904,23 +1902,6 @@ export default function SubjectNotes({
             </div>
           </div>
         </div>
-      )}
-
-      {/* --- PDF / IMAGE VIEWER MODAL --- */}
-      {activePreviewPdf && (
-        <PdfViewer
-          url={activePreviewPdf.url}
-          title={activePreviewPdf.title}
-          noteId={activePreviewPdf.noteId}
-          storagePath={activePreviewPdf.storagePath}
-          bucket={activePreviewPdf.bucket}
-          fileName={activePreviewPdf.fileName}
-          mimeType={activePreviewPdf.mimeType}
-          fileType={activePreviewPdf.fileType}
-          studentId={studentId}
-          subject={subject}
-          onClose={() => setActivePreviewPdf(null)}
-        />
       )}
     </div>
   );

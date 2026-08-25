@@ -669,9 +669,34 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
         throw new Error(USER_FRIENDLY_NOTE_ERROR);
       }
     } else {
-      // Web preview: cache in memory
+      // Web preview: open directly in device browser native viewer/tab
       const objectUrl = URL.createObjectURL(pdfBlob);
       webBlobCache.set(cacheFileName, { blob: pdfBlob, objectUrl });
+
+      console.log(`[NotePipeline] Web platform: Opening in native browser viewer/tab: ${objectUrl}`);
+      try {
+        const newWindow = window.open(objectUrl, "_blank", "noopener,noreferrer");
+        if (!newWindow || newWindow.closed || typeof newWindow.closed === "undefined") {
+          // Fallback if popup blocker intercepted
+          const a = document.createElement("a");
+          a.href = objectUrl;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
+      } catch (openErr) {
+        console.warn("[NotePipeline] Direct window.open failed, trying link fallback:", openErr);
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+
       return { success: true, isNative: false, objectUrl, blob: pdfBlob, cachedPath: objectUrl };
     }
   };
@@ -682,6 +707,65 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
 
   inFlightOperations.set(cacheFileName, operationPromise);
   return operationPromise;
+}
+
+/**
+ * Top-level function for Admin and Student consoles to open any Note in the device's native viewer.
+ * No custom or embedded viewers are rendered.
+ */
+export async function openNoteInNativeViewer(
+  options: OpenPdfOptions & { studentId?: string; subject?: string }
+): Promise<OpenPdfResult> {
+  const noteId = options.noteId || "unknown";
+  const rawUrl = options.url || "";
+  const rawPath = options.storagePath || "";
+  const bucket = options.bucket || "academy-connect-files";
+  const fileName = options.fileName || (rawPath ? rawPath.split("/").pop() : "document.pdf");
+  const isImg = isImageFile(fileName, rawUrl || rawPath, options.mimeType, options.fileType);
+  const ext = getFileExtension(fileName || rawPath || rawUrl, isImg);
+  const mime = getMimeType(fileName || rawUrl, options.mimeType, isImg);
+
+  console.log(`[NativeNoteOpener] Opening note "${options.title || noteId}" using device native viewer:`, {
+    noteId,
+    title: options.title,
+    fileName,
+    bucket,
+    storagePath: rawPath,
+    url: rawUrl,
+    mimeType: mime,
+    fileType: isImg ? "image" : "pdf",
+    isNativePlatform: isNativePlatform(),
+  });
+
+  try {
+    const result = await openPdfWithNativeViewer(options);
+
+    // If student opened, record analytics and study progress
+    if (options.studentId && (options.noteId || options.storagePath)) {
+      try {
+        const { recordNoteOpenedOrDownloaded } = await import("../utils/chapterProgressHelper");
+        recordNoteOpenedOrDownloaded(options.studentId, options.subject, options.noteId || options.storagePath);
+      } catch (recErr) {
+        console.warn("[NativeNoteOpener] Error recording study progress:", recErr);
+      }
+    }
+
+    return result;
+  } catch (err: any) {
+    const errorMsg = err?.message || USER_FRIENDLY_NOTE_ERROR;
+    console.error(`[NativeNoteOpener] Failed to open note "${noteId}" in native viewer:`, {
+      noteId,
+      title: options.title,
+      fileName,
+      storagePath: rawPath,
+      bucket,
+      mimeType: mime,
+      resolvedUrl: rawUrl,
+      error: err,
+    });
+    alert(errorMsg);
+    throw err;
+  }
 }
 
 /**

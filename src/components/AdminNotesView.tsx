@@ -30,8 +30,7 @@ import { uploadFileToR2, deleteFileFromStorage } from "../lib/storageService";
 import { saveClassNoteDoc, deleteClassNoteDoc } from "../lib/firestoreService";
 import { groupClassNotesHierarchy, normalizeClassGrade, isClassGradeMatching, isSubjectMatching, generateUPSCStoragePath, inferGSPaperFromSubject } from "../utils/classNoteHelper";
 import { getFormattedTopicLabel, isFileNameRedundant } from "../utils/chapterNotesHelper";
-import PdfViewer from "./PdfViewer";
-import { isImageFile, invalidateNoteCache } from "../lib/nativePdfService";
+import { isImageFile, invalidateNoteCache, openNoteInNativeViewer } from "../lib/nativePdfService";
 import AdminPracticeTestModal from "./AdminPracticeTestModal";
 import { getFullChapterQuestions } from "../utils/assessmentParser";
 
@@ -133,17 +132,28 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
   const [isSavingAccess, setIsSavingAccess] = useState(false);
   const [accessMsg, setAccessMsg] = useState("");
 
-  // PDF / Image Preview modal
-  const [previewPdf, setPreviewPdf] = useState<{
-    url: string;
-    title: string;
-    noteId?: string;
-    storagePath?: string;
-    bucket?: string;
-    fileName?: string;
-    mimeType?: string;
-    fileType?: "pdf" | "image" | string;
-  } | null>(null);
+  // Note opening loading state
+  const [openingNoteId, setOpeningNoteId] = useState<string | null>(null);
+
+  const handleOpenNoteNative = async (note: ClassNote, contextTitle: string) => {
+    setOpeningNoteId(note.id);
+    try {
+      await openNoteInNativeViewer({
+        url: note.pdfUrl || "",
+        title: contextTitle,
+        noteId: note.id,
+        storagePath: note.storagePath || (note as any).storage_path || note.pdfUrl,
+        bucket: note.bucket,
+        fileName: note.fileName || note.pdfFileName || note.filename || `${note.chapterName || "Note"}.${note.fileType === "image" ? "jpg" : "pdf"}`,
+        mimeType: note.mimeType || (note as any).mime_type,
+        fileType: note.fileType,
+      });
+    } catch (err) {
+      console.error("[AdminNotesView] Error opening note natively:", err);
+    } finally {
+      setOpeningNoteId(null);
+    }
+  };
 
   // Practice Test Editor state
   const [practiceTestTarget, setPracticeTestTarget] = useState<{
@@ -1400,20 +1410,19 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
 
                                                                     {/* View PDF */}
                                                                     <button
-                                                                      onClick={() => setPreviewPdf({
-                                                                        url: note.pdfUrl || "",
-                                                                        title: `[UPSC] ${subjGroup.subject} - ${chGroup.chapterTitle} (${tItem.topicLabel})`,
-                                                                        noteId: note.id,
-                                                                        storagePath: note.storagePath || note.pdfUrl,
-                                                                        bucket: note.bucket,
-                                                                        fileName: note.fileName || note.pdfFileName || note.filename || `${note.chapterName || "Note"}.${note.fileType === "image" ? "png" : "pdf"}`,
-                                                                        mimeType: note.mimeType || note.mime_type,
-                                                                        fileType: note.fileType,
-                                                                      })}
-                                                                      className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200/50 dark:border-blue-800/40 transition-all cursor-pointer"
-                                                                      title="View PDF"
+                                                                      onClick={() => handleOpenNoteNative(
+                                                                        note,
+                                                                        `[UPSC] ${subjGroup.subject} - ${chGroup.chapterTitle} (${tItem.topicLabel})`
+                                                                      )}
+                                                                      disabled={openingNoteId === note.id}
+                                                                      className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200/50 dark:border-blue-800/40 transition-all cursor-pointer disabled:opacity-50"
+                                                                      title="Open Note in Native Viewer"
                                                                     >
-                                                                      <Eye className="w-3.5 h-3.5" />
+                                                                      {openingNoteId === note.id ? (
+                                                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                                      ) : (
+                                                                        <Eye className="w-3.5 h-3.5" />
+                                                                      )}
                                                                     </button>
 
                                                                     {/* Replace PDF */}
@@ -1636,20 +1645,19 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                                               </button>
 
                                               <button
-                                                onClick={() => setPreviewPdf({
-                                                  url: note.pdfUrl || "",
-                                                  title: `[${note.classGrade}] ${note.subject} - Ch ${note.chapterNo}: ${note.chapterName}${note.partLabel ? ` (${note.partLabel})` : ""}`,
-                                                  noteId: note.id,
-                                                  storagePath: note.storagePath || note.pdfUrl,
-                                                  bucket: note.bucket,
-                                                  fileName: note.fileName || note.pdfFileName || note.filename || `${note.chapterName || "Note"}.${note.fileType === "image" ? "png" : "pdf"}`,
-                                                  mimeType: note.mimeType || note.mime_type,
-                                                  fileType: note.fileType,
-                                                })}
-                                                className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200/50 dark:border-blue-800/40 transition-all cursor-pointer"
-                                                title="View PDF"
+                                                onClick={() => handleOpenNoteNative(
+                                                  note,
+                                                  `[${note.classGrade}] ${note.subject} - Ch ${note.chapterNo}: ${note.chapterName}${note.partLabel ? ` (${note.partLabel})` : ""}`
+                                                )}
+                                                disabled={openingNoteId === note.id}
+                                                className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200/50 dark:border-blue-800/40 transition-all cursor-pointer disabled:opacity-50"
+                                                title="Open Note in Native Viewer"
                                               >
-                                                <Eye className="w-3.5 h-3.5" />
+                                                {openingNoteId === note.id ? (
+                                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                ) : (
+                                                  <Eye className="w-3.5 h-3.5" />
+                                                )}
                                               </button>
 
                                               <button
@@ -2514,23 +2522,6 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
           chapterNo={practiceTestTarget.chapterNo}
           chapterName={practiceTestTarget.chapterName}
           topicName={practiceTestTarget.topicName}
-        />
-      )}
-
-      {/* ==================================================== */}
-      {/* PDF / IMAGE VIEWER MODAL                             */}
-      {/* ==================================================== */}
-      {previewPdf && (
-        <PdfViewer
-          url={previewPdf.url}
-          title={previewPdf.title}
-          noteId={previewPdf.noteId}
-          onClose={() => setPreviewPdf(null)}
-          storagePath={previewPdf.storagePath}
-          bucket={previewPdf.bucket}
-          fileName={previewPdf.fileName}
-          mimeType={previewPdf.mimeType}
-          fileType={previewPdf.fileType}
         />
       )}
     </div>

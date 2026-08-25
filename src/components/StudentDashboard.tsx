@@ -72,7 +72,7 @@ import { ALL_ACADEMIC_MONTHS, MONTH_NAMES } from "../utils/monthHelper";
 import { groupAndSortChapterNotes, getFormattedTopicLabel, isFileNameRedundant } from "../utils/chapterNotesHelper";
 import { subscribeToAnnouncements, saveStudentDoc, subscribeToClassNotes, getLocalClassNotes, areClassNotesEqual, updateStudentPresence } from "../lib/firestoreService";
 import { uploadReportToStorage, getBucketName, sanitizeStoragePath } from "../lib/storageService";
-import PdfViewer from "./PdfViewer";
+import { openNoteInNativeViewer } from "../lib/nativePdfService";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import { getPdfDownloadUrl } from "../lib/pdfService";
 import { dataUrlToBlob } from "../utils/pdfUtils";
@@ -1598,16 +1598,6 @@ export function StudentMyTab({
   });
   const [editingRemarkId, setEditingRemarkId] = useState<string | null>(null);
   const [remarkDrafts, setRemarkDrafts] = useState<Record<string, string>>({});
-  const [activePreviewPdf, setActivePreviewPdf] = useState<{
-    url: string;
-    title: string;
-    noteId?: string;
-    storagePath?: string;
-    bucket?: string;
-    fileName?: string;
-    mimeType?: string;
-    fileType?: "pdf" | "image" | string;
-  } | null>(null);
   const [openingNoteId, setOpeningNoteId] = useState<string | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
   const [progressModalNote, setProgressModalNote] = useState<ChapterNote | null>(null);
@@ -1833,9 +1823,9 @@ export function StudentMyTab({
 
   const currentTabServiceStatus = (localStudent.serviceStatus || localStudent.service_status || "active").toLowerCase();
 
-  const handlePreviewPdf = (note: ChapterNote) => {
+  const handlePreviewPdf = async (note: ChapterNote) => {
     // Single Tap Protection: Ignore taps while a note is currently opening/downloading
-    if (openingNoteId || activePreviewPdf) return;
+    if (openingNoteId) return;
 
     if (!isAdmin) {
       if (currentTabServiceStatus === "paused") {
@@ -1847,7 +1837,10 @@ export function StudentMyTab({
         return;
       }
     }
-    if (!note.pdfUrl && !note.storagePath) return;
+    if (!note.pdfUrl && !note.storagePath) {
+      alert("This note has no file attached.");
+      return;
+    }
 
     setOpeningNoteId(note.id);
 
@@ -1870,16 +1863,24 @@ export function StudentMyTab({
     const topicFormatted = getFormattedTopicLabel(note);
     const title = topicFormatted || `Chapter ${note.chapterNo} – ${note.chapterName}`;
 
-    setActivePreviewPdf({
-      url,
-      title,
-      noteId: note.id,
-      storagePath: storagePath || url,
-      bucket: bucket,
-      fileName: note.pdfFileName || note.fileName,
-      mimeType: note.mimeType,
-      fileType: note.fileType
-    });
+    try {
+      await openNoteInNativeViewer({
+        url,
+        title,
+        noteId: note.id,
+        storagePath: storagePath || url,
+        bucket: bucket,
+        fileName: note.pdfFileName || note.fileName || `${note.chapterName || "Note"}.${note.fileType === "image" ? "jpg" : "pdf"}`,
+        mimeType: note.mimeType,
+        fileType: note.fileType,
+        studentId: localStudent?.id,
+        subject: selectedSubject || note.subject,
+      });
+    } catch (err) {
+      console.error("[StudentDashboard] Error opening note natively:", err);
+    } finally {
+      setOpeningNoteId(null);
+    }
   };
 
   const getFileSizeStr = (pdfUrl: string, chapterNo: number) => {
@@ -2388,27 +2389,6 @@ export function StudentMyTab({
         </div>
 
       </div>
-
-      {/* Student Native PDF Modal */}
-      {activePreviewPdf && (
-        <PdfViewer
-          key={`pdf-viewer-${activePreviewPdf.noteId || activePreviewPdf.storagePath || activePreviewPdf.url}`}
-          url={activePreviewPdf.url}
-          title={activePreviewPdf.title}
-          onClose={() => {
-            setActivePreviewPdf(null);
-            setOpeningNoteId(null);
-          }}
-          noteId={activePreviewPdf.noteId}
-          storagePath={activePreviewPdf.storagePath}
-          bucket={activePreviewPdf.bucket}
-          fileName={activePreviewPdf.fileName}
-          mimeType={activePreviewPdf.mimeType}
-          fileType={activePreviewPdf.fileType}
-          studentId={localStudent?.id}
-          subject={selectedSubject || undefined}
-        />
-      )}
 
       {/* Chapter Progress Bottom Sheet / Modal */}
       {progressModalNote && selectedSubject && (
