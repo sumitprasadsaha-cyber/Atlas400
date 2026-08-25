@@ -299,11 +299,14 @@ app.get("/api/r2/download", async (req, res) => {
       return res.status(404).send("File not found in Cloudflare R2.");
     }
 
-    let contentType = obj.contentType || "application/octet-stream";
+    let contentType = (req.query.mimeType as string) || obj.contentType || "application/octet-stream";
     if (contentType === "application/octet-stream" || !contentType) {
       if (cleanKey.toLowerCase().endsWith(".pdf")) contentType = "application/pdf";
       else if (cleanKey.toLowerCase().endsWith(".png")) contentType = "image/png";
       else if (cleanKey.toLowerCase().endsWith(".jpg") || cleanKey.toLowerCase().endsWith(".jpeg")) contentType = "image/jpeg";
+      else if (cleanKey.toLowerCase().endsWith(".webp")) contentType = "image/webp";
+      else if (cleanKey.toLowerCase().endsWith(".gif")) contentType = "image/gif";
+      else if (cleanKey.toLowerCase().endsWith(".svg")) contentType = "image/svg+xml";
       else if (cleanKey.toLowerCase().endsWith(".json")) contentType = "application/json";
     }
 
