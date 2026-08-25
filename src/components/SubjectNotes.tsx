@@ -439,13 +439,23 @@ export default function SubjectNotes({
 
     setOpeningNoteId(note.id);
     try {
+      const finalStorageKey =
+        (note as any).storageKey ||
+        storagePath ||
+        (note as any).storage_path ||
+        (note as any).objectKey ||
+        (note as any).r2Key ||
+        (note as any).key ||
+        url;
+
       await openNoteInNativeViewer({
+        storageKey: finalStorageKey,
+        storagePath: finalStorageKey,
+        storage_path: (note as any).storage_path,
+        objectKey: (note as any).objectKey || (note as any).r2Key || finalStorageKey,
         url,
         title,
         noteId: note.id,
-        storagePath: storagePath || url,
-        storage_path: (note as any).storage_path,
-        objectKey: (note as any).objectKey || (note as any).r2Key || storagePath,
         bucket: bucket,
         fileName: note.pdfFileName || note.fileName || (note as any).filename || `${note.chapterName || "Note"}.${note.fileType === "image" ? "jpg" : "pdf"}`,
         pdfFileName: note.pdfFileName,

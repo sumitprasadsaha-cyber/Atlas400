@@ -8,10 +8,17 @@ import { dataUrlToBlob } from "../utils/pdfUtils";
 export type NoteViewerState = "idle" | "downloading" | "opening" | "opened" | "error";
 
 export interface OpenPdfOptions {
-  url?: string;
-  title?: string;
+  storageKey?: string;
+  storage_key?: string;
   storagePath?: string;
   storage_path?: string;
+  objectKey?: string;
+  r2Key?: string;
+  key?: string;
+  url?: string;
+  publicUrl?: string;
+  fileUrl?: string;
+  downloadUrl?: string;
   bucket?: string;
   noteId?: string;
   fileName?: string;
@@ -20,13 +27,10 @@ export interface OpenPdfOptions {
   mimeType?: string;
   mime_type?: string;
   fileType?: "pdf" | "image" | string;
-  objectKey?: string;
-  r2Key?: string;
-  key?: string;
-  publicUrl?: string;
-  fileUrl?: string;
-  downloadUrl?: string;
+  title?: string;
   storageProvider?: string;
+  studentId?: string;
+  subject?: string;
   onProgress?: (percent: number | null, statusText: string) => void;
 }
 
@@ -204,12 +208,13 @@ export async function checkAndValidateLocalCache(
 }
 
 /**
- * Resolves comprehensive note metadata and candidate download/stream URLs.
+ * Resolves note metadata and download/stream URLs directly using the saved storageKey as single source of truth.
  */
 export function resolveNoteMetadataAndUrls(options: OpenPdfOptions): {
   noteId: string;
   fileName: string;
   bucket: string;
+  storageKey: string;
   objectKey: string;
   rawPath: string;
   rawUrl: string;
@@ -221,19 +226,28 @@ export function resolveNoteMetadataAndUrls(options: OpenPdfOptions): {
   candidateUrls: string[];
 } {
   const noteId = options.noteId || "unknown";
-  const rawPath =
+  
+  // Single source of truth: extract the exact saved storageKey
+  const storageKey = (
+    options.storageKey ||
+    options.storage_key ||
     options.storagePath ||
     options.storage_path ||
     options.objectKey ||
     options.r2Key ||
     options.key ||
-    "";
-  const rawUrl =
+    ""
+  ).trim();
+
+  const rawPath = storageKey;
+  const rawUrl = (
     options.url ||
     options.publicUrl ||
     options.fileUrl ||
     options.downloadUrl ||
-    "";
+    ""
+  ).trim();
+
   const bucket = getBucketName(options.bucket || "academy-connect-files");
 
   // Determine file name
@@ -241,14 +255,14 @@ export function resolveNoteMetadataAndUrls(options: OpenPdfOptions): {
     options.fileName ||
     options.pdfFileName ||
     options.filename ||
-    (rawPath ? rawPath.split("/").pop() : "") ||
+    (storageKey ? storageKey.split("/").pop() : "") ||
     (rawUrl && !rawUrl.startsWith("data:") && !rawUrl.startsWith("blob:") ? rawUrl.split("/").pop() : "") ||
     "document.pdf";
 
-  // Sanitize object key
+  // Sanitize object key (ensuring no leading slash, but preserving exact folder names)
   let objectKey = "";
-  if (rawPath) {
-    objectKey = sanitizeStoragePath(rawPath, bucket);
+  if (storageKey) {
+    objectKey = sanitizeStoragePath(storageKey, bucket);
   }
   if (!objectKey && rawUrl && !rawUrl.startsWith("data:") && !rawUrl.startsWith("blob:")) {
     objectKey = sanitizeStoragePath(rawUrl, bucket);
@@ -257,9 +271,9 @@ export function resolveNoteMetadataAndUrls(options: OpenPdfOptions): {
     objectKey = objectKey.replace(/^\/+/, "");
   }
 
-  const isImg = isImageFile(fileName, rawUrl || rawPath, options.mimeType || options.mime_type, options.fileType);
-  const ext = getFileExtension(fileName || objectKey || rawPath || rawUrl, isImg);
-  const contentType = getMimeType(fileName || objectKey || rawUrl || rawPath, options.mimeType || options.mime_type, isImg);
+  const isImg = isImageFile(fileName, rawUrl || objectKey, options.mimeType || options.mime_type, options.fileType);
+  const ext = getFileExtension(fileName || objectKey || rawUrl, isImg);
+  const contentType = getMimeType(fileName || objectKey || rawUrl, options.mimeType || options.mime_type, isImg);
 
   const isDataOrBlobUrl = Boolean(
     rawUrl && (rawUrl.startsWith("data:") || rawUrl.startsWith("blob:") || rawUrl.startsWith("JVBERi"))
@@ -295,7 +309,8 @@ export function resolveNoteMetadataAndUrls(options: OpenPdfOptions): {
     noteId,
     fileName,
     bucket,
-    objectKey,
+    storageKey: objectKey || storageKey,
+    objectKey: objectKey || storageKey,
     rawPath,
     rawUrl,
     isImg,
@@ -337,20 +352,18 @@ async function launchNativeViewerOnce(uri: string, contentType: string): Promise
 export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<OpenPdfResult> {
   const meta = resolveNoteMetadataAndUrls(options);
 
-  console.log(`[NotePipeline] 1. Note open initiated:`, {
-    noteId: meta.noteId,
-    title: options.title,
-    fileName: meta.fileName,
-    bucket: meta.bucket,
-    objectKey: meta.objectKey,
-    rawPath: meta.rawPath,
-    rawUrl: meta.rawUrl,
-    mimeType: meta.contentType,
-    fileType: meta.isImg ? "image" : "pdf",
-    primaryUrl: meta.primaryUrl,
-    candidateUrls: meta.candidateUrls,
-    isNative: isNativePlatform(),
-  });
+  // Backward compatibility: If old notes don't contain storageKey or valid path
+  if (!meta.objectKey && !meta.isDataOrBlobUrl) {
+    const legacyMsg = "Legacy note detected.\nMissing storage key.\nPlease re-upload this note.";
+    console.warn(`[NotePipeline] ${legacyMsg}`, options);
+    alert(legacyMsg);
+    throw new Error(legacyMsg);
+  }
+
+  // Required Debug Logs before requesting R2
+  console.log("Saved Storage Key:", meta.storageKey);
+  console.log("Bucket:", meta.bucket);
+  console.log("Opening:", meta.primaryUrl);
 
   const updateProgress = (percent: number | null, text: string) => {
     if (options.onProgress) options.onProgress(percent, text);
@@ -405,12 +418,6 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
 
     // Step 2: Handle Web Platform
     if (!isNative) {
-      console.log("[NotePipeline] Web Platform: Testing URL and opening in native browser viewer:", {
-        primaryUrl: meta.primaryUrl,
-        objectKey: meta.objectKey,
-        bucket: meta.bucket,
-      });
-
       updateProgress(null, "Connecting…");
 
       // For data / blob URLs, open immediately
@@ -425,9 +432,8 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
         );
       }
 
-      // Verify the generated URL via HTTP request before opening
+      // Verify the generated URL via HTTP probe before opening
       try {
-        console.log(`[NotePipeline] Probing storage URL: ${meta.primaryUrl}`);
         let headRes = await fetch(meta.primaryUrl, { method: "HEAD" }).catch(() => null);
         if (!headRes || headRes.status === 405) {
           // If HEAD is not supported, probe with GET
@@ -435,23 +441,28 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
         }
 
         if (headRes) {
-          console.log(`[NotePipeline] HTTP status: ${headRes.status} ${headRes.statusText}`, {
-            url: meta.primaryUrl,
-            contentType: headRes.headers.get("content-type"),
-            contentLength: headRes.headers.get("content-length"),
-            etag: headRes.headers.get("etag"),
-            status: headRes.status,
-          });
-
           if (headRes.status === 404) {
+            let errorBody = "";
+            try {
+              const clone = headRes.clone();
+              errorBody = await clone.text();
+            } catch {}
+
+            // Debug logs required if R2 returns 404
+            console.error("Saved storage key:", meta.storageKey);
+            console.error("Requested URL:", meta.primaryUrl);
+            console.error("Bucket:", meta.bucket);
+            console.error("HTTP Status:", headRes.status);
+            console.error("Response body:", errorBody);
+
             throw new Error(
-              `Note file not found in storage (HTTP 404).\nObject Key: "${meta.objectKey || meta.rawPath}"\nBucket: "${meta.bucket}"`
+              `Note file not found in Cloudflare R2 (HTTP 404).\nSaved Storage Key: "${meta.storageKey}"\nBucket: "${meta.bucket}"`
             );
           }
 
           if (headRes.status === 403) {
             throw new Error(
-              `Access denied to note (HTTP 403).\nObject Key: "${meta.objectKey || meta.rawPath}"\nBucket: "${meta.bucket}"`
+              `Access denied to note (HTTP 403).\nStorage Key: "${meta.storageKey}"\nBucket: "${meta.bucket}"`
             );
           }
 
@@ -466,7 +477,7 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
         if (probeErr.message && (probeErr.message.includes("HTTP 404") || probeErr.message.includes("HTTP 403") || probeErr.message.includes("HTTP "))) {
           throw probeErr;
         }
-        console.warn("[NotePipeline] URL probe warning (attempting direct open):", probeErr);
+        console.warn("[NotePipeline] URL probe warning (proceeding with direct open):", probeErr);
       }
 
       updateProgress(100, "Opening…");
@@ -478,7 +489,7 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
     console.log("[NotePipeline] Mobile Platform: Downloading note for native FileOpener:", {
       noteId: meta.noteId,
       bucket: meta.bucket,
-      objectKey: meta.objectKey,
+      storageKey: meta.storageKey,
       cacheFileName,
     });
 
@@ -496,18 +507,24 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
           console.log(`[NotePipeline] Mobile download attempting URL: ${targetUrl}`);
           const res = await fetch(targetUrl);
 
-          console.log(`[NotePipeline] Mobile download response status: ${res.status} ${res.statusText}`, {
-            url: targetUrl,
-            contentType: res.headers.get("content-type"),
-            contentLength: res.headers.get("content-length"),
-          });
-
           if (res.status === 404) {
-            throw new Error(`Note file not found in storage (HTTP 404). Key: "${meta.objectKey}" in bucket "${meta.bucket}"`);
+            let errorBody = "";
+            try {
+              const clone = res.clone();
+              errorBody = await clone.text();
+            } catch {}
+
+            console.error("Saved storage key:", meta.storageKey);
+            console.error("Requested URL:", targetUrl);
+            console.error("Bucket:", meta.bucket);
+            console.error("HTTP Status:", res.status);
+            console.error("Response body:", errorBody);
+
+            throw new Error(`Note file not found in storage (HTTP 404). Key: "${meta.storageKey}" in bucket "${meta.bucket}"`);
           }
 
           if (res.status === 403) {
-            throw new Error(`Access forbidden (HTTP 403) for note key: "${meta.objectKey}" in bucket "${meta.bucket}"`);
+            throw new Error(`Access forbidden (HTTP 403) for note key: "${meta.storageKey}" in bucket "${meta.bucket}"`);
           }
 
           if (!res.ok) {
@@ -527,8 +544,8 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
       if (!downloadedBlob || downloadedBlob.size === 0) {
         // Fallback: try downloadFromR2 helper
         try {
-          console.log(`[NotePipeline] Attempting downloadFromR2 fallback for key="${meta.objectKey}"`);
-          const r2Res = await downloadFromR2({ bucket: meta.bucket, key: meta.objectKey });
+          console.log(`[NotePipeline] Attempting downloadFromR2 fallback for key="${meta.storageKey}"`);
+          const r2Res = await downloadFromR2({ bucket: meta.bucket, key: meta.storageKey });
           if (r2Res.blob && r2Res.blob.size > 0) {
             downloadedBlob = r2Res.blob;
           }
@@ -616,28 +633,14 @@ export async function openNoteInNativeViewer(
 ): Promise<OpenPdfResult> {
   const meta = resolveNoteMetadataAndUrls(options);
 
-  console.log(`[NativeNoteOpener] Opening note "${options.title || meta.noteId}" using device native viewer:`, {
-    noteId: meta.noteId,
-    title: options.title,
-    fileName: meta.fileName,
-    bucket: meta.bucket,
-    objectKey: meta.objectKey,
-    rawPath: meta.rawPath,
-    rawUrl: meta.rawUrl,
-    mimeType: meta.contentType,
-    fileType: meta.isImg ? "image" : "pdf",
-    primaryUrl: meta.primaryUrl,
-    isNativePlatform: isNativePlatform(),
-  });
-
   try {
     const result = await openPdfWithNativeViewer(options);
 
     // If student opened, record analytics and study progress
-    if (options.studentId && (meta.noteId || meta.objectKey)) {
+    if (options.studentId && (meta.noteId || meta.storageKey)) {
       try {
         const { recordNoteOpenedOrDownloaded } = await import("../utils/chapterProgressHelper");
-        recordNoteOpenedOrDownloaded(options.studentId, options.subject, meta.noteId || meta.objectKey);
+        recordNoteOpenedOrDownloaded(options.studentId, options.subject, meta.noteId || meta.storageKey);
       } catch (recErr) {
         console.warn("[NativeNoteOpener] Error recording study progress:", recErr);
       }
@@ -650,7 +653,7 @@ export async function openNoteInNativeViewer(
       noteId: meta.noteId,
       title: options.title,
       fileName: meta.fileName,
-      objectKey: meta.objectKey,
+      storageKey: meta.storageKey,
       bucket: meta.bucket,
       mimeType: meta.contentType,
       primaryUrl: meta.primaryUrl,

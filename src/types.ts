@@ -24,6 +24,8 @@ export interface ClassNote {
   filename?: string; // exact UPSC metadata specification
   storagePath?: string;
   storage_path?: string; // exact UPSC metadata specification
+  storageKey?: string; // Primary single source of truth for Cloudflare R2 object key
+  objectKey?: string;
   bucket?: string;
   fileType?: "pdf" | "image";
   fileSize?: number;
@@ -79,6 +81,8 @@ export interface ChapterNote {
   bucket?: string;
   storagePath?: string;
   storage_path?: string;
+  storageKey?: string;
+  objectKey?: string;
   fileName?: string;
   filename?: string;
   fileSize?: number;

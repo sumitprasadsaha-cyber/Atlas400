@@ -138,13 +138,23 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
   const handleOpenNoteNative = async (note: ClassNote, contextTitle: string) => {
     setOpeningNoteId(note.id);
     try {
+      const storageKey =
+        note.storageKey ||
+        note.storagePath ||
+        (note as any).storage_path ||
+        (note as any).objectKey ||
+        (note as any).r2Key ||
+        (note as any).key ||
+        note.pdfUrl;
+
       await openNoteInNativeViewer({
+        storageKey,
+        storagePath: storageKey,
+        storage_path: (note as any).storage_path,
+        objectKey: (note as any).objectKey || (note as any).r2Key || storageKey,
         url: note.pdfUrl || (note as any).publicUrl || (note as any).fileUrl || (note as any).downloadUrl || "",
         title: contextTitle,
         noteId: note.id,
-        storagePath: note.storagePath || (note as any).storage_path || (note as any).objectKey || (note as any).r2Key || (note as any).key || note.pdfUrl,
-        storage_path: (note as any).storage_path,
-        objectKey: (note as any).objectKey || (note as any).r2Key || note.storagePath,
         bucket: note.bucket,
         fileName: note.fileName || note.pdfFileName || (note as any).filename || `${note.chapterName || "Note"}.${note.fileType === "image" ? "jpg" : "pdf"}`,
         pdfFileName: note.pdfFileName,
@@ -563,6 +573,8 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
         filename: renamedFileName,
         storagePath: uploadRes.storagePath,
         storage_path: uploadRes.storagePath,
+        storageKey: uploadRes.storagePath,
+        objectKey: uploadRes.storagePath,
         bucket: uploadRes.bucket,
         fileType: fType,
         mimeType: mime,
@@ -918,6 +930,8 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
         filename: renamedFileName,
         storagePath: uploadRes.storagePath,
         storage_path: uploadRes.storagePath,
+        storageKey: uploadRes.storagePath,
+        objectKey: uploadRes.storagePath,
         bucket: uploadRes.bucket,
         fileType: fType,
         fileSize: replaceFile.size,

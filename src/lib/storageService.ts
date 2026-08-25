@@ -82,6 +82,8 @@ export interface R2UploadMetadata {
   storageProvider: "r2" | "supabase";
   bucket: string;
   storagePath: string;
+  storageKey?: string;
+  objectKey?: string;
   fileName: string;
   fileSize: number;
   mimeType: string;
@@ -352,6 +354,8 @@ export async function uploadFileToR2(
     storageProvider: "r2",
     bucket,
     storagePath: successPath,
+    storageKey: successPath,
+    objectKey: successPath,
     fileName,
     fileSize: file.size,
     mimeType,

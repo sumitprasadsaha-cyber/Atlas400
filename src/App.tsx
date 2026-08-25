@@ -947,11 +947,15 @@ export default function App() {
     if (pdfUrl && pdfUrl.trim().startsWith("{")) {
       try {
         const parsed = JSON.parse(pdfUrl);
-        finalPdfUrl = parsed.storagePath || parsed.downloadUrl || pdfUrl;
+        const parsedKey = parsed.storageKey || parsed.storagePath || parsed.objectKey;
+        finalPdfUrl = parsedKey || parsed.downloadUrl || pdfUrl;
         extraMetadata = {
           storageProvider: "r2",
           bucket: parsed.bucket,
-          storagePath: parsed.storagePath,
+          storagePath: parsedKey,
+          storage_path: parsedKey,
+          storageKey: parsedKey,
+          objectKey: parsedKey,
           fileName: parsed.fileName,
           fileSize: parsed.fileSize,
           mimeType: parsed.mimeType,
