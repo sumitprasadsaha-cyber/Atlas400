@@ -417,12 +417,12 @@ export default function SubjectNotes({
       return;
     }
 
-    if (!note.pdfUrl && !note.storagePath) {
+    if (!note.pdfUrl && !note.storagePath && !(note as any).storage_path && !(note as any).objectKey) {
       alert("This note has no file attached.");
       return;
     }
-    let url = note.pdfUrl || "";
-    let storagePath = note.storagePath;
+    let url = note.pdfUrl || (note as any).publicUrl || (note as any).fileUrl || (note as any).downloadUrl || "";
+    let storagePath = note.storagePath || (note as any).storage_path || (note as any).objectKey || (note as any).r2Key || (note as any).key;
     let bucket = note.bucket;
     if (url.trim().startsWith("{")) {
       try {
@@ -444,10 +444,14 @@ export default function SubjectNotes({
         title,
         noteId: note.id,
         storagePath: storagePath || url,
+        storage_path: (note as any).storage_path,
+        objectKey: (note as any).objectKey || (note as any).r2Key || storagePath,
         bucket: bucket,
-        fileName: note.pdfFileName || note.fileName || `${note.chapterName || "Note"}.${note.fileType === "image" ? "jpg" : "pdf"}`,
-        mimeType: note.mimeType,
+        fileName: note.pdfFileName || note.fileName || (note as any).filename || `${note.chapterName || "Note"}.${note.fileType === "image" ? "jpg" : "pdf"}`,
+        pdfFileName: note.pdfFileName,
+        mimeType: note.mimeType || (note as any).mime_type,
         fileType: note.fileType,
+        storageProvider: note.storageProvider,
         studentId: studentId,
         subject: subject,
       });

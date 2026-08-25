@@ -139,14 +139,18 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
     setOpeningNoteId(note.id);
     try {
       await openNoteInNativeViewer({
-        url: note.pdfUrl || "",
+        url: note.pdfUrl || (note as any).publicUrl || (note as any).fileUrl || (note as any).downloadUrl || "",
         title: contextTitle,
         noteId: note.id,
-        storagePath: note.storagePath || (note as any).storage_path || note.pdfUrl,
+        storagePath: note.storagePath || (note as any).storage_path || (note as any).objectKey || (note as any).r2Key || (note as any).key || note.pdfUrl,
+        storage_path: (note as any).storage_path,
+        objectKey: (note as any).objectKey || (note as any).r2Key || note.storagePath,
         bucket: note.bucket,
-        fileName: note.fileName || note.pdfFileName || note.filename || `${note.chapterName || "Note"}.${note.fileType === "image" ? "jpg" : "pdf"}`,
+        fileName: note.fileName || note.pdfFileName || (note as any).filename || `${note.chapterName || "Note"}.${note.fileType === "image" ? "jpg" : "pdf"}`,
+        pdfFileName: note.pdfFileName,
         mimeType: note.mimeType || (note as any).mime_type,
         fileType: note.fileType,
+        storageProvider: (note as any).storageProvider,
       });
     } catch (err) {
       console.error("[AdminNotesView] Error opening note natively:", err);
