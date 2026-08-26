@@ -1,4 +1,4 @@
-import { handleReportGeneration } from "../../src/services/ai/reports";
+import { handleAnalyticsGeneration } from "../../src/services/ai/analytics";
 
 export const runtime = "nodejs";
 
@@ -14,30 +14,23 @@ export default async function handler(req: any, res: any) {
     if (typeof body === "string") {
       try { body = JSON.parse(body); } catch {}
     }
-    const { reportType, dataPayload, promptExtra, userId, userRole } = body || {};
+    const { scope, dataPayload, targetId, userId, userRole } = body || {};
 
     if (!dataPayload) {
       return res.status(400).json({ error: "Missing dataPayload in request body" });
     }
 
-    const result = await handleReportGeneration({
-      reportType: reportType || "institution_overview",
+    const result = await handleAnalyticsGeneration({
+      scope: scope || "institution",
       dataPayload,
-      promptExtra,
+      targetId,
       userId,
       userRole,
     });
 
-    return res.status(200).json({
-      success: true,
-      markdown: result.markdown,
-      model: result.model,
-      timestamp: result.timestamp,
-    });
+    return res.status(200).json({ success: true, data: result });
   } catch (err: any) {
-    console.error("Error generating AI report:", err);
-    return res.status(500).json({
-      error: err.message || "Failed to generate AI report.",
-    });
+    console.error("Error generating AI analytics:", err);
+    return res.status(500).json({ error: err.message || "Failed to generate analytics." });
   }
 }

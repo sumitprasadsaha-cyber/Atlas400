@@ -1,28 +1,6 @@
-import { GoogleGenAI } from "@google/genai";
+import { handleStudentChat, handleAdminChat } from "../../src/services/ai/chat";
 
 export const runtime = "nodejs";
-
-let aiClient: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI {
-  if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY environment variable is missing.");
-    }
-    aiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
-  }
-  return aiClient;
-}
-
-const SYSTEM_INSTRUCTION = `You are Sumit Tuition App's AI Assistant, an expert educational administrator and data analyst for a tuition center / coaching academy.
-Your task is to analyze student, class, attendance, fee, test, homework, and syllabus structured JSON data and generate clear, professional, actionable, and encouraging reports in clean Markdown format.`;
 
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -36,40 +14,33 @@ export default async function handler(req: any, res: any) {
     if (typeof body === "string") {
       try { body = JSON.parse(body); } catch {}
     }
-    const { query, dataContext, history } = body || {};
+    const { role, query, studentId, studentName, classGrade, enrolledSubjects, notesContext, recentTestTopic, action, dataContext, history } = body || {};
 
     if (!query) {
       return res.status(400).json({ error: "Missing query in request body" });
     }
 
-    const ai = getGeminiClient();
-
-    let fullPrompt = `Context Data on Sumit Tuition App Institution & Students:\n\`\`\`json\n${JSON.stringify(dataContext || {}, null, 2)}\n\`\`\`\n\n`;
-
-    if (history && Array.isArray(history) && history.length > 0) {
-      fullPrompt += `Previous Conversation History:\n`;
-      history.forEach((item: { role: string; text: string }) => {
-        fullPrompt += `${item.role === "user" ? "Admin" : "AI Assistant"}: ${item.text}\n`;
+    if (role === "student") {
+      const result = await handleStudentChat({
+        query,
+        studentId,
+        studentName,
+        classGrade,
+        enrolledSubjects,
+        notesContext,
+        recentTestTopic,
+        history,
       });
-      fullPrompt += `\n`;
+      return res.status(200).json({ success: true, reply: result.reply, model: result.model, remainingDailyQuota: result.remainingDailyQuota });
+    } else {
+      const result = await handleAdminChat({
+        query,
+        action,
+        dataContext,
+        history,
+      });
+      return res.status(200).json({ success: true, reply: result.reply, model: result.model, remainingDailyQuota: result.remainingDailyQuota });
     }
-
-    fullPrompt += `Admin Question: ${query}\n\n`;
-    fullPrompt += `Provide a helpful, precise, and well-formatted Markdown answer based directly on the provided context data.`;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: fullPrompt,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.3,
-      },
-    });
-
-    return res.status(200).json({
-      success: true,
-      reply: response.text || "I could not analyze the requested query.",
-    });
   } catch (err: any) {
     console.error("Error in AI Chat endpoint:", err);
     return res.status(500).json({

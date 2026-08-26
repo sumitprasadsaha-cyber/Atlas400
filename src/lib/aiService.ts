@@ -1,4 +1,4 @@
-import { Student, AIReportType, AICachedReport } from "../types";
+import { Student, AIReportType, AICachedReport, ParsedAssessmentQuestion } from "../types";
 import { safeLocalStorageSetItem, safeLocalStorageGetItem } from "./safeStorage";
 
 const CACHE_PREFIX = "tuition_ai_cache_";
@@ -29,7 +29,7 @@ export function buildStructuredPayload(
     const hwRecords = s.homeworkRecords || [];
     const hwTotal = hwRecords.length;
     const hwCompleted = hwRecords.filter((h) => h.completed).length;
-    const hwPercentage = hwTotal > 0 ? Math.round((hwCompleted / hwTotal) * 100) : 85; // default estimate
+    const hwPercentage = hwTotal > 0 ? Math.round((hwCompleted / hwTotal) * 100) : 85;
 
     // Calculate test performance average if available
     const tests = s.testMarks || [];
@@ -38,7 +38,6 @@ export function buildStructuredPayload(
       const sum = tests.reduce((acc, t) => acc + (t.marksObtained / (t.totalMarks || 100)) * 100, 0);
       avgTestScore = Math.round(sum / tests.length);
     } else {
-      // derive estimated test score from attendance & fees if no explicit tests
       avgTestScore = attendancePercentage > 80 ? 82 : 65;
     }
 
@@ -129,9 +128,6 @@ export function buildStructuredPayload(
   };
 }
 
-/**
- * Retrieves cached AI report from localStorage if available
- */
 export function getCachedReport(cacheKey: string): AICachedReport | null {
   try {
     const raw = safeLocalStorageGetItem(`${CACHE_PREFIX}${cacheKey}`);
@@ -144,9 +140,6 @@ export function getCachedReport(cacheKey: string): AICachedReport | null {
   return null;
 }
 
-/**
- * Saves generated AI report to localStorage
- */
 export function saveCachedReport(cacheKey: string, reportType: AIReportType, markdown: string) {
   try {
     const record: AICachedReport = {
@@ -162,8 +155,7 @@ export function saveCachedReport(cacheKey: string, reportType: AIReportType, mar
 }
 
 /**
- * Sends request to backend AI service (/api/ai/report)
- * Handles offline detection and cached report fallback gracefully.
+ * Sends request to backend AI report service (/api/ai/report)
  */
 export async function generateAIReport(
   reportType: AIReportType,
@@ -179,7 +171,6 @@ export async function generateAIReport(
 ): Promise<{ markdown: string; isCached: boolean; updatedAt?: string }> {
   const cacheKey = `${reportType}_${filterContext?.studentId || "all"}_${filterContext?.classGrade || "all"}_${filterContext?.communicationType || "none"}`;
 
-  // Check offline state
   const isOnline = navigator.onLine;
 
   if (!forceRefresh) {
@@ -225,7 +216,6 @@ export async function generateAIReport(
   const data = await res.json();
   const markdown = data.markdown || "No markdown returned by AI.";
 
-  // Save to offline cache
   saveCachedReport(cacheKey, reportType, markdown);
 
   return {
@@ -236,15 +226,16 @@ export async function generateAIReport(
 }
 
 /**
- * Sends interactive query to AI Chat endpoint (/api/ai/chat)
+ * Admin interactive AI Chat (/api/ai/chat)
  */
 export async function askAIChat(
   query: string,
   students: Student[],
-  history?: { role: "user" | "model"; text: string }[]
+  history?: { role: "user" | "model"; text: string }[],
+  action?: string
 ): Promise<string> {
   if (!navigator.onLine) {
-    throw new Error("AI Insights require an internet connection.");
+    throw new Error("AI Assistant requires an internet connection.");
   }
 
   const contextPayload = buildStructuredPayload(students);
@@ -253,7 +244,9 @@ export async function askAIChat(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      role: "admin",
       query,
+      action,
       dataContext: contextPayload,
       history,
     }),
@@ -266,4 +259,200 @@ export async function askAIChat(
 
   const data = await res.json();
   return data.reply || "Sorry, I could not generate an answer.";
+}
+
+/**
+ * Student interactive AI Study Tutor (/api/ai/chat with student profile)
+ */
+export async function askStudentAIChat(params: {
+  query: string;
+  studentId: string;
+  studentName: string;
+  classGrade: string;
+  enrolledSubjects: string[];
+  notesContext?: string;
+  recentTestTopic?: string;
+  history?: Array<{ role: "user" | "model"; text: string }>;
+}): Promise<{ reply: string; remainingDailyQuota?: number }> {
+  if (!navigator.onLine) {
+    throw new Error("AI Study Assistant requires an active internet connection.");
+  }
+
+  const res = await fetch("/api/ai/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      role: "student",
+      ...params,
+    }),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || "Failed to reach AI Study Assistant.");
+  }
+
+  const data = await res.json();
+  return {
+    reply: data.reply || "No response received.",
+    remainingDailyQuota: data.remainingDailyQuota,
+  };
+}
+
+/**
+ * AI Note Analysis & Metadata Extraction
+ */
+export async function analyzeNoteWithAI(params: {
+  textSnippet: string;
+  originalFileName?: string;
+  suggestedSubject?: string;
+  suggestedGrade?: string;
+}) {
+  const res = await fetch("/api/ai/notes/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || "Failed to analyze note with AI.");
+  }
+
+  const result = await res.json();
+  return result.data;
+}
+
+/**
+ * AI Practice Test Generation
+ */
+export async function generatePracticeTestWithAI(params: {
+  classGrade: string;
+  subject: string;
+  chapterNo?: number;
+  chapterName: string;
+  topicName?: string;
+  questionCount?: number;
+  questionType?: "mcq" | "true_false" | "assertion_reason" | "mixed";
+  difficulty?: "Easy" | "Medium" | "Hard" | "Mixed";
+  language?: string;
+  syllabusContext?: string;
+}): Promise<{
+  testTitle: string;
+  totalQuestions: number;
+  estimatedTimeMinutes: number;
+  questions: ParsedAssessmentQuestion[];
+  formattedRawText: string;
+}> {
+  const res = await fetch("/api/ai/practice-test/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || "Failed to generate practice test with AI.");
+  }
+
+  const result = await res.json();
+  return result.data;
+}
+
+/**
+ * AI Homework Generation
+ */
+export async function generateHomeworkWithAI(params: {
+  classGrade: string;
+  subject: string;
+  chapterName: string;
+  topicName?: string;
+  difficulty?: "Easy" | "Medium" | "Hard" | "Mixed";
+  learningObjectives?: string[];
+  estimatedDurationMinutes?: number;
+}) {
+  const res = await fetch("/api/ai/homework/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || "Failed to generate homework with AI.");
+  }
+
+  const result = await res.json();
+  return result.data;
+}
+
+/**
+ * AI Deep Analytics
+ */
+export async function generateAnalyticsWithAI(params: {
+  scope: "student" | "class" | "institution";
+  dataPayload: any;
+  targetId?: string;
+}) {
+  const res = await fetch("/api/ai/analytics/insights", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || "Failed to generate analytics with AI.");
+  }
+
+  const result = await res.json();
+  return result.data;
+}
+
+/**
+ * AI Semantic Search
+ */
+export async function semanticSearchAI(params: {
+  query: string;
+  items: any[];
+  classFilter?: string;
+  subjectFilter?: string;
+}) {
+  const res = await fetch("/api/ai/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || "Failed to perform semantic search.");
+  }
+
+  const result = await res.json();
+  return result.data;
+}
+
+/**
+ * AI Usage & Cost Metrics
+ */
+export async function getAIMetrics() {
+  const res = await fetch("/api/ai/metrics");
+  if (!res.ok) {
+    throw new Error("Failed to load AI metrics.");
+  }
+  const result = await res.json();
+  return result.metrics;
+}
+
+/**
+ * AI User Quota
+ */
+export async function getAIUserLimits(userId: string, role: string = "student") {
+  const res = await fetch(`/api/ai/limits?userId=${encodeURIComponent(userId)}&role=${encodeURIComponent(role)}`);
+  if (!res.ok) {
+    throw new Error("Failed to load AI quota limits.");
+  }
+  const result = await res.json();
+  return result.quota;
 }

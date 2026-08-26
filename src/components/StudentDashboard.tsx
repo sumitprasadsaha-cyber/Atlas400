@@ -63,8 +63,10 @@ import {
   BarChart,
   Book,
   Trash2,
-  ChevronDown
+  ChevronDown,
+  Sparkles,
 } from "lucide-react";
+import StudentAIAssistantModal from "./StudentAIAssistantModal";
 import { jsPDF } from "jspdf";
 import { AnimatePresence, motion } from "motion/react";
 import { Student, ChapterNote } from "../types";
@@ -847,9 +849,10 @@ interface HeroCardProps {
   formatDate: (value?: string) => string;
   onOpenAnnouncements: () => void;
   hasAnnouncements?: boolean;
+  onOpenAITutor?: () => void;
 }
 
-function HeroCard({ student, onOpenAvatarModal, onOpenStudentDetails, formatDate, onOpenAnnouncements, hasAnnouncements }: HeroCardProps) {
+function HeroCard({ student, onOpenAvatarModal, onOpenStudentDetails, formatDate, onOpenAnnouncements, hasAnnouncements, onOpenAITutor }: HeroCardProps) {
   return (
     <div
       role="button"
@@ -865,23 +868,39 @@ function HeroCard({ student, onOpenAvatarModal, onOpenStudentDetails, formatDate
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.2),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(255,255,255,0.14),transparent_32%)]" />
       
-      {/* Announcements Circle Icon Button */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onOpenAnnouncements();
-        }}
-        className="absolute top-3.5 right-3.5 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-white/10 hover:bg-white/25 active:scale-90 transition-all text-white cursor-pointer"
-        title="Academy Announcements"
-      >
-        <Bell className="h-4 w-4" />
-        {hasAnnouncements && (
-          <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
-          </span>
+      {/* Action Buttons (Announcements + AI Tutor) */}
+      <div className="absolute top-3.5 right-3.5 z-20 flex items-center gap-1.5">
+        {onOpenAITutor && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenAITutor();
+            }}
+            className="flex items-center gap-1 rounded-full border border-white/25 bg-white/15 px-2.5 py-1 text-[11px] font-bold text-white shadow-xs backdrop-blur-xs hover:bg-white/30 active:scale-95 transition cursor-pointer"
+            title="Open Atlas AI Study Tutor"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-amber-300 animate-pulse" />
+            <span className="hidden xs:inline">AI Tutor</span>
+          </button>
         )}
-      </button>
+
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenAnnouncements();
+          }}
+          className="relative flex h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-white/10 hover:bg-white/25 active:scale-90 transition-all text-white cursor-pointer"
+          title="Academy Announcements"
+        >
+          <Bell className="h-4 w-4" />
+          {hasAnnouncements && (
+            <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+            </span>
+          )}
+        </button>
+      </div>
 
       <div className="relative flex min-h-[90px] flex-col items-start gap-3 sm:min-h-[110px] sm:flex-row sm:items-center">
         <div className="flex flex-1 items-center gap-3.5 w-full">
@@ -2518,6 +2537,7 @@ export default function StudentDashboard({
   const [showFeeHistoryModal, setShowFeeHistoryModal] = useState(false);
   const [showStudentDetailsModal, setShowStudentDetailsModal] = useState(false);
   const [showAnnouncementsModal, setShowAnnouncementsModal] = useState(false);
+  const [showAITutorModal, setShowAITutorModal] = useState(false);
   const [lastSeenAnnouncementId, setLastSeenAnnouncementId] = useState<string>(() => {
     return localStorage.getItem("last_seen_announcement_id") || "";
   });
@@ -2803,6 +2823,7 @@ export default function StudentDashboard({
         onOpenAvatarModal={onOpenAvatarModal} 
         onOpenStudentDetails={() => setShowStudentDetailsModal(true)} 
         formatDate={formatDate} 
+        onOpenAITutor={() => setShowAITutorModal(true)}
         onOpenAnnouncements={() => {
           if (currentServiceStatus === "ended") {
             alert("Your academy services have ended. Please contact the administrator if you believe this is an error.");
@@ -2958,6 +2979,31 @@ export default function StudentDashboard({
           </div>
         </div>
       )}
+
+      {/* Floating AI Study Tutor Trigger Button */}
+      <div className="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-40">
+        <button
+          onClick={() => setShowAITutorModal(true)}
+          className="group flex items-center gap-2 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 p-3 sm:px-4 sm:py-2.5 text-white shadow-lg hover:shadow-indigo-500/25 hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer"
+          title="Open Atlas AI Study Tutor"
+        >
+          <div className="relative">
+            <Sparkles className="h-5 w-5 text-amber-300 animate-pulse" />
+            <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-300" />
+            </span>
+          </div>
+          <span className="hidden sm:inline text-xs font-black tracking-wide">AI Study Tutor</span>
+        </button>
+      </div>
+
+      {/* Interactive AI Study Tutor Modal */}
+      <StudentAIAssistantModal
+        isOpen={showAITutorModal}
+        onClose={() => setShowAITutorModal(false)}
+        student={student}
+      />
     </div>
   );
 }
