@@ -20,12 +20,16 @@ export interface ClassNote {
   topic_name?: string; // exact UPSC metadata specification
   pdfUrl: string;
   pdfFileName: string;
+  originalFilename?: string;
+  storedFilename?: string;
   fileName?: string;
   filename?: string; // exact UPSC metadata specification
   storagePath?: string;
   storage_path?: string; // exact UPSC metadata specification
   storageKey?: string; // Primary single source of truth for Cloudflare R2 object key
   objectKey?: string;
+  publicUrl?: string;
+  downloadUrl?: string;
   bucket?: string;
   fileType?: "pdf" | "image";
   fileSize?: number;
@@ -35,8 +39,10 @@ export interface ClassNote {
   createdAt: string;
   uploadedAt?: string;
   uploaded_at?: string; // exact UPSC metadata specification
+  uploadedDate?: string;
   updatedAt?: string;
   updated_at?: string;
+  updatedDate?: string;
   uploadedBy?: string;
 
   // Student Access Control metadata

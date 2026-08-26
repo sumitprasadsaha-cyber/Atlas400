@@ -780,6 +780,39 @@ router.post("/r2/list", async (req, res) => {
   }
 });
 
+import storageHandler from "../api/storage";
+import notesHandler from "../api/notes";
+import practiceTestsHandler from "../api/practice-tests";
+import authHandler from "../api/auth";
+import healthHandler from "../api/health";
+import studentsHandler from "../api/students";
+import aiHandler from "../api/ai";
+
+// Mount API route handlers for /storage, /notes, /practice-tests, /auth, /health, /students, /ai
+router.all("/storage", (req, res) => storageHandler(req, res));
+router.all("/storage.ts", (req, res) => storageHandler(req, res));
+router.all("/notes", (req, res) => notesHandler(req, res));
+router.all("/notes.ts", (req, res) => notesHandler(req, res));
+router.all("/notes/upload", (req, res) => notesHandler(req, res));
+router.all("/practice-tests", (req, res) => practiceTestsHandler(req, res));
+router.all("/practice-tests.ts", (req, res) => practiceTestsHandler(req, res));
+router.all("/auth", (req, res) => authHandler(req, res));
+router.all("/auth.ts", (req, res) => authHandler(req, res));
+router.all("/health", (req, res) => healthHandler(req, res));
+router.all("/health.ts", (req, res) => healthHandler(req, res));
+router.all("/students", (req, res) => studentsHandler(req, res));
+router.all("/students.ts", (req, res) => studentsHandler(req, res));
+router.all("/ai", (req, res) => aiHandler(req, res));
+router.all("/ai.ts", (req, res) => aiHandler(req, res));
+
 // Mount router on both /api and / to handle both direct and rewritten paths safely
 apiApp.use("/api", router);
 apiApp.use("/", router);
+
+// Explicitly handle any remaining /api/* requests so unhandled API endpoints return 404 JSON instead of falling through to Vite
+apiApp.all(/^\/api(\/.*)?$/, (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: `API endpoint not found: ${req.method} ${req.originalUrl}`,
+  });
+});
