@@ -1,258 +1,54 @@
 {
   "entities": {
-    "user": {
-      "title": "User",
-      "description": "System user document containing core authentication and role profile",
-      "type": "object",
-      "properties": {
-        "uid": { "type": "string" },
-        "email": { "type": "string" },
-        "displayName": { "type": "string" },
-        "role": { "type": "string", "enum": ["admin", "student"] },
-        "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" },
-        "lastLogin": { "type": "string" },
-        "isActive": { "type": "boolean" },
-        "photoURL": { "type": "string" },
-        "studentId": { "type": "string" }
-      },
-      "required": ["uid", "email", "role", "createdAt", "updatedAt"]
-    },
     "student": {
       "title": "Student",
-      "description": "Student roster profile containing academic and guardian contact details",
+      "description": "Student record with attendance, fee ledger, and syllabus progress details",
       "type": "object",
       "properties": {
-        "studentId": { "type": "string" },
-        "fullName": { "type": "string" },
-        "batch": { "type": "string" },
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "classGrade": { "type": "string" },
         "phone": { "type": "string" },
-        "email": { "type": "string" },
-        "guardian": { "type": "object" },
-        "profilePhoto": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "inactive"] },
-        "serviceStatus": { "type": "string", "enum": ["active", "paused", "ended"] },
-        "joinedOn": { "type": "string" },
-        "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" }
+        "parentPhone": { "type": "string" },
+        "monthlyFee": { "type": "number" },
+        "feePaidThisMonth": { "type": "boolean" },
+        "registrationDate": { "type": "string" },
+        "feeMonths": { "type": "object" },
+        "feePaymentDates": { "type": "object" },
+        "feeMonthsList": { "type": "array" },
+        "enrolledSubjects": { "type": "array" },
+        "avatarUrl": { "type": "string" },
+        "avatarColor": { "type": "string" },
+        "notes": { "type": "object" },
+        "attendance": { "type": "object" }
       },
-      "required": ["studentId", "fullName", "batch", "phone", "email", "status", "serviceStatus"]
+      "required": ["id", "name", "classGrade", "phone", "parentPhone", "monthlyFee"]
     },
-    "admin": {
-      "title": "Admin",
-      "description": "Administrative authority record specifying granular permissions",
+    "user": {
+      "title": "User",
+      "description": "Authenticated user profile for Admin or Student role access",
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
-        "name": { "type": "string" },
-        "email": { "type": "string" },
-        "permissions": { "type": "array" },
-        "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" }
-      },
-      "required": ["uid", "name", "email", "permissions", "createdAt", "updatedAt"]
-    },
-    "settings": {
-      "title": "Settings",
-      "description": "Global application operational parameters and contact information",
-      "type": "object",
-      "properties": {
-        "appVersion": { "type": "string" },
-        "maintenanceMode": { "type": "boolean" },
-        "minimumSupportedVersion": { "type": "string" },
-        "contactInformation": { "type": "object" },
-        "updatedAt": { "type": "string" },
-        "updatedBy": { "type": "string" }
-      },
-      "required": ["appVersion", "maintenanceMode", "minimumSupportedVersion"]
-    },
-    "app_config": {
-      "title": "AppConfig",
-      "description": "Technical configuration specifying storage provider, AI parameters, and feature flags",
-      "type": "object",
-      "properties": {
-        "storageBackend": { "type": "string", "enum": ["r2", "local", "firebase"] },
-        "aiProvider": { "type": "string", "enum": ["gemini"] },
-        "maxUploadSize": { "type": "number" },
-        "allowedFileTypes": { "type": "array" },
-        "featureFlags": { "type": "object" },
-        "updatedAt": { "type": "string" },
-        "updatedBy": { "type": "string" }
-      },
-      "required": ["storageBackend", "aiProvider", "maxUploadSize", "allowedFileTypes", "featureFlags"]
-    },
-    "audit_log": {
-      "title": "AuditLog",
-      "description": "Immutable security and activity audit entry",
-      "type": "object",
-      "properties": {
-        "timestamp": { "type": "string" },
-        "userId": { "type": "string" },
-        "role": { "type": "string" },
-        "action": { "type": "string" },
-        "resource": { "type": "string" },
-        "status": { "type": "string", "enum": ["success", "failure", "warning"] },
-        "metadata": { "type": "object" }
-      },
-      "required": ["timestamp", "userId", "role", "action", "resource", "status"]
-    },
-    "note": {
-      "title": "Note",
-      "description": "Educational study material metadata document stored in Firestore referencing R2 binary asset",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "title": { "type": "string" },
-        "description": { "type": "string" },
-        "subject": { "type": "string" },
-        "chapter": { "type": "string" },
-        "batch": { "type": "string" },
-        "class": { "type": "string" },
-        "tags": { "type": "array" },
-        "fileName": { "type": "string" },
-        "originalFileName": { "type": "string" },
-        "mimeType": { "type": "string" },
-        "extension": { "type": "string" },
-        "size": { "type": "number" },
-        "r2ObjectKey": { "type": "string" },
-        "uploadedBy": { "type": "string" },
-        "uploadedAt": { "type": "string" },
-        "updatedAt": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "hidden", "deleted"] },
-        "downloadCount": { "type": "number" },
-        "lastDownloadedAt": { "type": "string" },
-        "isVisible": { "type": "boolean" },
-        "version": { "type": "number" }
-      },
-      "required": ["id", "title", "subject", "r2ObjectKey", "size", "uploadedBy", "uploadedAt", "updatedAt", "status", "isVisible", "version"]
-    },
-    "practice_test": {
-      "title": "PracticeTest",
-      "description": "Practice test metadata document stored in Firestore referencing R2 question bank JSON",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "title": { "type": "string" },
-        "subject": { "type": "string" },
-        "chapter": { "type": "string" },
-        "batch": { "type": "string" },
-        "description": { "type": "string" },
-        "r2ObjectKey": { "type": "string" },
-        "questionCount": { "type": "number" },
-        "duration": { "type": "number" },
-        "totalMarks": { "type": "number" },
-        "negativeMarking": { "type": "number" },
-        "createdBy": { "type": "string" },
-        "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" },
-        "status": { "type": "string", "enum": ["published", "draft", "archived", "deleted"] },
-        "version": { "type": "number" },
-        "visibility": { "type": "boolean" },
-        "tags": { "type": "array" }
-      },
-      "required": ["id", "title", "subject", "chapter", "r2ObjectKey", "questionCount", "duration", "totalMarks", "createdBy", "createdAt", "updatedAt", "status", "version", "visibility"]
-    },
-    "student_attempt": {
-      "title": "StudentAttempt",
-      "description": "Student practice test attempt with real-time auto-saving progress and submission responses",
-      "type": "object",
-      "properties": {
-        "attemptId": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["Admin", "Student"] },
         "studentId": { "type": "string" },
-        "practiceTestId": { "type": "string" },
-        "startedAt": { "type": "string" },
-        "submittedAt": { "type": "string" },
-        "timeTaken": { "type": "number" },
-        "answers": { "type": "object" },
-        "score": { "type": "number" },
-        "percentage": { "type": "number" },
-        "correct": { "type": "number" },
-        "wrong": { "type": "number" },
-        "unanswered": { "type": "number" },
-        "status": { "type": "string", "enum": ["in_progress", "submitted", "abandoned"] }
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" },
+        "status": { "type": "string", "enum": ["Active", "Inactive"] },
+        "name": { "type": "string" }
       },
-      "required": ["attemptId", "studentId", "practiceTestId", "startedAt", "answers", "status"]
-    },
-    "practice_result": {
-      "title": "PracticeResult",
-      "description": "Evaluated practice test score, percentile, and performance analytics",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "attemptId": { "type": "string" },
-        "studentId": { "type": "string" },
-        "practiceTestId": { "type": "string" },
-        "finalScore": { "type": "number" },
-        "totalMarks": { "type": "number" },
-        "percentage": { "type": "number" },
-        "rank": { "type": "number" },
-        "percentile": { "type": "number" },
-        "passStatus": { "type": "string", "enum": ["passed", "failed"] },
-        "completionTime": { "type": "number" }
-      },
-      "required": ["id", "attemptId", "studentId", "practiceTestId", "finalScore", "totalMarks", "percentage", "passStatus", "completionTime"]
-    },
-    "practice_assignment": {
-      "title": "PracticeAssignment",
-      "description": "Test assignment scheduling for batches and individual students",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "practiceTestId": { "type": "string" },
-        "assignedBatches": { "type": "array" },
-        "assignedStudents": { "type": "array" },
-        "dueDate": { "type": "string" },
-        "visibility": { "type": "boolean" },
-        "assignedBy": { "type": "string" },
-        "assignedAt": { "type": "string" }
-      },
-      "required": ["id", "practiceTestId", "assignedBatches", "dueDate", "visibility", "assignedBy", "assignedAt"]
+      "required": ["uid", "phone", "role", "status"]
     }
   },
   "firestore": {
-    "/users/{userId}": {
-      "schema": "user",
-      "description": "User account documents mapping identity to roles and metadata"
-    },
     "/students/{studentId}": {
       "schema": "student",
-      "description": "Student records containing enrollment and guardian information"
+      "description": "Tuition student profiles, progress, and financial history"
     },
-    "/admins/{adminId}": {
-      "schema": "admin",
-      "description": "Administrator registry mapping system admins to permission arrays"
-    },
-    "/settings/{settingId}": {
-      "schema": "settings",
-      "description": "Global application runtime settings"
-    },
-    "/app_config/{configId}": {
-      "schema": "app_config",
-      "description": "Application architecture config and feature flags"
-    },
-    "/audit_logs/{logId}": {
-      "schema": "audit_log",
-      "description": "Append-only system and security audit trail"
-    },
-    "/notes/{noteId}": {
-      "schema": "note",
-      "description": "Phase 3 educational note metadata documents"
-    },
-    "/practice_tests/{testId}": {
-      "schema": "practice_test",
-      "description": "Phase 4 practice test metadata documents referencing Cloudflare R2 question bank JSON"
-    },
-    "/student_attempts/{attemptId}": {
-      "schema": "student_attempt",
-      "description": "Phase 4 real-time student test attempts with auto-saving progress"
-    },
-    "/practice_results/{resultId}": {
-      "schema": "practice_result",
-      "description": "Phase 4 final performance records, ranks, and percentiles"
-    },
-    "/practice_assignments/{assignmentId}": {
-      "schema": "practice_assignment",
-      "description": "Phase 4 batch and student test assignment schedules"
+    "/users/{userId}": {
+      "schema": "user",
+      "description": "Role-based user records mapping auth identity to admin/student permissions"
     }
   }
 }

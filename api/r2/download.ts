@@ -1,78 +1,93 @@
-import { generateR2SignedUrl, getR2ServerConfig, headObjectFromR2 } from "../_lib/r2Server";
+import { getObjectFromR2, headObjectFromR2, getR2ServerConfig } from "../../src/lib/r2Server";
 
 export const runtime = "nodejs";
 
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
-  if (req.method === "OPTIONS") return res.status(204).end();
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Authorization, Accept");
+  res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type, ETag, Content-Disposition");
+
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+
+  const bucket = req.query?.bucket as string | undefined;
+  const key = req.query?.key as string | undefined;
+
+  if (!key) {
+    if (req.method === "HEAD") return res.status(400).end();
+    return res.status(400).send("Missing required 'key' query parameter.");
+  }
+
+  const cleanKey = key.replace(/^\/+/, "");
+  const config = getR2ServerConfig();
+  const actualBucket = bucket || config.bucket || "academy-connect-files";
+
+  if (req.method === "HEAD") {
+    try {
+      const head = await headObjectFromR2({ bucket: actualBucket, key: cleanKey });
+      if (!head.exists) {
+        return res.status(404).end();
+      }
+
+      let contentType = (req.query?.mimeType as string) || head.contentType || "application/octet-stream";
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Accept-Ranges", "bytes");
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      if (head.etag) res.setHeader("ETag", head.etag);
+      if (head.contentLength) res.setHeader("Content-Length", head.contentLength);
+      return res.status(200).end();
+    } catch {
+      return res.status(404).end();
+    }
+  }
 
   if (req.method !== "GET") {
-    return res.status(405).json({ success: false, error: { message: "Method not allowed. Use GET." } });
+    return res.status(405).send("Method not allowed. Use GET or HEAD.");
   }
 
   try {
-    const key =
-      (req.query?.key as string) ||
-      (req.query?.storageKey as string) ||
-      (req.query?.r2ObjectKey as string) ||
-      (req.query?.storagePath as string);
+    const range = req.headers?.range;
+    const obj = await getObjectFromR2({ bucket: actualBucket, key: cleanKey, range });
 
-    if (!key) {
-      return res.status(400).json({ success: false, error: { message: "Missing required 'storageKey' or 'key' parameter." } });
+    if (!obj.body) {
+      return res.status(404).send("File not found in Cloudflare R2.");
     }
 
-    const cleanKey = String(key).replace(/^\/+/, "");
-    const config = getR2ServerConfig();
-    const bucket = ((req.query?.bucket as string) || config.bucket || "academy-connect-files").trim();
-    const expiresIn = Number(req.query?.expiresIn) || 300; // Strict 5 minutes (300 seconds)
-
-    // Verify object exists in storage
-    const head = await headObjectFromR2({ bucket, key: cleanKey });
-    if (!head.exists) {
-      return res.status(404).json({ success: false, error: { message: `File not found in storage: ${cleanKey}` } });
+    let contentType = (req.query?.mimeType as string) || obj.contentType || "application/octet-stream";
+    if (contentType === "application/octet-stream" || !contentType) {
+      if (cleanKey.toLowerCase().endsWith(".pdf")) contentType = "application/pdf";
+      else if (cleanKey.toLowerCase().endsWith(".png")) contentType = "image/png";
+      else if (cleanKey.toLowerCase().endsWith(".jpg") || cleanKey.toLowerCase().endsWith(".jpeg")) contentType = "image/jpeg";
+      else if (cleanKey.toLowerCase().endsWith(".webp")) contentType = "image/webp";
+      else if (cleanKey.toLowerCase().endsWith(".gif")) contentType = "image/gif";
+      else if (cleanKey.toLowerCase().endsWith(".svg")) contentType = "image/svg+xml";
+      else if (cleanKey.toLowerCase().endsWith(".json")) contentType = "application/json";
     }
 
-    // Generate temporary signed URL (5 minutes expiry)
-    const signedUrl = await generateR2SignedUrl({
-      bucket,
-      key: cleanKey,
-      expiresIn,
-      operation: "getObject",
-      contentType: head.contentType,
-    });
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
 
-    const isDirectBrowserNavigation =
-      req.headers?.accept?.includes("text/html") ||
-      req.query?.redirect === "true" ||
-      req.query?.action === "open";
+    if (obj.etag) res.setHeader("ETag", obj.etag);
+    if (obj.contentRange) {
+      res.status(206);
+      res.setHeader("Content-Range", obj.contentRange);
+    }
+    if (obj.contentLength) res.setHeader("Content-Length", obj.contentLength);
 
-    if (isDirectBrowserNavigation) {
-      return res.redirect(302, signedUrl);
+    if (req.query?.download === "true" || req.query?.filename) {
+      const downloadFilename = (req.query?.filename as string) || cleanKey.split("/").pop() || "download";
+      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadFilename)}"`);
     }
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        signedUrl,
-        r2ObjectKey: cleanKey,
-        storageKey: cleanKey,
-        bucket,
-        expiresIn,
-        contentType: head.contentType,
-        contentLength: head.contentLength,
-      },
-      timestamp: new Date().toISOString(),
-    });
+    obj.body.pipe(res);
   } catch (err: any) {
-    console.error("[Serverless R2] Download signed URL error:", err);
-    return res.status(500).json({
-      success: false,
-      error: {
-        message: err.message || "Failed to generate download URL for document.",
-      },
-      timestamp: new Date().toISOString(),
-    });
+    console.error("[Vercel R2] Download error:", err);
+    if (err.name === "NoSuchKey" || err.name === "NotFound" || err.$metadata?.httpStatusCode === 404) {
+      return res.status(404).send("File not found in Cloudflare R2.");
+    }
+    return res.status(500).send(`Cloudflare R2 Download Error: ${err.message || err}`);
   }
 }

@@ -1,18 +1,19 @@
-import { generateR2SignedUrl, getR2ServerConfig } from "../_lib/r2Server";
+import { generateR2SignedUrl, headObjectFromR2, getR2ServerConfig } from "../../src/lib/r2Server";
 
 export const runtime = "nodejs";
 
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range, Authorization, X-Requested-With");
+  res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type, ETag, Content-Disposition");
 
   if (req.method === "OPTIONS") {
     return res.status(204).end();
   }
 
   if (req.method !== "POST") {
-    return res.status(405).json({ success: false, error: { message: "Method not allowed. Use POST." } });
+    return res.status(405).json({ error: "Method not allowed. Use POST." });
   }
 
   try {
@@ -24,44 +25,54 @@ export default async function handler(req: any, res: any) {
     }
     body = body || {};
 
-    const storageKey = body.storageKey || body.r2ObjectKey || body.key;
-    if (!storageKey) {
-      return res.status(400).json({ success: false, error: { message: "Missing required 'storageKey' or 'r2ObjectKey' parameter." } });
+    const { bucket, key, expiresIn, operation, contentType } = body;
+    if (!key) {
+      return res.status(400).json({ error: "Missing required 'key' parameter." });
     }
 
-    const cleanKey = String(storageKey).replace(/^\/+/, "");
+    const cleanKey = String(key).replace(/^\/+/, "");
     const config = getR2ServerConfig();
-    const bucket = (body.bucket || config.bucket || "academy-connect-files").trim();
-    // Default expiration strictly 5 minutes (300 seconds)
-    const expiresIn = Number(body.expiresIn) || 300;
+    const actualBucket = (bucket || config.bucket || "academy-connect-files").trim();
+
+    let headStatus = 200;
+    let headContentType = contentType || "application/octet-stream";
+    let headContentLength = 0;
+    let exists = true;
+    let effectiveKey = cleanKey;
+
+    try {
+      const headCheck = await headObjectFromR2({ bucket: actualBucket, key: cleanKey });
+      exists = headCheck.exists;
+      headStatus = headCheck.exists ? 200 : 404;
+      if (headCheck.contentType) headContentType = headCheck.contentType;
+      if (headCheck.contentLength) headContentLength = headCheck.contentLength;
+      if (headCheck.resolvedKey) effectiveKey = headCheck.resolvedKey;
+    } catch (headErr: any) {
+      console.warn("[Vercel R2] Head verification warning:", headErr?.message || headErr);
+    }
 
     const signedUrl = await generateR2SignedUrl({
-      bucket,
-      key: cleanKey,
-      expiresIn,
-      operation: body.operation === "putObject" ? "putObject" : "getObject",
-      contentType: body.contentType,
+      bucket: actualBucket,
+      key: effectiveKey,
+      expiresIn: Number(expiresIn) || 3600,
+      operation: operation === "putObject" ? "putObject" : "getObject",
+      contentType: headContentType,
     });
 
     return res.status(200).json({
       success: true,
-      data: {
-        signedUrl,
-        bucket,
-        storageKey: cleanKey,
-        r2ObjectKey: cleanKey,
-        expiresIn,
-      },
-      timestamp: new Date().toISOString(),
+      signedUrl,
+      exists,
+      status: headStatus,
+      contentType: headContentType,
+      contentLength: headContentLength,
+      bucket: actualBucket,
+      key: effectiveKey,
     });
   } catch (err: any) {
-    console.error("[Serverless R2] Error generating signed URL:", err);
+    console.error("[Vercel R2] Error generating signed URL:", err);
     return res.status(500).json({
-      success: false,
-      error: {
-        message: err.message || "Failed to generate Cloudflare R2 signed URL.",
-      },
-      timestamp: new Date().toISOString(),
+      error: err.message || "Failed to generate Cloudflare R2 signed URL.",
     });
   }
 }

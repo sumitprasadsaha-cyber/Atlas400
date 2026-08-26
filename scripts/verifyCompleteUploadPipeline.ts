@@ -1,5 +1,5 @@
 import { uploadFileToR2, deleteFileFromStorage, getResolvedViewUrl } from "../src/lib/storageService";
-import { uploadObjectToR2, getObjectFromR2, deleteObjectFromR2, listObjectsFromR2 } from "../api/_lib/r2Server";
+import { uploadObjectToR2, getObjectFromR2, deleteObjectFromR2, listObjectsFromR2 } from "../src/lib/r2Server";
 import { generateUPSCStoragePath } from "../src/utils/classNoteHelper";
 import fs from "fs";
 import path from "path";

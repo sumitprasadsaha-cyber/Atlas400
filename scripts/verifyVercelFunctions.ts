@@ -1,7 +1,7 @@
 import handlerSignedUrl from "../api/r2/signed-url";
-import handlerUpload from "../api/r2/upload";
-import handlerDelete from "../api/r2/delete";
+import handlerDownload from "../api/r2/download";
 import handlerHealth from "../api/r2/health";
+import http from "http";
 
 function createMockReqRes(method: string, url: string, body?: any, query?: Record<string, string>, headers?: Record<string, string>) {
   let statusCode = 200;
@@ -62,47 +62,33 @@ async function verifyVercelFunctions() {
   console.log("2. Testing handlerSignedUrl with POST...");
   const signedMocks = createMockReqRes("POST", "/api/r2/signed-url", {
     bucket: "academy-connect-files",
-    storageKey: "notes/student-test/test-note.pdf",
-    expiresIn: 600,
+    key: "notes/student-test/test-note.pdf",
+    expiresIn: 3600,
+    operation: "getObject",
   });
   await handlerSignedUrl(signedMocks.req, signedMocks.res);
   console.log("   Signed URL Status:", signedMocks.res.getStatus());
   const signedJson = JSON.parse(signedMocks.res.getData());
   console.log("   Signed URL Result:", {
     success: signedJson.success,
+    status: signedJson.status,
     hasSignedUrl: Boolean(signedJson.signedUrl),
     bucket: signedJson.bucket,
-    storageKey: signedJson.storageKey,
-    expiresIn: signedJson.expiresIn,
+    key: signedJson.key,
   });
 
   if (signedMocks.res.getStatus() !== 200 || !signedJson.signedUrl) {
     throw new Error(`handlerSignedUrl failed: status=${signedMocks.res.getStatus()}, data=${signedMocks.res.getData()}`);
   }
 
-  // 3. Test upload endpoint
-  console.log("3. Testing handlerUpload POST...");
-  const uploadMocks = createMockReqRes("POST", "/api/r2/upload", {
+  // 3. Test download endpoint with HEAD request
+  console.log("3. Testing handlerDownload HEAD request...");
+  const headMocks = createMockReqRes("HEAD", "/api/r2/download", undefined, {
     bucket: "academy-connect-files",
-    fileName: "sample.pdf",
-    mimeType: "application/pdf",
-    base64: Buffer.from("%PDF-1.4 test file content").toString("base64"),
+    key: "notes/student-test/test-note.pdf",
   });
-  await handlerUpload(uploadMocks.req, uploadMocks.res);
-  console.log("   Upload Status:", uploadMocks.res.getStatus());
-  const uploadJson = JSON.parse(uploadMocks.res.getData());
-  console.log("   Upload Result:", uploadJson);
-
-  // 4. Test delete endpoint
-  console.log("4. Testing handlerDelete POST...");
-  const deleteMocks = createMockReqRes("POST", "/api/r2/delete", {
-    bucket: "academy-connect-files",
-    storageKey: uploadJson.storageKey || "notes/sample.pdf",
-  });
-  await handlerDelete(deleteMocks.req, deleteMocks.res);
-  console.log("   Delete Status:", deleteMocks.res.getStatus());
-  const deleteJson = JSON.parse(deleteMocks.res.getData());
-  console.log("   Delete Result:", deleteJson);
+  await handlerDownload(headMocks.req, headMocks.res);
+  console.log("   Download HEAD Status:", headMocks.res.getStatus());
 
   console.log("=== ALL VERCEL SERVERLESS FUNCTIONS PASSED 100% ===");
 }

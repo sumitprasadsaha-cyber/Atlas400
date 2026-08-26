@@ -362,7 +362,7 @@ export function calculateSubjectTestProgress(
   try {
     const testBank = getLocalTestBank();
     if (testBank) {
-      Object.values(testBank).forEach((t: any) => {
+      Object.values(testBank).forEach((t) => {
         if (
           isSubjectMatching(t.subject, subject) &&
           (isAdmin || !student?.classGrade || isClassGradeMatching(t.classGrade, student.classGrade))
@@ -608,7 +608,7 @@ export function calculateSubjectWeightedProgress(
   // 4. Also check test bank practice tests to discover any chapters created as practice tests
   const testBank = getLocalTestBank() || {};
   try {
-    Object.values(testBank).forEach((t: any) => {
+    Object.values(testBank).forEach((t) => {
       if (
         isSubjectMatching(t.subject, subject) &&
         (isAdmin || !student?.classGrade || isClassGradeMatching(t.classGrade, student.classGrade))

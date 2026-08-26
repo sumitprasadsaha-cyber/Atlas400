@@ -11,7 +11,7 @@ import {
   uploadObjectToR2,
   headObjectFromR2,
   getR2ServerConfig,
-} from "../api/_lib/r2Server";
+} from "../src/lib/r2Server";
 
 const firebaseConfig = {
   apiKey: process.env.VITE_FIREBASE_API_KEY,

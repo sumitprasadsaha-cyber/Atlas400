@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { apiApp } from "./src/apiApp";
-import { getR2ServerConfig, isR2Configured } from "./api/_lib/r2Server";
+import { getR2ServerConfig, isR2Configured } from "./src/lib/r2Server";
 
 const app = express();
 const PORT = 3000;

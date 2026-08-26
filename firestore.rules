@@ -2,239 +2,128 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // 1. MASTER GATE: Deny everything by default
+    // Global Safety Net
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // 2. REUSABLE HELPERS
+    // STANDALONE HELPERS
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
     function isAdmin() {
-      return isSignedIn() && (
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ["admin", "Admin"])
-      );
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             getUserData().role == "Admin";
     }
 
-    function isAssociatedStudent(studentId) {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.studentId == studentId;
+    function isStudent(studentId) {
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             getUserData().role == "Student" && 
+             getUserData().studentId == studentId;
     }
 
-    // 3. SCHEMA VALIDATION PREDICATES
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // ENTITY VALIDATIONS
 
     function isValidUser(data) {
       return data.uid is string && data.uid.size() <= 128 &&
-             data.email is string && data.email.size() <= 256 &&
-             data.role in ["admin", "student", "Admin", "Student"] &&
-             (!('isActive' in data) || data.isActive is bool) &&
-             (!('displayName' in data) || data.displayName is string) &&
-             (!('photoURL' in data) || data.photoURL == null || data.photoURL is string);
+             (!('phone' in data) || data.phone == null || data.phone is string) &&
+             (!('role' in data) || data.role in ["Admin", "Student", "admin", "student"]) &&
+             (!('status' in data) || data.status in ["Active", "Inactive", "active", "inactive"]);
     }
 
     function isValidStudent(data) {
-      return data.studentId is string && data.studentId.size() <= 128 &&
-             data.fullName is string && data.fullName.size() <= 128 &&
-             data.phone is string && data.phone.size() <= 32 &&
-             data.email is string && data.email.size() <= 256 &&
-             data.batch is string && data.batch.size() <= 64 &&
-             data.status in ["active", "inactive"] &&
-             data.serviceStatus in ["active", "paused", "ended"];
-    }
-
-    function isValidAdmin(data) {
-      return data.uid is string && data.uid.size() <= 128 &&
-             data.email is string && data.email.size() <= 256 &&
+      return data.id is string && data.id.size() <= 128 &&
              data.name is string && data.name.size() <= 128 &&
-             data.permissions is list;
+             data.classGrade is string && data.classGrade.size() <= 32 &&
+             data.phone is string && data.phone.size() <= 20 &&
+             data.parentPhone is string && data.parentPhone.size() <= 20 &&
+             data.monthlyFee is number && data.monthlyFee >= 0;
     }
 
-    function isValidSettings(data) {
-      return data.appVersion is string &&
-             data.maintenanceMode is bool &&
-             data.minimumSupportedVersion is string;
-    }
+    // MATCH BLOCKS
 
-    function isValidAppConfig(data) {
-      return data.storageBackend in ["r2", "local", "firebase"] &&
-             data.aiProvider is string &&
-             data.maxUploadSize is number &&
-             data.allowedFileTypes is list &&
-             data.featureFlags is map;
-    }
-
-    function isValidAuditLog(data) {
-      return data.timestamp is string &&
-             data.userId is string &&
-             data.role is string &&
-             data.action is string &&
-             data.resource is string &&
-             data.status in ["success", "failure", "warning"];
-    }
-
-    function isValidNote(data) {
-      return data.id is string &&
-             data.title is string && data.title.size() <= 256 &&
-             data.subject is string && data.subject.size() <= 128 &&
-             data.r2ObjectKey is string && data.r2ObjectKey.size() <= 512 &&
-             data.size is number && data.size > 0 &&
-             data.isVisible is bool &&
-             data.status in ["active", "hidden", "deleted"];
-    }
-
-    function isValidPracticeTest(data) {
-      return data.id is string &&
-             data.title is string && data.title.size() <= 256 &&
-             data.subject is string && data.subject.size() <= 128 &&
-             data.chapter is string && data.chapter.size() <= 128 &&
-             data.r2ObjectKey is string && data.r2ObjectKey.size() <= 512 &&
-             data.questionCount is number && data.questionCount >= 0 &&
-             data.duration is number && data.duration > 0 &&
-             data.totalMarks is number && data.totalMarks > 0 &&
-             data.visibility is bool &&
-             data.status in ["published", "draft", "archived", "deleted"];
-    }
-
-    function isValidStudentAttempt(data) {
-      return data.attemptId is string &&
-             data.studentId is string &&
-             data.practiceTestId is string &&
-             data.startedAt is string &&
-             data.status in ["in_progress", "submitted", "abandoned"] &&
-             data.answers is map;
-    }
-
-    function isValidPracticeResult(data) {
-      return data.id is string &&
-             data.attemptId is string &&
-             data.studentId is string &&
-             data.practiceTestId is string &&
-             data.finalScore is number &&
-             data.totalMarks is number &&
-             data.passStatus in ["passed", "failed"];
-    }
-
-    function isValidPracticeAssignment(data) {
-      return data.id is string &&
-             data.practiceTestId is string &&
-             data.assignedBatches is list &&
-             data.dueDate is string &&
-             data.visibility is bool;
-    }
-
-    // 4. COLLECTION MATCH RULES
-
-    // USERS COLLECTION
-    // Users can read their own profile; Admins can read all.
-    // Users can create/update their own non-privileged details; Admins can manage all.
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isSignedIn() && (
-        (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.uid == userId) ||
-        isAdmin()
-      );
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isSignedIn() && 
+                    (request.auth.uid == userId && 
+                     isValidUser(request.resource.data) &&
+                     request.resource.data.uid == request.auth.uid);
       allow update: if (isAdmin() && isValidUser(request.resource.data)) ||
-                      (isOwner(userId) && isValidUser(request.resource.data) &&
-                       request.resource.data.uid == userId &&
-                       request.resource.data.role == resource.data.role); // Students cannot elevate own role
+                      (isSignedIn() && 
+                       request.auth.uid == userId && 
+                       isValidUser(request.resource.data) &&
+                       request.resource.data.uid == request.auth.uid);
       allow delete: if isAdmin();
     }
 
-    // STUDENTS COLLECTION
-    // Admins can perform full CRUD.
-    // Students can read only their own associated student profile.
     match /students/{studentId} {
-      allow read: if isAdmin() || isAssociatedStudent(studentId);
+      allow read: if isSignedIn() && (isAdmin() || isStudent(studentId));
       allow create, delete: if isAdmin() && isValidStudent(request.resource.data);
       allow update: if (isAdmin() && isValidStudent(request.resource.data)) ||
-                      (isAssociatedStudent(studentId) && isValidStudent(request.resource.data) &&
-                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['profilePhoto', 'phone', 'guardian', 'updatedAt']));
+                      (isStudent(studentId) && 
+                       isValidStudent(request.resource.data) &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['avatarUrl', 'avatarColor', 'lastActiveAt']));
     }
 
-    // ADMINS COLLECTION
-    // Only verified Admins can read, create, update, delete.
-    match /admins/{adminId} {
-      allow read, write: if isAdmin() && (request.resource == null || isValidAdmin(request.resource.data));
-    }
-
-    // SETTINGS COLLECTION
-    // All authenticated users can read global settings; only Admins can write.
-    match /settings/{settingId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin() && (request.resource == null || isValidSettings(request.resource.data));
-    }
-
-    // APP_CONFIG COLLECTION
-    // All authenticated users can read app config; only Admins can write.
-    match /app_config/{configId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin() && (request.resource == null || isValidAppConfig(request.resource.data));
-    }
-
-    // AUDIT_LOGS COLLECTION
-    // Authenticated users can append audit logs (create); Only Admins can read. No one can update or delete.
-    match /audit_logs/{logId} {
-      allow read: if isAdmin();
-      allow create: if isSignedIn() && isValidAuditLog(request.resource.data);
-      allow update, delete: if false; // Immutable audit log trail
-    }
-
-    // NOTES COLLECTION (PHASE 3)
-    // Admin: Full CRUD (Upload, Replace, Delete, Hide, Show, Edit metadata)
-    // Student: Read metadata for active visible notes; increment downloadCount/lastDownloadedAt
-    match /notes/{noteId} {
-      allow read: if isSignedIn() && (isAdmin() || (resource.data.isVisible == true && resource.data.status == "active"));
-      allow create: if isAdmin() && isValidNote(request.resource.data);
-      allow update: if (isAdmin() && isValidNote(request.resource.data)) ||
-                      (isSignedIn() &&
-                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['downloadCount', 'lastDownloadedAt']));
-      allow delete: if isAdmin();
-    }
-
-    // PRACTICE TESTS COLLECTION (PHASE 4)
-    // Admin: Full CRUD (Create, Edit, Delete, Hide, Publish, Replace)
-    // Student: Read metadata for published and visible tests
-    match /practice_tests/{testId} {
-      allow read: if isSignedIn() && (isAdmin() || (resource.data.visibility == true && resource.data.status == "published"));
-      allow create: if isAdmin() && isValidPracticeTest(request.resource.data);
-      allow update: if isAdmin() && isValidPracticeTest(request.resource.data);
-      allow delete: if isAdmin();
-    }
-
-    // STUDENT ATTEMPTS COLLECTION (PHASE 4)
-    // Admin: Read all attempts, delete/manage attempts
-    // Student: Read and manage own attempts (auto-save answers & submit)
-    match /student_attempts/{attemptId} {
-      allow read: if isSignedIn() && (isAdmin() || resource.data.studentId == request.auth.uid || isAssociatedStudent(resource.data.studentId));
-      allow create: if isSignedIn() && isValidStudentAttempt(request.resource.data) && (request.resource.data.studentId == request.auth.uid || isAssociatedStudent(request.resource.data.studentId) || isAdmin());
-      allow update: if isSignedIn() && isValidStudentAttempt(request.resource.data) && (resource.data.studentId == request.auth.uid || isAssociatedStudent(resource.data.studentId) || isAdmin());
-      allow delete: if isAdmin();
-    }
-
-    // PRACTICE RESULTS COLLECTION (PHASE 4)
-    // Admin: Read all results, generate analytics
-    // Student: Read own results
-    match /practice_results/{resultId} {
-      allow read: if isSignedIn() && (isAdmin() || resource.data.studentId == request.auth.uid || isAssociatedStudent(resource.data.studentId));
-      allow create, update: if isSignedIn() && (isAdmin() || request.resource.data.studentId == request.auth.uid || isAssociatedStudent(request.resource.data.studentId));
-      allow delete: if isAdmin();
-    }
-
-    // PRACTICE ASSIGNMENTS COLLECTION (PHASE 4)
-    // Admin: Full CRUD
-    // Student: Read assignments
-    match /practice_assignments/{assignmentId} {
+    // CLASS NOTES - Admin can CRUD, Students can read
+    match /class_notes/{noteId} {
       allow read: if isSignedIn();
       allow create, update, delete: if isAdmin();
     }
+
+    // PRACTICE TESTS (from Supabase, synced to Firestore)
+    match /practice_tests/{testId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // STUDENT TEST ATTEMPTS - Students can create their own, read their own
+    // Admins can read all to generate reports
+    match /student_test_attempts/{attemptId} {
+      allow create: if isSignedIn() && (isAdmin() || request.auth.uid != null);
+      allow read: if isSignedIn() && (isAdmin() || request.auth.uid != null);
+      allow update, delete: if isAdmin();
+    }
+
+    // STUDENT TOPIC TEST SCORES - Summary of test performance by topic
+    // Students can read their own, admins can read all
+    match /student_topic_test_scores/{scoreId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // ANNOUNCEMENTS - Admin can manage, all can read
+    match /announcements/{announcementId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // SETTINGS - Admin can manage, all can read
+    match /settings/{document=**} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // REALTIME SYNC SIGNALS - For coordinating updates across devices
+    match /practice_tests_sync/{document=**} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /content_sync_signals/{document=**} {
+      allow read, write: if isSignedIn();
+    }
   }
 }
+
