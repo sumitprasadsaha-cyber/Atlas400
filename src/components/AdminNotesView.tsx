@@ -29,7 +29,7 @@ import { ClassNote, Student } from "../types";
 import { uploadFileToR2, deleteFileFromStorage } from "../lib/storageService";
 import { verifyR2ObjectExists } from "../lib/r2Client";
 import { saveClassNoteDoc, deleteClassNoteDoc } from "../lib/firestoreService";
-import { groupClassNotesHierarchy, normalizeClassGrade, isClassGradeMatching, isSubjectMatching, generateUPSCStoragePath, inferGSPaperFromSubject } from "../utils/classNoteHelper";
+import { groupClassNotesHierarchy, normalizeClassGrade, isClassGradeMatching, isSubjectMatching, inferGSPaperFromSubject } from "../utils/classNoteHelper";
 import { getFormattedTopicLabel, isFileNameRedundant } from "../utils/chapterNotesHelper";
 import { isImageFile, invalidateNoteCache, openNoteInNativeViewer } from "../lib/nativePdfService";
 import AdminPracticeTestModal from "./AdminPracticeTestModal";

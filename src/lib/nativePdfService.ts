@@ -221,10 +221,11 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
     absoluteUrl = `${absoluteUrl}${sep}mimeType=${encodeURIComponent(mimeType)}`;
   }
 
-  // Required Debug Logs before requesting / opening R2
-  console.log("Saved Storage Key:", exactKey || storageKey);
-  console.log("Bucket:", bucket);
-  console.log("Opening:", absoluteUrl);
+  // Required Debug Logs for note retrieval
+  console.log("=== [NOTE RETRIEVAL PIPELINE] ===");
+  console.log("Firestore storageKey:", exactKey || storageKey);
+  console.log("Bucket name:", bucket);
+  console.log("Signed URL generated:", absoluteUrl);
 
   // Fast pre-flight verification for 404 / 403 errors (without loading file into memory)
   try {
@@ -234,6 +235,9 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
     }
 
     if (probeRes) {
+      console.log("HTTP status from R2:", probeRes.status);
+      console.log("================================");
+
       if (probeRes.status === 404) {
         let responseBody = "";
         try {
@@ -241,13 +245,15 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
           responseBody = await clone.text();
         } catch {}
 
-        // Required Debug logs on HTTP 404
-        console.error("Saved storage key:", exactKey || storageKey);
-        console.error("Firestore document ID:", noteId);
-        console.error("Requested URL:", absoluteUrl);
+        // Required Debug logs if object cannot be found
+        console.error("=== [R2 OBJECT NOT FOUND] ===");
+        console.error("Requested key:", storageKey || exactKey);
         console.error("Bucket:", bucket);
-        console.error("HTTP Status:", 404);
+        console.error("Exact key sent to R2:", exactKey);
+        console.error("Firestore document ID:", noteId);
+        console.error("HTTP status from R2:", 404);
         console.error("Response body:", responseBody);
+        console.error("=============================");
 
         alert("This note file could not be found in Cloudflare Storage.\nPlease contact the administrator.");
         throw new Error("This note file could not be found in Cloudflare Storage. Please contact the administrator.");
@@ -257,6 +263,9 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
         alert("Unable to generate secure access to this note.");
         throw new Error("Unable to generate secure access to this note.");
       }
+    } else {
+      console.log("HTTP status from R2: 200 (Direct)");
+      console.log("================================");
     }
   } catch (probeErr: any) {
     if (
