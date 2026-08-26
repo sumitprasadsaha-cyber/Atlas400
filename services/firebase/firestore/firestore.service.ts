@@ -7,28 +7,81 @@ import {
   updateDoc,
   deleteDoc,
   query,
-  where,
-  orderBy,
-  limit,
   onSnapshot,
   QueryConstraint,
   DocumentData,
   Unsubscribe,
+  writeBatch,
+  runTransaction,
+  Transaction,
+  WriteBatch,
 } from "firebase/firestore";
-import { db } from "../config/firebase.config";
+import { db, auth } from "../config/firebase.config";
 import { CollectionName } from "./collections";
 import { logger } from "../../../shared/utils/logger";
+import { DatabaseError } from "../../../shared/errors";
+
+export enum FirestoreOperationType {
+  CREATE = "create",
+  UPDATE = "update",
+  DELETE = "delete",
+  LIST = "list",
+  GET = "get",
+  WRITE = "write",
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: FirestoreOperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+export function handleFirestoreError(error: unknown, operationType: FirestoreOperationType, path: string | null): never {
+  const currentUser = auth.currentUser;
+  const errMessage = error instanceof Error ? error.message : String(error);
+
+  const errInfo: FirestoreErrorInfo = {
+    error: errMessage,
+    authInfo: {
+      userId: currentUser?.uid || null,
+      email: currentUser?.email || null,
+      emailVerified: currentUser?.emailVerified || null,
+      isAnonymous: currentUser?.isAnonymous || null,
+      tenantId: currentUser?.tenantId || null,
+      providerInfo: currentUser?.providerData?.map((p) => ({
+        providerId: p.providerId,
+        email: p.email,
+      })) || [],
+    },
+    operationType,
+    path,
+  };
+
+  logger.error(`Firestore Error [${operationType}] on [${path}]:`, error, errInfo as unknown as Record<string, unknown>);
+  throw new DatabaseError(JSON.stringify(errInfo));
+}
 
 export const firestoreService = {
   async getDocument<T = DocumentData>(collectionName: CollectionName, id: string): Promise<T | null> {
+    const docPath = `${collectionName}/${id}`;
     try {
       const docRef = doc(db, collectionName, id);
       const snap = await getDoc(docRef);
       if (!snap.exists()) return null;
       return { id: snap.id, ...snap.data() } as unknown as T;
     } catch (error) {
-      logger.error(`Error getting document ${collectionName}/${id}`, error);
-      throw error;
+      handleFirestoreError(error, FirestoreOperationType.GET, docPath);
     }
   },
 
@@ -38,6 +91,7 @@ export const firestoreService = {
     data: T,
     merge: boolean = true
   ): Promise<void> {
+    const docPath = `${collectionName}/${id}`;
     try {
       const docRef = doc(db, collectionName, id);
       const now = new Date().toISOString();
@@ -47,10 +101,9 @@ export const firestoreService = {
         createdAt: data.createdAt || now,
       };
       await setDoc(docRef, payload, { merge });
-      logger.debug(`Document saved: ${collectionName}/${id}`);
+      logger.debug(`Document written: ${docPath}`);
     } catch (error) {
-      logger.error(`Error setting document ${collectionName}/${id}`, error);
-      throw error;
+      handleFirestoreError(error, FirestoreOperationType.WRITE, docPath);
     }
   },
 
@@ -59,6 +112,7 @@ export const firestoreService = {
     id: string,
     data: Partial<T>
   ): Promise<void> {
+    const docPath = `${collectionName}/${id}`;
     try {
       const docRef = doc(db, collectionName, id);
       const payload = {
@@ -66,21 +120,20 @@ export const firestoreService = {
         updatedAt: new Date().toISOString(),
       };
       await updateDoc(docRef, payload);
-      logger.debug(`Document updated: ${collectionName}/${id}`);
+      logger.debug(`Document updated: ${docPath}`);
     } catch (error) {
-      logger.error(`Error updating document ${collectionName}/${id}`, error);
-      throw error;
+      handleFirestoreError(error, FirestoreOperationType.UPDATE, docPath);
     }
   },
 
   async deleteDocument(collectionName: CollectionName, id: string): Promise<void> {
+    const docPath = `${collectionName}/${id}`;
     try {
       const docRef = doc(db, collectionName, id);
       await deleteDoc(docRef);
-      logger.debug(`Document deleted: ${collectionName}/${id}`);
+      logger.debug(`Document deleted: ${docPath}`);
     } catch (error) {
-      logger.error(`Error deleting document ${collectionName}/${id}`, error);
-      throw error;
+      handleFirestoreError(error, FirestoreOperationType.DELETE, docPath);
     }
   },
 
@@ -94,8 +147,7 @@ export const firestoreService = {
       const snap = await getDocs(q);
       return snap.docs.map((d) => ({ id: d.id, ...d.data() })) as unknown as T[];
     } catch (error) {
-      logger.error(`Error querying collection ${collectionName}`, error);
-      throw error;
+      handleFirestoreError(error, FirestoreOperationType.LIST, collectionName);
     }
   },
 
@@ -117,6 +169,7 @@ export const firestoreService = {
       (error) => {
         logger.error(`Realtime subscription error for ${collectionName}`, error);
         if (onError) onError(error);
+        else handleFirestoreError(error, FirestoreOperationType.LIST, collectionName);
       }
     );
   },
@@ -127,6 +180,7 @@ export const firestoreService = {
     onUpdate: (item: T | null) => void,
     onError?: (err: Error) => void
   ): Unsubscribe {
+    const docPath = `${collectionName}/${id}`;
     const docRef = doc(db, collectionName, id);
 
     return onSnapshot(
@@ -139,9 +193,22 @@ export const firestoreService = {
         onUpdate({ id: snap.id, ...snap.data() } as unknown as T);
       },
       (error) => {
-        logger.error(`Realtime document subscription error for ${collectionName}/${id}`, error);
+        logger.error(`Realtime document subscription error for ${docPath}`, error);
         if (onError) onError(error);
+        else handleFirestoreError(error, FirestoreOperationType.GET, docPath);
       }
     );
+  },
+
+  createBatch(): WriteBatch {
+    return writeBatch(db);
+  },
+
+  async runInTransaction<T>(updateFunction: (transaction: Transaction) => Promise<T>): Promise<T> {
+    try {
+      return await runTransaction(db, updateFunction);
+    } catch (error) {
+      handleFirestoreError(error, FirestoreOperationType.WRITE, "transaction");
+    }
   },
 };

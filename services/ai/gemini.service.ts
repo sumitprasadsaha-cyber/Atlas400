@@ -17,7 +17,7 @@ export const aiService = {
         throw new Error(errorMsg);
       }
 
-      return resJson.data.response;
+      return resJson.data.response || resJson.data.reply || "";
     } catch (error) {
       logger.error("AI service error", error);
       throw error;
@@ -39,7 +39,7 @@ export const aiService = {
         throw new Error(errorMsg);
       }
 
-      return resJson.data.reportText;
+      return resJson.data.reportText || resJson.data.markdown || "";
     } catch (error) {
       logger.error("AI report generation failed", error, { studentId });
       throw error;

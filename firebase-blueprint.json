@@ -1,54 +1,126 @@
 {
   "entities": {
-    "student": {
-      "title": "Student",
-      "description": "Student record with attendance, fee ledger, and syllabus progress details",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "classGrade": { "type": "string" },
-        "phone": { "type": "string" },
-        "parentPhone": { "type": "string" },
-        "monthlyFee": { "type": "number" },
-        "feePaidThisMonth": { "type": "boolean" },
-        "registrationDate": { "type": "string" },
-        "feeMonths": { "type": "object" },
-        "feePaymentDates": { "type": "object" },
-        "feeMonthsList": { "type": "array" },
-        "enrolledSubjects": { "type": "array" },
-        "avatarUrl": { "type": "string" },
-        "avatarColor": { "type": "string" },
-        "notes": { "type": "object" },
-        "attendance": { "type": "object" }
-      },
-      "required": ["id", "name", "classGrade", "phone", "parentPhone", "monthlyFee"]
-    },
     "user": {
       "title": "User",
-      "description": "Authenticated user profile for Admin or Student role access",
+      "description": "System user document containing core authentication and role profile",
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
-        "phone": { "type": "string" },
-        "role": { "type": "string", "enum": ["Admin", "Student"] },
-        "studentId": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "student"] },
         "createdAt": { "type": "string" },
-        "lastLoginAt": { "type": "string" },
-        "status": { "type": "string", "enum": ["Active", "Inactive"] },
-        "name": { "type": "string" }
+        "updatedAt": { "type": "string" },
+        "lastLogin": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "photoURL": { "type": "string" },
+        "studentId": { "type": "string" }
       },
-      "required": ["uid", "phone", "role", "status"]
+      "required": ["uid", "email", "role", "createdAt", "updatedAt"]
+    },
+    "student": {
+      "title": "Student",
+      "description": "Student roster profile containing academic and guardian contact details",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "fullName": { "type": "string" },
+        "batch": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "guardian": { "type": "object" },
+        "profilePhoto": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "serviceStatus": { "type": "string", "enum": ["active", "paused", "ended"] },
+        "joinedOn": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["studentId", "fullName", "batch", "phone", "email", "status", "serviceStatus"]
+    },
+    "admin": {
+      "title": "Admin",
+      "description": "Administrative authority record specifying granular permissions",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "permissions": { "type": "array" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "name", "email", "permissions", "createdAt", "updatedAt"]
+    },
+    "settings": {
+      "title": "Settings",
+      "description": "Global application operational parameters and contact information",
+      "type": "object",
+      "properties": {
+        "appVersion": { "type": "string" },
+        "maintenanceMode": { "type": "boolean" },
+        "minimumSupportedVersion": { "type": "string" },
+        "contactInformation": { "type": "object" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["appVersion", "maintenanceMode", "minimumSupportedVersion"]
+    },
+    "app_config": {
+      "title": "AppConfig",
+      "description": "Technical configuration specifying storage provider, AI parameters, and feature flags",
+      "type": "object",
+      "properties": {
+        "storageBackend": { "type": "string", "enum": ["r2", "local", "firebase"] },
+        "aiProvider": { "type": "string", "enum": ["gemini"] },
+        "maxUploadSize": { "type": "number" },
+        "allowedFileTypes": { "type": "array" },
+        "featureFlags": { "type": "object" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["storageBackend", "aiProvider", "maxUploadSize", "allowedFileTypes", "featureFlags"]
+    },
+    "audit_log": {
+      "title": "AuditLog",
+      "description": "Immutable security and activity audit entry",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "string" },
+        "userId": { "type": "string" },
+        "role": { "type": "string" },
+        "action": { "type": "string" },
+        "resource": { "type": "string" },
+        "status": { "type": "string", "enum": ["success", "failure", "warning"] },
+        "metadata": { "type": "object" }
+      },
+      "required": ["timestamp", "userId", "role", "action", "resource", "status"]
     }
   },
   "firestore": {
-    "/students/{studentId}": {
-      "schema": "student",
-      "description": "Tuition student profiles, progress, and financial history"
-    },
     "/users/{userId}": {
       "schema": "user",
-      "description": "Role-based user records mapping auth identity to admin/student permissions"
+      "description": "User account documents mapping identity to roles and metadata"
+    },
+    "/students/{studentId}": {
+      "schema": "student",
+      "description": "Student records containing enrollment and guardian information"
+    },
+    "/admins/{adminId}": {
+      "schema": "admin",
+      "description": "Administrator registry mapping system admins to permission arrays"
+    },
+    "/settings/{settingId}": {
+      "schema": "settings",
+      "description": "Global application runtime settings"
+    },
+    "/app_config/{configId}": {
+      "schema": "app_config",
+      "description": "Application architecture config and feature flags"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "audit_log",
+      "description": "Append-only system and security audit trail"
     }
   }
 }

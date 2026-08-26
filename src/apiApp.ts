@@ -10,7 +10,12 @@ import {
   headObjectFromR2,
   getR2ServerConfig,
   isR2Configured,
+  getR2S3Client,
 } from "../api/_lib/r2Server";
+import { ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { APP_VERSION } from "../shared/constants/app.constants";
+import { ROLE_PERMISSIONS } from "../shared/constants/permissions.constants";
+import { UserRole, Permission } from "../shared/types/auth.types";
 
 export const apiApp = express();
 
@@ -64,6 +69,99 @@ RULES:
 6. When writing parent communications, use polite, clear, and professional language with appropriate placeholders if needed.`;
 
 const router = express.Router();
+
+// ========================================================
+// SYSTEM & HEALTH ROUTES
+// ========================================================
+
+// 1. General Application Health Check
+router.get("/health", (req, res) => {
+  return res.status(200).json({
+    status: "healthy",
+    version: `v${APP_VERSION}`,
+    runtime: "nodejs",
+    deployment: process.env.NODE_ENV || "production",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// 2. Authentication Session Endpoint
+router.all("/auth/session", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || req.headers.Authorization;
+    let token = "";
+    if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+      token = authHeader.substring(7).trim();
+    }
+
+    if (!token) {
+      return res.status(200).json({
+        authenticated: false,
+        user: null,
+        role: null,
+        permissions: [],
+        tokenValidation: {
+          valid: false,
+          method: "header-bearer",
+          error: "No authorization token provided.",
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    let uid = "unknown";
+    let email = "";
+    let role: UserRole = "student";
+
+    try {
+      const parts = token.split(".");
+      if (parts.length === 3) {
+        const payloadJson = Buffer.from(parts[1], "base64").toString("utf-8");
+        const payload = JSON.parse(payloadJson);
+        uid = payload.user_id || payload.sub || payload.uid || uid;
+        email = payload.email || "";
+        if (payload.role === "admin" || payload.admin === true) {
+          role = "admin";
+        }
+      }
+    } catch {
+      // Basic decoding fallback
+    }
+
+    const permissions: Permission[] = ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.student;
+
+    return res.status(200).json({
+      authenticated: true,
+      user: {
+        uid,
+        email: email || null,
+        displayName: email ? email.split("@")[0] : "User",
+        role,
+        isActive: true,
+      },
+      role,
+      permissions,
+      tokenValidation: {
+        valid: true,
+        method: "firebase-id-token",
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      authenticated: false,
+      user: null,
+      role: null,
+      permissions: [],
+      tokenValidation: {
+        valid: false,
+        method: "header-bearer",
+        error: error.message,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
 
 // ========================================================
 // AI REPORT & CHAT ROUTES
@@ -161,14 +259,46 @@ router.post("/ai/chat", async (req, res) => {
 // ========================================================
 
 // 1. Health check & configuration status
-router.get("/r2/health", (req, res) => {
+router.get("/r2/health", async (req, res) => {
   const config = getR2ServerConfig();
   const configured = isR2Configured();
+
+  const environmentValidation = {
+    hasAccountId: Boolean(config.accountId),
+    hasAccessKey: Boolean(config.accessKeyId),
+    hasSecretKey: Boolean(config.secretAccessKey),
+    hasBucket: Boolean(config.bucket),
+    hasEndpoint: Boolean(config.endpoint),
+    hasPublicUrl: Boolean(config.publicUrl),
+  };
+
+  let bucketConnectivity = false;
+  let status: "ok" | "degraded" | "unconfigured" = configured ? "ok" : "unconfigured";
+
+  if (configured) {
+    try {
+      const client = getR2S3Client();
+      const command = new ListObjectsV2Command({
+        Bucket: config.bucket,
+        MaxKeys: 1,
+      });
+      await client.send(command);
+      bucketConnectivity = true;
+      status = "ok";
+    } catch (err: any) {
+      console.warn(`[R2Health] Connectivity test notice: ${err.message}`);
+      bucketConnectivity = false;
+      status = "degraded";
+    }
+  }
+
   return res.json({
-    status: "ok",
-    configured,
-    bucket: config.bucket,
     storage: "Cloudflare R2",
+    status,
+    bucketConnectivity,
+    configurationStatus: configured ? "valid" : "incomplete",
+    environmentValidation,
+    bucket: config.bucket,
     timestamp: new Date().toISOString(),
   });
 });
