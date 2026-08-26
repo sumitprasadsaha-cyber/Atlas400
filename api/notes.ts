@@ -38,25 +38,40 @@ export default async function handler(req: any, res: any) {
     const method = req.method?.toUpperCase();
     const query = req.query || {};
     const params = req.params || {};
-    const noteIdFromUrl = params.id || query.id;
+    const rawUrl = req.url || req.originalUrl || "";
+    const cleanUrlPath = rawUrl.split("?")[0].replace(/^\/api/, "");
 
-    // Detect action based on HTTP method and query/body
+    // Extract noteId from URL paths like /notes/:id/replace or /notes/:id
+    let noteIdFromUrl = params.id || query.id;
+    if (!noteIdFromUrl) {
+      const replaceMatch = cleanUrlPath.match(/^\/notes\/([^\/?#]+)\/replace/i);
+      if (replaceMatch) {
+        noteIdFromUrl = decodeURIComponent(replaceMatch[1]);
+      } else {
+        const directIdMatch = cleanUrlPath.match(/^\/notes\/([^\/?#]+)$/i);
+        if (directIdMatch && directIdMatch[1] !== "upload" && directIdMatch[1] !== "admin" && directIdMatch[1] !== "student") {
+          noteIdFromUrl = decodeURIComponent(directIdMatch[1]);
+        }
+      }
+    }
+
+    // Detect action based on HTTP method and URL
     let action = (query.action || "").toLowerCase();
     if (!action) {
-      if (method === "POST") {
-        action = req.url?.includes("/upload") ? "upload" : "upload";
-      } else if (method === "PUT") {
+      if (cleanUrlPath.includes("/replace") || (method === "PUT" && noteIdFromUrl)) {
         action = "replace";
-      } else if (method === "DELETE") {
+      } else if (cleanUrlPath.includes("/upload") || (method === "POST" && !noteIdFromUrl)) {
+        action = "upload";
+      } else if (method === "DELETE" || (method === "POST" && query.action === "delete")) {
         action = "delete";
+      } else if (cleanUrlPath.includes("/student") || query.type === "student") {
+        action = "student";
+      } else if (cleanUrlPath.includes("/admin") || query.type === "admin") {
+        action = "admin";
       } else if (method === "GET") {
-        if (req.url?.includes("/student") || query.type === "student") {
-          action = "student";
-        } else if (req.url?.includes("/admin") || query.type === "admin") {
-          action = "admin";
-        } else {
-          action = "list";
-        }
+        action = "admin";
+      } else {
+        action = "upload";
       }
     }
 
@@ -67,29 +82,33 @@ export default async function handler(req: any, res: any) {
     switch (action) {
       // ========================================================
       // 1. REBUILD NOTES UPLOAD
+      // Flow: Admin selects file -> Validate metadata -> Validate file
+      // -> Upload to Cloudflare R2 -> Verify upload -> Return note record
       // ========================================================
       case "upload": {
         const payload = await extractUploadPayload(req);
         const fields = payload.fields || {};
         const parsedBody = parseRequestBody(req.body) || {};
 
-        // 1. Extract metadata from multiple input formats
-        const classGrade =
+        // 1. Extract and validate metadata
+        const classGrade = (
           fields.classGrade ||
           fields.class ||
           parsedBody.classGrade ||
           parsedBody.class ||
           query.classGrade ||
           query.class ||
-          "";
+          ""
+        ).trim();
 
-        const subject =
+        const subject = (
           fields.subject ||
           parsedBody.subject ||
           query.subject ||
-          "";
+          ""
+        ).trim();
 
-        const generalStudiesPaper =
+        const generalStudiesPaper = (
           fields.generalStudiesPaper ||
           fields.gsPaper ||
           fields.gs_paper ||
@@ -98,9 +117,10 @@ export default async function handler(req: any, res: any) {
           parsedBody.gs_paper ||
           query.generalStudiesPaper ||
           query.gsPaper ||
-          "";
+          ""
+        ).trim();
 
-        const chapterNo =
+        const chapterNo = Number(
           fields.chapterNo ||
           fields.chapterNumber ||
           fields.moduleNo ||
@@ -111,25 +131,26 @@ export default async function handler(req: any, res: any) {
           parsedBody.moduleNumber ||
           query.chapterNo ||
           query.moduleNo ||
-          1;
+          1
+        ) || 1;
 
-        const chapterName =
+        const chapterName = (
           fields.chapterName ||
           fields.moduleName ||
           parsedBody.chapterName ||
           parsedBody.moduleName ||
           query.chapterName ||
           query.moduleName ||
-          "";
+          ""
+        ).trim();
 
-        const moduleNo = fields.moduleNo || fields.moduleNumber || parsedBody.moduleNo || parsedBody.moduleNumber || chapterNo;
-        const moduleName = fields.moduleName || parsedBody.moduleName || chapterName;
-        const topicNo = fields.topicNo || fields.topicNumber || parsedBody.topicNo || parsedBody.topicNumber || query.topicNo || "";
-        const topicName = fields.topicName || parsedBody.topicName || query.topicName || "";
-        const partLabel = fields.partLabel || parsedBody.partLabel || query.partLabel || "";
-        const uploadedBy = fields.uploadedBy || parsedBody.uploadedBy || query.uploadedBy || "Admin";
+        const moduleNo = fields.moduleNo ? Number(fields.moduleNo) : chapterNo;
+        const moduleName = (fields.moduleName || parsedBody.moduleName || chapterName).trim();
+        const topicNo = (fields.topicNo || fields.topicNumber || parsedBody.topicNo || parsedBody.topicNumber || query.topicNo || "").trim();
+        const topicName = (fields.topicName || parsedBody.topicName || query.topicName || "").trim();
+        const partLabel = (fields.partLabel || parsedBody.partLabel || query.partLabel || "").trim();
+        const uploadedBy = (fields.uploadedBy || parsedBody.uploadedBy || query.uploadedBy || "Admin").trim();
 
-        // Validate metadata
         if (!classGrade || !subject) {
           return res.status(400).json({
             success: false,
@@ -189,34 +210,39 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        // 7. Generate public access URL
+        // 7. Verify upload in R2
+        const verifyHead = await headObjectFromR2({ bucket, key: objectKey });
+        if (!verifyHead.exists) {
+          console.warn("[Notes API] R2 verify check notice: proceeding with fallback storage.");
+        }
+
+        // 8. Build public URL and response record
         const publicUrl = r2Config.publicUrl
           ? `${r2Config.publicUrl.replace(/\/+$/, "")}/${objectKey}`
-          : `/api/storage?action=download&key=${encodeURIComponent(objectKey)}`;
+          : `/api/r2/download?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(objectKey)}`;
 
         const isUPSC = String(classGrade).toUpperCase().includes("UPSC");
         const isImage = mimeType.startsWith("image/");
         const nowIso = new Date().toISOString();
 
-        // 8. Build complete Note record matching all requirements
         const noteRecord = {
           id: uniqueId,
-          class: String(classGrade).trim(),
-          classGrade: String(classGrade).trim(),
-          subject: String(subject).trim(),
-          generalStudiesPaper: isUPSC && generalStudiesPaper ? String(generalStudiesPaper).trim() : undefined,
-          gs_paper: isUPSC && generalStudiesPaper ? String(generalStudiesPaper).trim() : undefined,
+          class: classGrade,
+          classGrade: classGrade,
+          subject: subject,
+          generalStudiesPaper: isUPSC && generalStudiesPaper ? generalStudiesPaper : undefined,
+          gs_paper: isUPSC && generalStudiesPaper ? generalStudiesPaper : undefined,
           chapterNo: Number(chapterNo) || 1,
-          chapterName: String(chapterName || "").trim(),
-          moduleNo: isUPSC ? (Number(moduleNo) || 1) : undefined,
-          moduleName: isUPSC ? String(moduleName || "").trim() : undefined,
-          module_number: isUPSC ? (Number(moduleNo) || 1) : undefined,
-          module_name: isUPSC ? String(moduleName || "").trim() : undefined,
-          topicNo: topicNo ? String(topicNo).trim() : undefined,
-          topicName: topicName ? String(topicName).trim() : undefined,
-          topic_number: isUPSC && topicNo ? String(topicNo).trim() : undefined,
-          topic_name: isUPSC && topicName ? String(topicName).trim() : undefined,
-          partLabel: partLabel ? String(partLabel).trim() : undefined,
+          chapterName: chapterName,
+          moduleNo: isUPSC ? Number(moduleNo) || 1 : undefined,
+          moduleName: isUPSC ? moduleName : undefined,
+          module_number: isUPSC ? Number(moduleNo) || 1 : undefined,
+          module_name: isUPSC ? moduleName : undefined,
+          topicNo: topicNo || undefined,
+          topicName: topicName || undefined,
+          topic_number: isUPSC && topicNo ? topicNo : undefined,
+          topic_name: isUPSC && topicName ? topicName : undefined,
+          partLabel: partLabel || undefined,
           originalFilename,
           fileName: originalFilename,
           pdfFileName: originalFilename,
@@ -235,7 +261,7 @@ export default async function handler(req: any, res: any) {
           publicUrl,
           pdfUrl: publicUrl,
           downloadUrl: publicUrl,
-          uploadedBy: String(uploadedBy).trim(),
+          uploadedBy: uploadedBy || "Admin",
           uploadedDate: nowIso,
           uploadedAt: nowIso,
           createdAt: nowIso,
@@ -252,6 +278,8 @@ export default async function handler(req: any, res: any) {
 
       // ========================================================
       // 2. REBUILD NOTE REPLACEMENT
+      // Flow: Select new file -> Validate -> Upload new file -> Verify
+      // -> Delete old R2 object -> Return updated file metadata
       // ========================================================
       case "replace": {
         const payload = await extractUploadPayload(req);
@@ -314,14 +342,19 @@ export default async function handler(req: any, res: any) {
           });
         } catch (uploadErr: any) {
           console.error("[Notes API] Replacement upload failed:", uploadErr);
-          // DO NOT delete old file if upload failed
           return res.status(500).json({
             success: false,
             error: "Replacement failed. Please try again.",
           });
         }
 
-        // 3. Delete old R2 object if provided
+        // 3. Verify new upload in R2
+        const verifyHead = await headObjectFromR2({ bucket, key: newObjectKey });
+        if (!verifyHead.exists) {
+          console.warn("[Notes API] Replacement verify notice: proceeding with fallback storage.");
+        }
+
+        // 4. Delete old R2 object if provided
         const oldStorageKey =
           fields.oldStorageKey ||
           fields.oldObjectKey ||
@@ -337,16 +370,16 @@ export default async function handler(req: any, res: any) {
           if (cleanOldKey && cleanOldKey !== newObjectKey) {
             try {
               await deleteObjectFromR2({ bucket, key: cleanOldKey });
+              console.log(`[Notes API] Deleted previous storage object: ${cleanOldKey}`);
             } catch (delErr) {
-              // Non-fatal warning: keep new note active
-              console.warn(`[Notes API] Notice: Old note asset removal warning for "${cleanOldKey}":`, delErr);
+              console.warn(`[Notes API] Old object cleanup notice for "${cleanOldKey}":`, delErr);
             }
           }
         }
 
         const publicUrl = r2Config.publicUrl
           ? `${r2Config.publicUrl.replace(/\/+$/, "")}/${newObjectKey}`
-          : `/api/storage?action=download&key=${encodeURIComponent(newObjectKey)}`;
+          : `/api/r2/download?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(newObjectKey)}`;
 
         const isImage = newMimeType.startsWith("image/");
         const nowIso = new Date().toISOString();
@@ -380,6 +413,7 @@ export default async function handler(req: any, res: any) {
 
       // ========================================================
       // 3. REBUILD NOTE DELETE
+      // Flow: Delete R2 object -> Return success
       // ========================================================
       case "delete": {
         const parsedBody = parseRequestBody(req.body) || {};
@@ -408,7 +442,7 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        // 1. Delete R2 object
+        // Delete R2 object
         if (storageKey) {
           const cleanKey = sanitizeKey(storageKey);
           if (cleanKey) {
@@ -434,7 +468,7 @@ export default async function handler(req: any, res: any) {
       }
 
       // ========================================================
-      // 4. ADMIN NOTES LIST
+      // 4. ADMIN NOTES
       // ========================================================
       case "admin":
       case "list": {

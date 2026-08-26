@@ -26,6 +26,7 @@ import {
   Bookmark
 } from "lucide-react";
 import { ClassNote, Student } from "../types";
+import { uploadNotePipeline, replaceNotePipeline, deleteNotePipeline } from "../lib/notesService";
 import { uploadFileToR2, deleteFileFromStorage } from "../lib/storageService";
 import { verifyR2ObjectExists } from "../lib/r2Client";
 import { saveClassNoteDoc, deleteClassNoteDoc } from "../lib/firestoreService";
@@ -504,109 +505,23 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       }
       const cleanPartLabel = computedLabel || partLabel.trim();
 
-      let fileExtension = pdfFile.name.includes(".")
-        ? pdfFile.name.split(".").pop()
-        : (isImg ? "jpg" : "pdf");
-      if (!fileExtension) fileExtension = isImg ? "jpg" : "pdf";
-
-      let uploadPath = "";
-      let renamedFileName = pdfFile.name;
-
-      if (cleanPartLabel) {
-        const hasExtension = cleanPartLabel.toLowerCase().endsWith(`.${fileExtension.toLowerCase()}`);
-        renamedFileName = hasExtension ? cleanPartLabel : `${cleanPartLabel}.${fileExtension}`;
-      }
-
-      // Generate a clean, flat storage path avoiding brittle folder hierarchy nesting
-      const cleanSafeName = renamedFileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-      uploadPath = `notes/${Date.now()}_${cleanSafeName}`;
-
-      console.log(`[UploadPipeline] [Step 1] Initiating upload to Cloudflare R2... Bucket: academy-connect-files, Path: ${uploadPath}`);
-      const uploadRes = await uploadFileToR2(
-        "academy-connect-files",
-        uploadPath,
-        pdfFile,
-        renamedFileName,
-        "Admin",
-        (percent) => {
-          setUploadProgress(percent);
-          console.log(`[UploadPipeline] [Progress] Upload progress: ${percent}%`);
-        }
-      );
-      console.log(`[UploadPipeline] [Step 2] Upload completed. Response received:`, uploadRes);
-
-      // Verify the object exists in Cloudflare Storage / R2
-      const exactKey = uploadRes.storageKey || uploadRes.storagePath;
-      const verifyCheck = await verifyR2ObjectExists({
-        bucket: uploadRes.bucket,
-        key: exactKey,
-      });
-
-      const mime = pdfFile.type || (isImg ? "image/jpeg" : "application/pdf");
-      const fType: "pdf" | "image" = isImg ? "image" : "pdf";
-      const nowIso = new Date().toISOString();
-      const noteDocId = `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
-      // Detailed Upload Audit Log as required:
-      console.log("=== [UPLOAD PIPELINE AUDIT] ===");
-      console.log("bucket name:", uploadRes.bucket);
-      console.log("object key:", exactKey);
-      console.log("filename:", renamedFileName);
-      console.log("MIME type:", mime);
-      console.log("public URL:", uploadRes.downloadUrl);
-      console.log("Firestore document ID:", noteDocId);
-      console.log("Verified in R2 / Storage:", verifyCheck.exists);
-      console.log("================================");
-
-      const newNote: ClassNote = {
-        id: noteDocId,
-        classGrade: normalizeClassGrade(finalClass),
+      const newNote = await uploadNotePipeline({
+        file: pdfFile,
+        classGrade: finalClass,
         subject: finalSubject,
+        generalStudiesPaper: isUPSCClass ? generalStudiesPaper.trim() : undefined,
         chapterNo: Number(chapterNo),
         chapterName: chapterTitle.trim(),
         moduleNo: isUPSCClass ? Number(chapterNo) : undefined,
         moduleName: isUPSCClass ? chapterTitle.trim() : undefined,
-        module_number: isUPSCClass ? Number(chapterNo) : undefined,
-        module_name: isUPSCClass ? chapterTitle.trim() : undefined,
-        generalStudiesPaper: isUPSCClass ? generalStudiesPaper.trim() : undefined,
-        gs_paper: isUPSCClass ? generalStudiesPaper.trim() : undefined,
-        partLabel: cleanPartLabel ? cleanPartLabel : undefined,
-        topicNo: cleanTopicNo ? cleanTopicNo : undefined,
-        topicName: cleanTopicName ? cleanTopicName : undefined,
-        topic_number: isUPSCClass && cleanTopicNo ? cleanTopicNo : undefined,
-        topic_name: isUPSCClass && cleanTopicName ? cleanTopicName : undefined,
-        pdfUrl: uploadRes.downloadUrl,
-        pdfFileName: renamedFileName,
-        fileName: renamedFileName,
-        filename: renamedFileName,
-        storagePath: exactKey,
-        storage_path: exactKey,
-        storageKey: exactKey,
-        objectKey: exactKey,
-        bucket: uploadRes.bucket,
-        fileType: fType,
-        mimeType: mime,
-        mime_type: mime,
-        createdAt: nowIso,
-        uploadedAt: nowIso,
-        uploaded_at: nowIso,
+        topicNo: cleanTopicNo || undefined,
+        topicName: cleanTopicName || undefined,
+        partLabel: cleanPartLabel || undefined,
         uploadedBy: "Admin",
-      };
-
-      console.log(`[UploadPipeline] [Step 3] Metadata constructed. Persisting to database...`, newNote);
-      try {
-        await saveClassNoteDoc(newNote);
-        console.log(`[UploadPipeline] [Step 4] Metadata inserted successfully: id=${newNote.id}`);
-      } catch (firestoreErr: any) {
-        console.error("[UploadPipeline] Firestore metadata creation failed. Rolling back R2 upload...", firestoreErr);
-        try {
-          await deleteFileFromStorage(uploadRes.bucket, exactKey);
-          console.log(`[UploadPipeline] Rolled back orphaned R2 object: ${exactKey}`);
-        } catch (cleanupErr) {
-          console.error("[UploadPipeline] Failed to delete orphaned R2 object during rollback:", cleanupErr);
-        }
-        throw new Error(`Failed to save note metadata to database: ${firestoreErr?.message || firestoreErr}`);
-      }
+        onProgress: (percent) => {
+          setUploadProgress(percent);
+        },
+      });
 
       const newClsKey = newNote.classGrade;
       const newSubjKey = `${newNote.classGrade}_${newNote.subject}`;
@@ -620,7 +535,6 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       setExpandedSubjects({ [newSubjKey]: true });
       setExpandedChapters({ [newChKey]: true });
 
-      console.log(`[UploadPipeline] [Step 5] Updating React state & displaying success message.`);
       setUploadProgress(100);
       setSuccessMsg("Note uploaded successfully!");
 
@@ -633,7 +547,6 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       setPdfFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       setTimeout(() => {
-        console.log(`[UploadPipeline] [Step 6] Closing Upload modal and triggering notes refresh.`);
         setIsUploadModalOpen(false);
         setIsUploading(false);
         setUploadProgress(0);
@@ -851,151 +764,27 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
     setReplaceError(null);
 
     try {
-      let fileExtension = replaceFile.name.includes(".")
-        ? replaceFile.name.split(".").pop()
-        : (isImg ? "jpg" : "pdf");
-      if (!fileExtension) fileExtension = isImg ? "jpg" : "pdf";
-
-      let uploadPath = "";
-      let renamedFileName = replaceFile.name;
-
-      const cleanPartLabel = (replaceNote.partLabel || "").trim();
-      if (cleanPartLabel) {
-        const hasExtension = cleanPartLabel.toLowerCase().endsWith(`.${fileExtension.toLowerCase()}`);
-        renamedFileName = hasExtension ? cleanPartLabel : `${cleanPartLabel}.${fileExtension}`;
-      }
-      
-      const cleanSafeName = renamedFileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-      uploadPath = `notes/${Date.now()}_${cleanSafeName}`;
-
-      console.log(`[ReplacePipeline] Target storage upload path: "${uploadPath}" (filename: "${renamedFileName}")`);
-
-      // 7. Deleting old storage object (if applicable)
-      if (oldStoragePath) {
-        console.log(`[ReplacePipeline] 7. Deleting old storage object (if applicable): "${oldStoragePath}" from bucket "${bucket}"`);
-        try {
-          await deleteFileFromStorage(oldStoragePath, bucket);
-          console.log(`[ReplacePipeline] Old storage object removed: "${oldStoragePath}"`);
-        } catch (delErr) {
-          // If existing object was already missing or deleted, do not abort
-          console.warn(`[ReplacePipeline] Notice: Existing storage object was not present or already removed (proceeding with upload):`, delErr);
-        }
-      }
-
-      // 8. Uploading new file
-      console.log(`[ReplacePipeline] 8. Uploading new file to Cloudflare R2 Storage: "${uploadPath}"`);
-      let uploadRes: { storagePath: string; downloadUrl: string; bucket: string; storageKey?: string };
-      try {
-        uploadRes = await uploadFileToR2(
-          bucket,
-          uploadPath,
-          replaceFile,
-          renamedFileName,
-          "Admin",
-          (percent) => setUploadProgress(percent)
-        );
-      } catch (uploadErr: any) {
-        const uploadDetail = uploadErr?.message || "Storage upload error";
-        console.error(`[ReplacePipeline] Storage upload failed:`, uploadErr);
-        throw new Error(`Storage upload failed: ${uploadDetail}`);
-      }
-
-      // 9. Verify and Audit
-      const exactKey = uploadRes.storageKey || uploadRes.storagePath;
-      const verifyCheck = await verifyR2ObjectExists({
-        bucket: uploadRes.bucket,
-        key: exactKey,
+      const updatedNote = await replaceNotePipeline({
+        noteId: replaceNote.id,
+        currentNote: replaceNote,
+        newFile: replaceFile,
+        onProgress: (percent) => setUploadProgress(percent),
       });
-
-      console.log("=== [REPLACE PIPELINE AUDIT] ===");
-      console.log("bucket name:", uploadRes.bucket);
-      console.log("object key:", exactKey);
-      console.log("filename:", renamedFileName);
-      console.log("MIME type:", replaceFile.type || (isImg ? "image/jpeg" : "application/pdf"));
-      console.log("public URL:", uploadRes.downloadUrl);
-      console.log("Firestore document ID:", noteId);
-      console.log("Verified in R2 / Storage:", verifyCheck.exists);
-      console.log("================================");
-
-      // 10. Updating database record
-      console.log(`[ReplacePipeline] 10. Updating database record for note "${noteId}"`);
-      const mime = replaceFile.type || (isImg ? "image/jpeg" : "application/pdf");
-      const fType: "pdf" | "image" = isImg ? "image" : "pdf";
-      const nowIso = new Date().toISOString();
-
-      const updatedNote: ClassNote = {
-        ...replaceNote,
-        // Update ONLY file-related fields and update timestamps:
-        pdfUrl: uploadRes.downloadUrl,
-        pdfFileName: renamedFileName,
-        fileName: renamedFileName,
-        filename: renamedFileName,
-        storagePath: exactKey,
-        storage_path: exactKey,
-        storageKey: exactKey,
-        objectKey: exactKey,
-        bucket: uploadRes.bucket,
-        fileType: fType,
-        fileSize: replaceFile.size,
-        file_size: replaceFile.size,
-        mimeType: mime,
-        mime_type: mime,
-        updatedAt: nowIso,
-        updated_at: nowIso,
-        // Explicitly preserve all UPSC / class / subject / module / topic / access / created timestamps
-        id: replaceNote.id,
-        classGrade: replaceNote.classGrade,
-        subject: replaceNote.subject,
-        chapterNo: replaceNote.chapterNo,
-        chapterName: replaceNote.chapterName,
-        moduleNo: replaceNote.moduleNo,
-        moduleName: replaceNote.moduleName,
-        module_number: replaceNote.module_number,
-        module_name: replaceNote.module_name,
-        generalStudiesPaper: replaceNote.generalStudiesPaper,
-        gs_paper: (replaceNote as any).gs_paper,
-        partLabel: replaceNote.partLabel,
-        topicNo: replaceNote.topicNo,
-        topicName: replaceNote.topicName,
-        topic_number: (replaceNote as any).topic_number,
-        topic_name: (replaceNote as any).topic_name,
-        accessType: replaceNote.accessType,
-        allowedStudentIds: replaceNote.allowedStudentIds,
-        allowedClasses: replaceNote.allowedClasses,
-        createdAt: replaceNote.createdAt,
-        uploadedAt: replaceNote.uploadedAt || replaceNote.createdAt,
-        uploaded_at: (replaceNote as any).uploaded_at || replaceNote.createdAt,
-        uploadedBy: replaceNote.uploadedBy || "Admin",
-      };
-
-      try {
-        await saveClassNoteDoc(updatedNote);
-        console.log(`[ReplacePipeline] Database record updated successfully for note "${noteId}"`);
-      } catch (dbErr: any) {
-        const dbDetail = dbErr?.message || "Database update error";
-        console.error(`[ReplacePipeline] Database update failed:`, dbErr);
-        throw new Error(`Database update failed: ${dbDetail}`);
-      }
 
       // Invalidate caches
       try {
-        await invalidateNoteCache(noteId);
-        if (oldStoragePath) await invalidateNoteCache(oldStoragePath);
-        if (uploadRes.storagePath) await invalidateNoteCache(uploadRes.storagePath);
-        window.dispatchEvent(new CustomEvent("notes-updated", { detail: { noteId, updatedNote } }));
+        await invalidateNoteCache(replaceNote.id);
+        if (replaceNote.storagePath) await invalidateNoteCache(replaceNote.storagePath);
+        if (updatedNote.storagePath) await invalidateNoteCache(updatedNote.storagePath);
+        window.dispatchEvent(new CustomEvent("notes-updated", { detail: { noteId: replaceNote.id, updatedNote } }));
       } catch (cacheErr) {
         console.warn("[ReplacePipeline] Cache invalidation notice:", cacheErr);
       }
 
-      // 11. Refreshing notes
-      console.log(`[ReplacePipeline] 11. Refreshing notes`);
       setReplaceNote(null);
       setReplaceFile(null);
       if (replaceFileInputRef.current) replaceFileInputRef.current.value = "";
       if (onRefresh) onRefresh();
-
-      // 12. Success
-      console.log(`[ReplacePipeline] 12. Success: Note "${noteId}" replaced cleanly`);
     } catch (e: any) {
       const actualError = e?.message || "An unexpected error occurred during replacement.";
       console.error(`[ReplacePipeline] Execution stopped with error:`, e);
@@ -1013,50 +802,8 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
     setIsDeleting(true);
     setDeleteError(null);
     try {
-      const deletedNoteId = deletingNote.id;
-      const targetClass = deletingNote.classGrade;
-      const targetSubject = deletingNote.subject;
-      const targetChapterNo = deletingNote.chapterNo;
-      const targetChapterName = deletingNote.chapterName;
-      const targetPartLabel = deletingNote.partLabel || deletingNote.id;
-      const bucket = deletingNote.bucket || "academy-connect-files";
-      const rawStoragePath = deletingNote.storagePath || deletingNote.pdfUrl || "";
+      await deleteNotePipeline(deletingNote.id, deletingNote);
 
-      console.log("Deleting note");
-      console.log(`Firestore document id: ${deletedNoteId}`);
-      console.log(`Cloudflare object key: ${rawStoragePath}`);
-      console.log(`API endpoint: /api/storage?action=delete`);
-      console.log(`Request body:`, { bucket, key: rawStoragePath });
-
-      // 1. Delete actual uploaded file from Storage using its stored storage path/key FIRST
-      if (rawStoragePath) {
-        try {
-          await deleteFileFromStorage(rawStoragePath, bucket);
-          console.log(`[AdminNotesView] Successfully deleted storage file: ${rawStoragePath}`);
-        } catch (storageErr: any) {
-          const errMsg = storageErr?.message || String(storageErr);
-          const isNotFound =
-            errMsg.toLowerCase().includes("not found") ||
-            errMsg.toLowerCase().includes("does not exist") ||
-            errMsg.toLowerCase().includes("not_found") ||
-            (storageErr as any)?.status === 404 ||
-            (storageErr as any)?.status === "404" ||
-            (storageErr as any)?.statusCode === 404 ||
-            (storageErr as any)?.statusCode === "404";
-
-          if (isNotFound) {
-            console.warn(`[AdminNotesView] Storage object already removed or missing: ${rawStoragePath}. Proceeding with database record deletion.`);
-          } else {
-            console.error(`[AdminNotesView] Storage deletion error:`, storageErr);
-            throw new Error(`Storage deletion failed: ${errMsg}`);
-          }
-        }
-      }
-
-      // 2. Only after storage object is removed (or already missing): Delete database record
-      await deleteClassNoteDoc(deletedNoteId);
-
-      // 3. Clear deleting target and trigger immediate UI refresh
       setDeletingNote(null);
       if (onRefresh) onRefresh();
     } catch (e: any) {
