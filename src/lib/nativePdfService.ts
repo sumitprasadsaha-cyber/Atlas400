@@ -37,6 +37,8 @@ export interface OpenPdfResult {
   message?: string;
   signedUrl?: string;
   isNative?: boolean;
+  blob?: any;
+  objectUrl?: string;
 }
 
 /**
