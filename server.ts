@@ -172,7 +172,7 @@ app.get("/api/r2/health", (req, res) => {
   });
 });
 
-// 2. Generate Pre-signed URL (GET or PUT)
+// 2. Generate Pre-signed URL (GET or PUT) - Step 3 & Step 4
 app.post("/api/r2/signed-url", async (req, res) => {
   try {
     const { bucket, key, expiresIn, operation, contentType } = req.body;
@@ -180,15 +180,64 @@ app.post("/api/r2/signed-url", async (req, res) => {
       return res.status(400).json({ error: "Missing required 'key' parameter." });
     }
 
+    const cleanKey = key.replace(/^\/+/, "");
+    const config = getR2ServerConfig();
+    const actualBucket = (bucket || config.bucket || "academy-connect-files").trim();
+
+    // STEP 3: Log backend retrieval parameters
+    console.log("=== [STEP 3: BACKEND R2 RETRIEVAL PIPELINE] ===");
+    console.log("incoming storageKey:", key);
+    console.log("incoming bucket:", bucket);
+    console.log("bucket actually used:", actualBucket);
+    console.log("object key actually used:", cleanKey);
+
     const signedUrl = await generateR2SignedUrl({
-      bucket,
-      key,
+      bucket: actualBucket,
+      key: cleanKey,
       expiresIn: Number(expiresIn) || 3600,
       operation: operation === "putObject" ? "putObject" : "getObject",
       contentType,
     });
 
-    return res.json({ success: true, signedUrl });
+    console.log("signed URL generated:", signedUrl);
+
+    // STEP 4: Immediately validate signed URL / object existence in R2 with HEAD check
+    let headStatus = 200;
+    let headContentType = contentType || "application/octet-stream";
+    let headContentLength = 0;
+    let exists = true;
+
+    try {
+      const headCheck = await headObjectFromR2({ bucket: actualBucket, key: cleanKey });
+      exists = headCheck.exists;
+      headStatus = headCheck.exists ? 200 : 404;
+      if (headCheck.contentType) headContentType = headCheck.contentType;
+      if (headCheck.contentLength) headContentLength = headCheck.contentLength;
+
+      console.log("=== [STEP 4: VALIDATE SIGNED URL / OBJECT] ===");
+      console.log("HTTP status from R2:", headStatus);
+      console.log("content-type:", headContentType);
+      console.log("content-length:", headContentLength);
+      if (!exists) {
+        console.error("Requested key:", key);
+        console.error("Bucket:", actualBucket);
+        console.error("Exact key sent to R2:", cleanKey);
+      }
+      console.log("==============================================");
+    } catch (headErr: any) {
+      console.warn("[Server R2] Head verification warning:", headErr?.message || headErr);
+    }
+
+    return res.json({
+      success: true,
+      signedUrl,
+      exists,
+      status: headStatus,
+      contentType: headContentType,
+      contentLength: headContentLength,
+      bucket: actualBucket,
+      key: cleanKey,
+    });
   } catch (err: any) {
     console.error("[Server R2] Error generating signed URL:", err);
     return res.status(500).json({
@@ -291,9 +340,16 @@ app.head("/api/r2/download", async (req, res) => {
     }
 
     const cleanKey = key.replace(/^\/+/, "");
-    const head = await headObjectFromR2({ bucket, key: cleanKey });
+    const config = getR2ServerConfig();
+    const actualBucket = bucket || config.bucket || "academy-connect-files";
+    const head = await headObjectFromR2({ bucket: actualBucket, key: cleanKey });
 
     if (!head.exists) {
+      console.error("=== [BACKEND R2 HEAD 404] ===");
+      console.error("Requested key:", key);
+      console.error("Bucket:", actualBucket);
+      console.error("Exact key sent to R2:", cleanKey);
+      console.error("=============================");
       return res.status(404).end();
     }
 
@@ -308,6 +364,10 @@ app.head("/api/r2/download", async (req, res) => {
       else if (cleanKey.toLowerCase().endsWith(".json")) contentType = "application/json";
     }
 
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Authorization, Accept");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type, ETag, Content-Disposition");
     res.setHeader("Content-Type", contentType);
     res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -320,6 +380,7 @@ app.head("/api/r2/download", async (req, res) => {
   }
 });
 
+// Download / Stream file
 app.get("/api/r2/download", async (req, res) => {
   try {
     const bucket = req.query.bucket as string | undefined;
@@ -330,11 +391,25 @@ app.get("/api/r2/download", async (req, res) => {
     }
 
     const cleanKey = key.replace(/^\/+/, "");
-    const range = req.headers.range;
+    const config = getR2ServerConfig();
+    const actualBucket = bucket || config.bucket || "academy-connect-files";
 
-    const obj = await getObjectFromR2({ bucket, key: cleanKey, range });
+    console.log("=== [BACKEND R2 DOWNLOAD / STREAM] ===");
+    console.log("incoming storageKey:", key);
+    console.log("incoming bucket:", bucket);
+    console.log("bucket actually used:", actualBucket);
+    console.log("object key actually used:", cleanKey);
+
+    const range = req.headers.range;
+    const obj = await getObjectFromR2({ bucket: actualBucket, key: cleanKey, range });
 
     if (!obj.body) {
+      console.error("=== [BACKEND R2 DOWNLOAD 404] ===");
+      console.error("Requested key:", key);
+      console.error("Bucket:", actualBucket);
+      console.error("Exact key sent to R2:", cleanKey);
+      console.error("HTTP status: 404 File not found");
+      console.error("================================");
       return res.status(404).send("File not found in Cloudflare R2.");
     }
 
@@ -349,6 +424,10 @@ app.get("/api/r2/download", async (req, res) => {
       else if (cleanKey.toLowerCase().endsWith(".json")) contentType = "application/json";
     }
 
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Authorization, Accept");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type, ETag, Content-Disposition");
     res.setHeader("Content-Type", contentType);
     res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");

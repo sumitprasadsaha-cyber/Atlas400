@@ -1,7 +1,7 @@
 import { Capacitor } from "@capacitor/core";
 import { Browser } from "@capacitor/browser";
 import { getBucketName, sanitizeStoragePath } from "./storageService";
-import { getR2SignedUrl, getR2PublicUrl } from "./r2Client";
+import { getR2SignedUrlDetails, getR2PublicUrl, R2SignedUrlDetails } from "./r2Client";
 
 export type NoteViewerState = "idle" | "downloading" | "opening" | "opened" | "error";
 
@@ -58,6 +58,41 @@ export function isNativePlatform(): boolean {
 }
 
 /**
+ * Detects current runtime platform and browser details for diagnostic logging.
+ */
+export function getRuntimePlatformDetails() {
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  const isAndroid = /android/i.test(ua);
+  const isIOS =
+    /iphone|ipad|ipod/i.test(ua) ||
+    (typeof navigator !== "undefined" && navigator.platform === "MacIntel" && (navigator.maxTouchPoints || 0) > 1);
+  const isDesktop = !isAndroid && !isIOS;
+  const isPWA =
+    typeof window !== "undefined" &&
+    (window.matchMedia?.("(display-mode: standalone)").matches ||
+      (navigator as any).standalone === true ||
+      document.referrer.includes("android-app://"));
+  const isNative = isNativePlatform();
+
+  let browser = "Unknown";
+  if (/firefox|fxios/i.test(ua)) browser = "Firefox";
+  else if (/edg/i.test(ua)) browser = "Edge";
+  else if (/chrome|crios/i.test(ua)) browser = "Chrome";
+  else if (/safari/i.test(ua) && !/chrome|crios/i.test(ua)) browser = "Safari";
+
+  return {
+    platform: isNative ? "Capacitor Native" : isPWA ? "PWA Standalone" : "Web Browser",
+    browser,
+    userAgent: ua,
+    isAndroid,
+    isIOS,
+    isDesktop,
+    isPWA,
+    isNative,
+  };
+}
+
+/**
  * Determines whether a given note or file is an image based on fileType, mimeType, or filename extension.
  */
 export function isImageFile(fileName?: string, url?: string, mimeType?: string, fileType?: string): boolean {
@@ -85,7 +120,7 @@ export function getMimeType(fileNameOrUrl: string, mimeType?: string, isImg?: bo
 }
 
 /**
- * Directly hands off a signed URL to the device's native browser / viewer.
+ * STEP 6: Directly hands off a signed URL to the device's native browser / viewer.
  * No custom or in-app note rendering is performed.
  */
 async function handoffUrlToNativeBrowser(url: string): Promise<void> {
@@ -93,18 +128,18 @@ async function handoffUrlToNativeBrowser(url: string): Promise<void> {
 
   if (isNative) {
     try {
-      await Browser.open({ url, windowName: "_blank" });
+      await Browser.open({ url, windowName: "_system" });
       return;
     } catch (browserErr) {
       console.warn("[NotePipeline] Capacitor Browser.open fallback:", browserErr);
     }
   }
 
-  // Web / PWA / Browser standard handoff
+  // Web / PWA / Mobile Browser direct handoff
   try {
     const newWindow = window.open(url, "_blank", "noopener,noreferrer");
     if (!newWindow || newWindow.closed || typeof newWindow.closed === "undefined") {
-      // If popup blocker intervened, fallback to link click or navigation
+      // If popup blocker intervened (common on iOS Safari and Android Chrome), fallback to direct assign
       const a = document.createElement("a");
       a.href = url;
       a.target = "_blank";
@@ -178,23 +213,25 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
   // Generate signed Cloudflare R2 URL using exact stored storageKey
   const exactKey = storageKey ? sanitizeStoragePath(storageKey, bucket).replace(/^\/+/, "") : "";
   let signedUrl = "";
+  let urlDetails: R2SignedUrlDetails | null = null;
 
   try {
     if (exactKey) {
-      signedUrl = await getR2SignedUrl({
+      urlDetails = await getR2SignedUrlDetails({
         bucket,
         key: exactKey,
         expiresIn: 3600,
         operation: "getObject",
         contentType: mimeType,
       });
+      signedUrl = urlDetails.signedUrl;
     } else if (rawUrl) {
       signedUrl = rawUrl;
     }
   } catch (err: any) {
     console.error("[NotePipeline] Failed generating signed URL:", err);
-    alert("Unable to generate secure access to this note.");
-    throw new Error("Unable to generate secure access to this note.");
+    alert(`Unable to access note: ${err?.message || "Failed generating signed URL"}`);
+    throw new Error(`Unable to generate secure access: ${err?.message || err}`);
   }
 
   if (!signedUrl) {
@@ -221,63 +258,47 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
     absoluteUrl = `${absoluteUrl}${sep}mimeType=${encodeURIComponent(mimeType)}`;
   }
 
-  // Required Debug Logs for note retrieval
-  console.log("=== [NOTE RETRIEVAL PIPELINE] ===");
-  console.log("Firestore storageKey:", exactKey || storageKey);
-  console.log("Bucket name:", bucket);
-  console.log("Signed URL generated:", absoluteUrl);
+  // STEP 5: Required Detailed Diagnostics and Audit Logs
+  const platformDetails = getRuntimePlatformDetails();
+  console.log("=== [STEP 5: FRONTEND NOTE RETRIEVAL AUDIT] ===");
+  console.log("platform:", platformDetails.platform);
+  console.log("browser:", platformDetails.browser);
+  console.log("userAgent:", platformDetails.userAgent);
+  console.log("isAndroid:", platformDetails.isAndroid);
+  console.log("isIOS:", platformDetails.isIOS);
+  console.log("isDesktop:", platformDetails.isDesktop);
+  console.log("isPWA:", platformDetails.isPWA);
+  console.log("bucket:", bucket);
+  console.log("storageKey:", exactKey || storageKey);
+  console.log("signedUrl:", absoluteUrl);
+  console.log("================================================");
 
-  // Fast pre-flight verification for 404 / 403 errors (without loading file into memory)
-  try {
-    let probeRes = await fetch(absoluteUrl, { method: "HEAD" }).catch(() => null);
-    if (!probeRes || probeRes.status === 405) {
-      probeRes = await fetch(absoluteUrl, { method: "GET" }).catch(() => null);
+  // STEP 10: Accurate error handling based on backend validation response
+  if (urlDetails) {
+    if (urlDetails.status === 404 && urlDetails.exists === false) {
+      console.error("=== [STEP 10: R2 OBJECT NOT FOUND (404)] ===");
+      console.error("Requested key:", storageKey || exactKey);
+      console.error("Bucket:", bucket);
+      console.error("Exact key sent to R2:", exactKey);
+      console.error("Firestore document ID:", noteId);
+      console.error("HTTP status:", 404);
+      console.error("============================================");
+
+      alert("This note file could not be found in Cloudflare Storage.\nPlease contact the administrator.");
+      throw new Error("This note file could not be found in Cloudflare Storage. Please contact the administrator.");
     }
 
-    if (probeRes) {
-      console.log("HTTP status from R2:", probeRes.status);
-      console.log("================================");
-
-      if (probeRes.status === 404) {
-        let responseBody = "";
-        try {
-          const clone = probeRes.clone();
-          responseBody = await clone.text();
-        } catch {}
-
-        // Required Debug logs if object cannot be found
-        console.error("=== [R2 OBJECT NOT FOUND] ===");
-        console.error("Requested key:", storageKey || exactKey);
-        console.error("Bucket:", bucket);
-        console.error("Exact key sent to R2:", exactKey);
-        console.error("Firestore document ID:", noteId);
-        console.error("HTTP status from R2:", 404);
-        console.error("Response body:", responseBody);
-        console.error("=============================");
-
-        alert("This note file could not be found in Cloudflare Storage.\nPlease contact the administrator.");
-        throw new Error("This note file could not be found in Cloudflare Storage. Please contact the administrator.");
-      }
-
-      if (probeRes.status === 403) {
-        alert("Unable to generate secure access to this note.");
-        throw new Error("Unable to generate secure access to this note.");
-      }
-    } else {
-      console.log("HTTP status from R2: 200 (Direct)");
-      console.log("================================");
+    if (urlDetails.status === 403) {
+      alert("Access Forbidden (403): Unable to access note.");
+      throw new Error("Access Forbidden (403): Unable to access note.");
     }
-  } catch (probeErr: any) {
-    if (
-      probeErr.message &&
-      (probeErr.message.includes("could not be found") || probeErr.message.includes("secure access"))
-    ) {
-      throw probeErr;
+
+    if (urlDetails.error && urlDetails.status >= 500) {
+      console.warn("[NotePipeline] Server warning:", urlDetails.error);
     }
-    console.warn("[NotePipeline] Pre-flight probe warning (proceeding with native open):", probeErr);
   }
 
-  // Immediately hand off to device native browser or native viewer
+  // STEP 6: Immediately hand off to device native browser or native viewer
   await handoffUrlToNativeBrowser(absoluteUrl);
 
   return {

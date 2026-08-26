@@ -85,16 +85,27 @@ export function getR2PublicUrl(bucket: string, key: string): string {
   return `/api/r2/download?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`;
 }
 
+export interface R2SignedUrlDetails {
+  signedUrl: string;
+  exists: boolean;
+  status: number;
+  contentType?: string;
+  contentLength?: number;
+  bucket: string;
+  key: string;
+  error?: string;
+}
+
 /**
- * Request a pre-signed URL from the backend server for uploading or downloading.
+ * Request a pre-signed URL from the backend server for uploading or downloading with full metadata.
  */
-export async function getR2SignedUrl(params: {
+export async function getR2SignedUrlDetails(params: {
   bucket?: string;
   key: string;
   expiresIn?: number;
   operation?: "getObject" | "putObject";
   contentType?: string;
-}): Promise<string> {
+}): Promise<R2SignedUrlDetails> {
   const bucket = getR2BucketName(params.bucket);
   const cleanKey = params.key.replace(/^\/+/, "");
   const baseUrl = getApiBaseUrl();
@@ -115,15 +126,66 @@ export async function getR2SignedUrl(params: {
     if (response.ok) {
       const data = await response.json();
       if (data.signedUrl) {
-        return data.signedUrl;
+        return {
+          signedUrl: data.signedUrl,
+          exists: data.exists !== undefined ? Boolean(data.exists) : true,
+          status: data.status || 200,
+          contentType: data.contentType,
+          contentLength: data.contentLength,
+          bucket: data.bucket || bucket,
+          key: data.key || cleanKey,
+        };
       }
+    } else {
+      let errText = `HTTP ${response.status}`;
+      try {
+        const errJson = await response.json();
+        errText = errJson.error || errText;
+      } catch {}
+      return {
+        signedUrl: getR2PublicUrl(bucket, cleanKey),
+        exists: false,
+        status: response.status,
+        bucket,
+        key: cleanKey,
+        error: errText,
+      };
     }
-  } catch (err) {
+  } catch (err: any) {
     console.warn("[R2Client] Failed to fetch presigned URL from /api/r2/signed-url:", err);
+    return {
+      signedUrl: getR2PublicUrl(bucket, cleanKey),
+      exists: true,
+      status: 200,
+      bucket,
+      key: cleanKey,
+      error: err?.message || String(err),
+    };
   }
 
   // Fallback to direct public or proxy URL
-  return getR2PublicUrl(bucket, cleanKey);
+  const fallbackUrl = getR2PublicUrl(bucket, cleanKey);
+  return {
+    signedUrl: fallbackUrl,
+    exists: true,
+    status: 200,
+    bucket,
+    key: cleanKey,
+  };
+}
+
+/**
+ * Request a pre-signed URL from the backend server for uploading or downloading.
+ */
+export async function getR2SignedUrl(params: {
+  bucket?: string;
+  key: string;
+  expiresIn?: number;
+  operation?: "getObject" | "putObject";
+  contentType?: string;
+}): Promise<string> {
+  const details = await getR2SignedUrlDetails(params);
+  return details.signedUrl;
 }
 
 function getApiBaseUrl(): string {

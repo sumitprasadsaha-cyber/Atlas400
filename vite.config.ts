@@ -72,6 +72,21 @@ export default defineConfig(({ command, mode }) => {
           cleanupOutdatedCaches: true,
           clientsClaim: true,
           skipWaiting: true,
+          navigateFallbackDenylist: [
+            /^\/api\//,
+            /\.(pdf|jpe?g|png|webp|gif|svg|bmp)$/i,
+            /r2\.cloudflarestorage\.com/i,
+            /storage/i,
+          ],
+          runtimeCaching: [
+            {
+              urlPattern: ({ url }) =>
+                url.pathname.startsWith('/api/r2/') ||
+                url.hostname.includes('r2.cloudflarestorage.com') ||
+                /\.(pdf|jpe?g|png|webp|gif|svg)$/i.test(url.pathname),
+              handler: 'NetworkOnly',
+            },
+          ],
         },
       }),
     ],
