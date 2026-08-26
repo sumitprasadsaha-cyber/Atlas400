@@ -20,6 +20,13 @@ export const auditService = {
   },
 
   /**
+   * Alias for log
+   */
+  async logEvent(entry: Omit<AuditLog, "timestamp"> & { timestamp?: string }): Promise<void> {
+    return this.log(entry);
+  },
+
+  /**
    * Retrieves recent audit logs (admin only).
    */
   async getRecentLogs(limitCount: number = 50): Promise<AuditLog[]> {

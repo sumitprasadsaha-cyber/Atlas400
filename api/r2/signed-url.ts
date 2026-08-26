@@ -12,7 +12,7 @@ export default async function handler(req: any, res: any) {
   }
 
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed. Use POST." });
+    return res.status(405).json({ success: false, error: { message: "Method not allowed. Use POST." } });
   }
 
   try {
@@ -24,36 +24,44 @@ export default async function handler(req: any, res: any) {
     }
     body = body || {};
 
-    const storageKey = body.storageKey || body.key;
+    const storageKey = body.storageKey || body.r2ObjectKey || body.key;
     if (!storageKey) {
-      return res.status(400).json({ error: "Missing required 'storageKey' parameter." });
+      return res.status(400).json({ success: false, error: { message: "Missing required 'storageKey' or 'r2ObjectKey' parameter." } });
     }
 
     const cleanKey = String(storageKey).replace(/^\/+/, "");
     const config = getR2ServerConfig();
     const bucket = (body.bucket || config.bucket || "academy-connect-files").trim();
-    // Default expiration: 10 minutes (600 seconds)
-    const expiresIn = Number(body.expiresIn) || 600;
+    // Default expiration strictly 5 minutes (300 seconds)
+    const expiresIn = Number(body.expiresIn) || 300;
 
     const signedUrl = await generateR2SignedUrl({
       bucket,
       key: cleanKey,
       expiresIn,
-      operation: "getObject",
+      operation: body.operation === "putObject" ? "putObject" : "getObject",
       contentType: body.contentType,
     });
 
     return res.status(200).json({
       success: true,
-      signedUrl,
-      bucket,
-      storageKey: cleanKey,
-      expiresIn,
+      data: {
+        signedUrl,
+        bucket,
+        storageKey: cleanKey,
+        r2ObjectKey: cleanKey,
+        expiresIn,
+      },
+      timestamp: new Date().toISOString(),
     });
   } catch (err: any) {
-    console.error("[Vercel R2] Error generating signed URL:", err);
+    console.error("[Serverless R2] Error generating signed URL:", err);
     return res.status(500).json({
-      error: err.message || "Failed to generate Cloudflare R2 signed URL.",
+      success: false,
+      error: {
+        message: err.message || "Failed to generate Cloudflare R2 signed URL.",
+      },
+      timestamp: new Date().toISOString(),
     });
   }
 }

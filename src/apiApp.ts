@@ -533,31 +533,48 @@ router.delete("/r2/delete-multiple", handleDeleteMultipleObjects);
 const handleReplaceObject = async (req: express.Request, res: express.Response) => {
   try {
     const bucket = (req.query.bucket as string) || req.body?.bucket;
-    const oldKey = req.body?.oldKey || req.body?.oldStoragePath || (req.query.oldKey as string);
-    const newKey = req.body?.newKey || req.body?.newStoragePath || req.body?.key || (req.query.key as string);
+    const oldKey = req.body?.oldKey || req.body?.oldR2ObjectKey || req.body?.oldStoragePath || (req.query.oldKey as string);
+    const newKey = req.body?.newKey || req.body?.newR2ObjectKey || req.body?.newStoragePath || req.body?.key || (req.query.key as string);
     const base64 = req.body?.base64;
     const mimeType = req.body?.mimeType || (req.query.mimeType as string) || "application/octet-stream";
 
     console.log(`[Server R2] Processing Replace request: oldKey="${oldKey}", newKey="${newKey}"`);
 
-    if (oldKey) {
-      try {
-        await deleteObjectFromR2({ bucket, key: oldKey });
-        console.log(`[Server R2] Old object deleted during replace: ${oldKey}`);
-      } catch (delErr) {
-        console.warn(`[Server R2] Notice: Old object was not present or already deleted: ${oldKey}`, delErr);
-      }
-    }
+    let uploadRes: any = null;
+    let buffer: Buffer | null = null;
 
+    // 1. Upload new file first (if newKey and base64 provided)
     if (newKey && base64) {
-      const buffer = Buffer.from(base64, "base64");
-      const uploadRes = await uploadObjectToR2({
+      buffer = Buffer.from(base64, "base64");
+      uploadRes = await uploadObjectToR2({
         bucket,
         key: newKey,
         body: buffer,
         contentType: mimeType,
       });
 
+      // Verify new upload
+      const head = await headObjectFromR2({ bucket, key: newKey });
+      if (!head.exists) {
+        throw new Error(`Replacement upload verification failed for '${newKey}'`);
+      }
+    }
+
+    // 2. Delete old object only after successful new upload
+    let oldKeyDeleted = false;
+    if (oldKey) {
+      const cleanOld = String(oldKey).replace(/^\/+/, "");
+      try {
+        await deleteObjectFromR2({ bucket, key: cleanOld });
+        const oldHead = await headObjectFromR2({ bucket, key: cleanOld });
+        oldKeyDeleted = !oldHead.exists;
+        console.log(`[Server R2] Old object deleted during replace: ${cleanOld} (verified: ${oldKeyDeleted})`);
+      } catch (delErr) {
+        console.warn(`[Server R2] Notice: Old object deletion notice for: ${cleanOld}`, delErr);
+      }
+    }
+
+    if (uploadRes && buffer) {
       const config = getR2ServerConfig();
       const downloadUrl = `/api/r2/download?bucket=${encodeURIComponent(uploadRes.bucket)}&key=${encodeURIComponent(newKey)}`;
       const publicUrl = config.publicUrl
@@ -566,32 +583,44 @@ const handleReplaceObject = async (req: express.Request, res: express.Response) 
 
       return res.status(200).json({
         success: true,
-        bucket: uploadRes.bucket,
-        key: uploadRes.key,
-        etag: uploadRes.etag,
-        url: downloadUrl,
-        publicUrl,
-        size: buffer.length,
-        mimeType,
-        replaced: true,
+        data: {
+          bucket: uploadRes.bucket,
+          storageKey: uploadRes.key,
+          r2ObjectKey: uploadRes.key,
+          oldR2ObjectKey: oldKey ? String(oldKey).replace(/^\/+/, "") : null,
+          oldKeyDeleted,
+          etag: uploadRes.etag,
+          url: downloadUrl,
+          publicUrl,
+          size: buffer.length,
+          mimeType,
+          replaced: true,
+        },
       });
     }
 
     return res.status(200).json({
       success: true,
-      oldKeyDeleted: Boolean(oldKey),
-      message: "Replace processed successfully.",
+      data: {
+        oldKeyDeleted: Boolean(oldKey),
+        replaced: true,
+        message: "Replace processed successfully.",
+      },
     });
   } catch (err: any) {
     console.error("[Server R2] Replace error:", err);
     return res.status(500).json({
-      error: err.message || "Failed to execute replacement in Cloudflare R2.",
-      stack: err.stack,
+      success: false,
+      error: {
+        message: err.message || "Failed to execute replacement in Cloudflare R2.",
+        stack: err.stack,
+      },
     });
   }
 };
 
 router.post("/r2/replace", handleReplaceObject);
+router.patch("/r2/replace", handleReplaceObject);
 router.put("/r2/replace", handleReplaceObject);
 
 // 8. List objects

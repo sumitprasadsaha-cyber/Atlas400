@@ -1,20 +1,13 @@
-import { uploadObjectToR2, getR2ServerConfig } from "../_lib/r2Server";
+import { uploadObjectToR2, headObjectFromR2, getR2ServerConfig } from "../_lib/r2Server";
 import crypto from "crypto";
+import {
+  validateNoteUploadFile,
+  generateR2ObjectKey,
+  sanitizeVirusSafeFilename,
+  extractFileExtension,
+} from "../../shared/validation/note.validator";
 
 export const runtime = "nodejs";
-
-const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
-
-const ALLOWED_MIME_TYPES = new Set([
-  "application/pdf",
-  "image/png",
-  "image/jpeg",
-  "image/jpg",
-  "image/webp",
-  "image/gif",
-  "image/svg+xml",
-  "application/octet-stream",
-]);
 
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -23,33 +16,33 @@ export default async function handler(req: any, res: any) {
   if (req.method === "OPTIONS") return res.status(204).end();
 
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed. Use POST." });
+    return res.status(405).json({ success: false, error: { message: "Method not allowed. Use POST." } });
   }
 
   try {
     const config = getR2ServerConfig();
     const bucket = ((req.query?.bucket as string) || req.body?.bucket || config.bucket || "academy-connect-files").trim();
-    
-    let originalFilename = (req.query?.fileName as string) || req.body?.fileName || req.body?.originalFilename || "document.pdf";
+
+    let rawFilename = (req.query?.fileName as string) || req.body?.fileName || req.body?.originalFileName || req.body?.originalFilename || "document.pdf";
     let mimeType = (req.query?.mimeType as string) || req.body?.mimeType || req.headers?.["content-type"] || "application/octet-stream";
-    
-    if (mimeType.includes(";")) {
-      mimeType = mimeType.split(";")[0].trim();
-    }
+    const batch = (req.query?.batch as string) || req.body?.batch || "all-batches";
+    const subject = (req.query?.subject as string) || req.body?.subject || "general";
 
     let buffer: Buffer;
     if (Buffer.isBuffer(req.body)) {
       buffer = req.body;
     } else if (req.body && typeof req.body === "object" && req.body.base64) {
       buffer = Buffer.from(req.body.base64, "base64");
-      if (req.body.fileName) originalFilename = req.body.fileName;
+      if (req.body.fileName) rawFilename = req.body.fileName;
+      if (req.body.originalFileName) rawFilename = req.body.originalFileName;
       if (req.body.mimeType) mimeType = req.body.mimeType;
     } else if (typeof req.body === "string") {
       try {
         const parsed = JSON.parse(req.body);
         if (parsed.base64) {
           buffer = Buffer.from(parsed.base64, "base64");
-          if (parsed.fileName) originalFilename = parsed.fileName;
+          if (parsed.fileName) rawFilename = parsed.fileName;
+          if (parsed.originalFileName) rawFilename = parsed.originalFileName;
           if (parsed.mimeType) mimeType = parsed.mimeType;
         } else {
           buffer = Buffer.from(req.body, "utf-8");
@@ -58,54 +51,63 @@ export default async function handler(req: any, res: any) {
         buffer = Buffer.from(req.body, "utf-8");
       }
     } else {
-      return res.status(400).json({ error: "No upload body data received." });
+      return res.status(400).json({ success: false, error: { message: "No upload file body received." } });
     }
 
-    // Size validation
-    if (buffer.length === 0) {
-      return res.status(400).json({ error: "File cannot be empty." });
-    }
-    if (buffer.length > MAX_FILE_SIZE_BYTES) {
-      return res.status(400).json({ error: `File size exceeds 50MB limit (${Math.round(buffer.length / (1024 * 1024))}MB).` });
+    // Comprehensive validation per Phase 3 requirements
+    const validation = validateNoteUploadFile(buffer.length, rawFilename, mimeType);
+    if (!validation.isValid) {
+      return res.status(400).json({ success: false, error: { message: validation.error || "File validation failed." } });
     }
 
-    // Validate MIME type
-    if (!ALLOWED_MIME_TYPES.has(mimeType.toLowerCase()) && !mimeType.startsWith("image/") && !mimeType.startsWith("application/")) {
-      return res.status(400).json({ error: `Unsupported MIME type: ${mimeType}` });
-    }
-
-    // Generate unique, cryptographically secure object key if not explicitly given
-    let storageKey = (req.query?.key as string) || req.body?.key || req.body?.storageKey;
+    // Cryptographic UUID & structured object key: notes/{batch}/{subject}/{uuid}.{ext}
+    const uuid = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
+    let storageKey = (req.query?.key as string) || req.body?.key || req.body?.storageKey || req.body?.r2ObjectKey;
     if (!storageKey) {
-      const sanitizedName = originalFilename.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const randomHex = crypto.randomBytes(6).toString("hex");
-      const timestamp = Date.now();
-      const folder = req.body?.folder || req.query?.folder || "notes";
-      storageKey = `${folder}/${timestamp}-${randomHex}-${sanitizedName}`;
+      storageKey = generateR2ObjectKey(batch, subject, validation.extension, uuid);
     }
-
     storageKey = String(storageKey).replace(/^\/+/, "");
 
-    const result = await uploadObjectToR2({
+    // 1. Upload to Cloudflare R2
+    const uploadResult = await uploadObjectToR2({
       bucket,
       key: storageKey,
       body: buffer,
-      contentType: mimeType,
+      contentType: validation.cleanMime,
     });
 
-    // Return strictly metadata per specification (no signed URL)
+    // 2. Verify upload existence
+    const verifyHead = await headObjectFromR2({ bucket, key: storageKey });
+    if (!verifyHead.exists) {
+      throw new Error(`Upload verification failed for storage key '${storageKey}'.`);
+    }
+
+    // 3. Return verified response strictly as metadata
     return res.status(200).json({
       success: true,
-      bucket: result.bucket,
-      storageKey: result.key,
-      mimeType,
-      fileSize: buffer.length,
-      originalFilename,
+      data: {
+        bucket: uploadResult.bucket,
+        storageKey: uploadResult.key,
+        r2ObjectKey: uploadResult.key,
+        fileName: validation.cleanName,
+        originalFileName: validation.cleanName,
+        mimeType: validation.cleanMime,
+        extension: validation.extension,
+        size: buffer.length,
+        fileSize: buffer.length,
+        etag: uploadResult.etag || verifyHead.etag,
+      },
+      timestamp: new Date().toISOString(),
     });
   } catch (err: any) {
-    console.error("[Vercel R2] Upload error:", err);
+    console.error("[Serverless R2] Upload error:", err);
     return res.status(500).json({
-      error: err.message || "Failed to upload file to Cloudflare R2.",
+      success: false,
+      error: {
+        message: err.message || "Failed to upload file to Cloudflare R2.",
+        details: err.stack,
+      },
+      timestamp: new Date().toISOString(),
     });
   }
 }

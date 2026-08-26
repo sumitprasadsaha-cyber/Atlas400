@@ -4,3 +4,5 @@ export * from "./validation/validation.service";
 export * from "./upload/upload.service";
 export * from "./download/download.service";
 export * from "./signed-url/signed-url.service";
+export * from "./delete/delete.service";
+export * from "./replace/replace.service";

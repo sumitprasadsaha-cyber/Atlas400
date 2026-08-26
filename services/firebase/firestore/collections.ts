@@ -4,13 +4,14 @@
  * Future phase collections defined for architectural extensibility.
  */
 export const COLLECTIONS = {
-  // Phase 2 Core Collections
+  // Phase 2 & 3 Core Collections
   USERS: "users",
   STUDENTS: "students",
   ADMINS: "admins",
   SETTINGS: "settings",
   AUDIT_LOGS: "audit_logs",
   APP_CONFIG: "app_config",
+  NOTES: "notes",
 
   // Future Phase Collections
   TEACHERS: "teachers",

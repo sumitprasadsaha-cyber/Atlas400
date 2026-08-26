@@ -95,6 +95,36 @@
         "metadata": { "type": "object" }
       },
       "required": ["timestamp", "userId", "role", "action", "resource", "status"]
+    },
+    "note": {
+      "title": "Note",
+      "description": "Educational study material metadata document stored in Firestore referencing R2 binary asset",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "subject": { "type": "string" },
+        "chapter": { "type": "string" },
+        "batch": { "type": "string" },
+        "class": { "type": "string" },
+        "tags": { "type": "array" },
+        "fileName": { "type": "string" },
+        "originalFileName": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "extension": { "type": "string" },
+        "size": { "type": "number" },
+        "r2ObjectKey": { "type": "string" },
+        "uploadedBy": { "type": "string" },
+        "uploadedAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "hidden", "deleted"] },
+        "downloadCount": { "type": "number" },
+        "lastDownloadedAt": { "type": "string" },
+        "isVisible": { "type": "boolean" },
+        "version": { "type": "number" }
+      },
+      "required": ["id", "title", "subject", "r2ObjectKey", "size", "uploadedBy", "uploadedAt", "updatedAt", "status", "isVisible", "version"]
     }
   },
   "firestore": {
@@ -121,6 +151,10 @@
     "/audit_logs/{logId}": {
       "schema": "audit_log",
       "description": "Append-only system and security audit trail"
+    },
+    "/notes/{noteId}": {
+      "schema": "note",
+      "description": "Phase 3 educational note metadata documents"
     }
   }
 }

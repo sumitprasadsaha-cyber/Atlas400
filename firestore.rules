@@ -81,6 +81,16 @@ service cloud.firestore {
              data.status in ["success", "failure", "warning"];
     }
 
+    function isValidNote(data) {
+      return data.id is string &&
+             data.title is string && data.title.size() <= 256 &&
+             data.subject is string && data.subject.size() <= 128 &&
+             data.r2ObjectKey is string && data.r2ObjectKey.size() <= 512 &&
+             data.size is number && data.size > 0 &&
+             data.isVisible is bool &&
+             data.status in ["active", "hidden", "deleted"];
+    }
+
     // 4. COLLECTION MATCH RULES
 
     // USERS COLLECTION
@@ -136,6 +146,18 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create: if isSignedIn() && isValidAuditLog(request.resource.data);
       allow update, delete: if false; // Immutable audit log trail
+    }
+
+    // NOTES COLLECTION (PHASE 3)
+    // Admin: Full CRUD (Upload, Replace, Delete, Hide, Show, Edit metadata)
+    // Student: Read metadata for active visible notes; increment downloadCount/lastDownloadedAt
+    match /notes/{noteId} {
+      allow read: if isSignedIn() && (isAdmin() || (resource.data.isVisible == true && resource.data.status == "active"));
+      allow create: if isAdmin() && isValidNote(request.resource.data);
+      allow update: if (isAdmin() && isValidNote(request.resource.data)) ||
+                      (isSignedIn() &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['downloadCount', 'lastDownloadedAt']));
+      allow delete: if isAdmin();
     }
   }
 }
