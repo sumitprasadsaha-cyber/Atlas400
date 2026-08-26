@@ -1,4 +1,4 @@
-import { uploadObjectToR2, getR2ServerConfig } from "../../src/lib/r2Server";
+import { uploadObjectToR2, getR2ServerConfig } from "../_lib/r2Server";
 
 export const runtime = "nodejs";
 

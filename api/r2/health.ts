@@ -1,4 +1,4 @@
-import { getR2ServerConfig, isR2Configured } from "../../src/lib/r2Server";
+import { getR2ServerConfig, isR2Configured } from "../_lib/r2Server";
 
 export const runtime = "nodejs";
 
