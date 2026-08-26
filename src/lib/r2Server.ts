@@ -259,75 +259,86 @@ export async function getObjectFromR2(params: {
   const bucketName = params.bucket || config.bucket;
   const cleanKey = params.key.replace(/^\/+/, "");
 
+  const candidateKeys = [cleanKey];
+  if (!cleanKey.startsWith("notes/")) {
+    candidateKeys.push(`notes/${cleanKey}`);
+  } else {
+    candidateKeys.push(cleanKey.substring(6));
+  }
+
   if (isR2Configured()) {
-    try {
-      const client = getR2S3Client();
-      const input: GetObjectCommandInput = {
-        Bucket: bucketName,
-        Key: cleanKey,
-        Range: params.range,
-      };
+    const client = getR2S3Client();
+    for (const cand of candidateKeys) {
+      try {
+        const input: GetObjectCommandInput = {
+          Bucket: bucketName,
+          Key: cand,
+          Range: params.range,
+        };
 
-      const command = new GetObjectCommand(input);
-      const response = await client.send(command);
+        const command = new GetObjectCommand(input);
+        const response = await client.send(command);
 
-      return {
-        body: (response.Body as unknown as Readable) || null,
-        contentType: response.ContentType || getMimeTypeFromKey(cleanKey),
-        contentLength: response.ContentLength,
-        contentRange: response.ContentRange,
-        lastModified: response.LastModified,
-        etag: response.ETag,
-        metadata: response.Metadata,
-      };
-    } catch (err: any) {
-      if (
-        err.name === "NoSuchKey" ||
-        err.name === "NotFound" ||
-        err.$metadata?.httpStatusCode === 404
-      ) {
-        // Check local disk storage fallback before returning null
-      } else {
-        console.warn(`[R2Server] Cloudflare R2 GetObject issue (${err.message}), checking local storage fallback...`);
+        return {
+          body: (response.Body as unknown as Readable) || null,
+          contentType: response.ContentType || getMimeTypeFromKey(cand),
+          contentLength: response.ContentLength,
+          contentRange: response.ContentRange,
+          lastModified: response.LastModified,
+          etag: response.ETag,
+          metadata: response.Metadata,
+        };
+      } catch (err: any) {
+        if (
+          err.name === "NoSuchKey" ||
+          err.name === "NotFound" ||
+          err.$metadata?.httpStatusCode === 404
+        ) {
+          continue;
+        } else {
+          console.warn(`[R2Server] Cloudflare R2 GetObject issue for ${cand} (${err.message})`);
+        }
       }
     }
   }
 
   // Check local filesystem storage
-  try {
-    const filePath = getSafeLocalPath(bucketName, cleanKey);
-    if (fs.existsSync(filePath)) {
-      const stat = await fs.promises.stat(filePath);
-      const contentType = getMimeTypeFromKey(cleanKey);
-      const etag = `"${stat.size}-${stat.mtimeMs}"`;
+  for (const cand of candidateKeys) {
+    try {
+      const filePath = getSafeLocalPath(bucketName, cand);
+      if (fs.existsSync(filePath)) {
+        const stat = await fs.promises.stat(filePath);
+        const contentType = getMimeTypeFromKey(cand);
+        const etag = `"${stat.size}-${stat.mtimeMs}"`;
 
-      if (params.range && stat.size > 0) {
-        const parts = params.range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10) || 0;
-        const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
-        const chunkSize = end - start + 1;
-        const fileStream = fs.createReadStream(filePath, { start, end });
+        if (params.range && stat.size > 0) {
+          const parts = params.range.replace(/bytes=/, "").split("-");
+          const start = parseInt(parts[0], 10) || 0;
+          const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+          const chunkSize = end - start + 1;
+          const fileStream = fs.createReadStream(filePath, { start, end });
+
+          return {
+            body: fileStream,
+            contentType,
+            contentLength: chunkSize,
+            contentRange: `bytes ${start}-${end}/${stat.size}`,
+            lastModified: stat.mtime,
+            etag,
+          };
+        }
 
         return {
-          body: fileStream,
+          body: fs.createReadStream(filePath),
           contentType,
-          contentLength: chunkSize,
-          contentRange: `bytes ${start}-${end}/${stat.size}`,
+          contentLength: stat.size,
           lastModified: stat.mtime,
           etag,
         };
       }
-
-      return {
-        body: fs.createReadStream(filePath),
-        contentType,
-        contentLength: stat.size,
-        lastModified: stat.mtime,
-        etag,
-      };
+    } catch (localErr) {
+      // continue to next candidate
     }
-  } catch (localErr) {
-    console.error(`[R2Server] Local storage lookup error for ${cleanKey}:`, localErr);
   }
 
   return { body: null };
@@ -577,47 +588,61 @@ export async function headObjectFromR2(params: {
   lastModified?: Date;
   etag?: string;
   metadata?: Record<string, string>;
+  resolvedKey?: string;
 }> {
   const config = getR2ServerConfig();
   const bucketName = params.bucket || config.bucket;
   const cleanKey = params.key.replace(/^\/+/, "");
 
+  const candidateKeys = [cleanKey];
+  if (!cleanKey.startsWith("notes/")) {
+    candidateKeys.push(`notes/${cleanKey}`);
+  } else {
+    candidateKeys.push(cleanKey.substring(6));
+  }
+
   if (isR2Configured()) {
-    try {
-      const client = getR2S3Client();
-      const command = new HeadObjectCommand({
-        Bucket: bucketName,
-        Key: cleanKey,
-      });
-      const response = await client.send(command);
-      return {
-        exists: true,
-        contentLength: response.ContentLength,
-        contentType: response.ContentType,
-        lastModified: response.LastModified,
-        etag: response.ETag,
-        metadata: response.Metadata,
-      };
-    } catch (err: any) {
-      // Check local storage
+    const client = getR2S3Client();
+    for (const cand of candidateKeys) {
+      try {
+        const command = new HeadObjectCommand({
+          Bucket: bucketName,
+          Key: cand,
+        });
+        const response = await client.send(command);
+        return {
+          exists: true,
+          contentLength: response.ContentLength,
+          contentType: response.ContentType,
+          lastModified: response.LastModified,
+          etag: response.ETag,
+          metadata: response.Metadata,
+          resolvedKey: cand,
+        };
+      } catch (err: any) {
+        // Try next candidate
+      }
     }
   }
 
   // Check local filesystem
-  try {
-    const filePath = getSafeLocalPath(bucketName, cleanKey);
-    if (fs.existsSync(filePath)) {
-      const stat = await fs.promises.stat(filePath);
-      return {
-        exists: true,
-        contentLength: stat.size,
-        contentType: getMimeTypeFromKey(cleanKey),
-        lastModified: stat.mtime,
-        etag: `"${stat.size}-${stat.mtimeMs}"`,
-      };
+  for (const cand of candidateKeys) {
+    try {
+      const filePath = getSafeLocalPath(bucketName, cand);
+      if (fs.existsSync(filePath)) {
+        const stat = await fs.promises.stat(filePath);
+        return {
+          exists: true,
+          contentLength: stat.size,
+          contentType: getMimeTypeFromKey(cand),
+          lastModified: stat.mtime,
+          etag: `"${stat.size}-${stat.mtimeMs}"`,
+          resolvedKey: cand,
+        };
+      }
+    } catch {
+      // ignore and try next
     }
-  } catch {
-    // ignore
   }
 
   return { exists: false };

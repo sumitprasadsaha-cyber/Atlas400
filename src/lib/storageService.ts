@@ -230,20 +230,18 @@ export function sanitizeStoragePath(rawPath: string | null | undefined, bucketNa
   // 7. Remove leading and duplicate slashes
   cleaned = cleaned.replace(/^\/+/, "").replace(/\/+/g, "/");
 
-  // 8. Strip duplicate bucket prefix if present
-  const activeBucket = getBucketName(bucketName);
-  const prefixes = [
-    activeBucket + "/",
-    "academy-connect-files/",
-    "notes/notes/",
-    "profile-photos/profile-photos/",
-    "reports/reports/",
-  ];
-
-  for (const prefix of prefixes) {
-    if (cleaned.startsWith(prefix)) {
-      cleaned = cleaned.substring(prefix.length);
-    }
+  // 8. Strip duplicate bucket prefix if present (only if it's the actual R2 bucket name 'academy-connect-files/')
+  if (cleaned.startsWith("academy-connect-files/")) {
+    cleaned = cleaned.substring("academy-connect-files/".length);
+  }
+  if (cleaned.startsWith("notes/notes/")) {
+    cleaned = "notes/" + cleaned.substring("notes/notes/".length);
+  }
+  if (cleaned.startsWith("profile-photos/profile-photos/")) {
+    cleaned = "profile-photos/" + cleaned.substring("profile-photos/profile-photos/".length);
+  }
+  if (cleaned.startsWith("reports/reports/")) {
+    cleaned = "reports/" + cleaned.substring("reports/reports/".length);
   }
 
   // Strip leading slashes again after prefix removal

@@ -191,21 +191,12 @@ app.post("/api/r2/signed-url", async (req, res) => {
     console.log("bucket actually used:", actualBucket);
     console.log("object key actually used:", cleanKey);
 
-    const signedUrl = await generateR2SignedUrl({
-      bucket: actualBucket,
-      key: cleanKey,
-      expiresIn: Number(expiresIn) || 3600,
-      operation: operation === "putObject" ? "putObject" : "getObject",
-      contentType,
-    });
-
-    console.log("signed URL generated:", signedUrl);
-
     // STEP 4: Immediately validate signed URL / object existence in R2 with HEAD check
     let headStatus = 200;
     let headContentType = contentType || "application/octet-stream";
     let headContentLength = 0;
     let exists = true;
+    let effectiveKey = cleanKey;
 
     try {
       const headCheck = await headObjectFromR2({ bucket: actualBucket, key: cleanKey });
@@ -213,11 +204,13 @@ app.post("/api/r2/signed-url", async (req, res) => {
       headStatus = headCheck.exists ? 200 : 404;
       if (headCheck.contentType) headContentType = headCheck.contentType;
       if (headCheck.contentLength) headContentLength = headCheck.contentLength;
+      if (headCheck.resolvedKey) effectiveKey = headCheck.resolvedKey;
 
       console.log("=== [STEP 4: VALIDATE SIGNED URL / OBJECT] ===");
       console.log("HTTP status from R2:", headStatus);
       console.log("content-type:", headContentType);
       console.log("content-length:", headContentLength);
+      console.log("effective resolved key:", effectiveKey);
       if (!exists) {
         console.error("Requested key:", key);
         console.error("Bucket:", actualBucket);
@@ -228,6 +221,16 @@ app.post("/api/r2/signed-url", async (req, res) => {
       console.warn("[Server R2] Head verification warning:", headErr?.message || headErr);
     }
 
+    const signedUrl = await generateR2SignedUrl({
+      bucket: actualBucket,
+      key: effectiveKey,
+      expiresIn: Number(expiresIn) || 3600,
+      operation: operation === "putObject" ? "putObject" : "getObject",
+      contentType: headContentType,
+    });
+
+    console.log("signed URL generated:", signedUrl);
+
     return res.json({
       success: true,
       signedUrl,
@@ -236,7 +239,7 @@ app.post("/api/r2/signed-url", async (req, res) => {
       contentType: headContentType,
       contentLength: headContentLength,
       bucket: actualBucket,
-      key: cleanKey,
+      key: effectiveKey,
     });
   } catch (err: any) {
     console.error("[Server R2] Error generating signed URL:", err);
