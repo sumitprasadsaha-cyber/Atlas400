@@ -15,6 +15,7 @@ import Settings from "./components/Settings";
 import Login from "./components/Login";
 import StudentDashboard, { StudentMyTab } from "./components/StudentDashboard";
 import { StudentPortalLayout } from "./components/student/StudentPortalLayout";
+import { AdminPortalLayout } from "./components/admin/AdminPortalLayout";
 import { practiceTestsService } from "../features/practice-tests/services/practice-tests.service";
 import { PracticeTest } from "../shared/types/practice-tests.types";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -435,12 +436,11 @@ export default function App() {
 
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const handleRefreshAdminDashboard = async () => {
+  const handleRefreshAdminDashboard = async (): Promise<void> => {
     const freshData = await fetchFreshAdminDashboardData();
     if (freshData && Array.isArray(freshData.students) && freshData.students.length > 0) {
       setStudents(freshData.students);
     }
-    return freshData;
   };
 
   const handleManualRefresh = async () => {
@@ -1521,79 +1521,39 @@ export default function App() {
       }
 
       return (
-        <>
-          {activeTab === "Dashboard" && (
-            <Dashboard
-              students={students}
-              onRefresh={handleRefreshAdminDashboard}
-              onNavigateToStudents={handleNavigateToPendingStudents}
-              onNavigateToStudentDetails={(id) => {
-                setSelectedStudentId(id);
-                setActiveSubject(null);
-              }}
-              onToggleAttendance={(studentId, date, isPresent) =>
-                handleToggleAttendance(studentId, date, isPresent)
-              }
-            />
-          )}
-
-          {activeTab === "LiveStudents" && (
-            <LiveStudentsView
-              students={students}
-              onRefresh={() => {
-                setStudents([...students]);
-              }}
-            />
-          )}
-
-          {activeTab === "Notes" && (
-            <AdminNotesView
-              notes={classNotes}
-              students={students}
-              onRefresh={() => {
-                const refreshedNotes = getLocalClassNotes();
-                setClassNotes(refreshedNotes);
-                const refreshedStudents = getLocalStudents();
-                setStudents(refreshedStudents);
-              }}
-            />
-          )}
-
-          {activeTab === "Students" && (
-            <StudentList
-              students={students}
-              filter={studentFilter}
-              onFilterChange={setStudentFilter}
-              onSelectStudent={(id) => {
-                setSelectedStudentId(id);
-                setActiveSubject(null);
-              }}
-              onEditStudent={handleTriggerEdit}
-              onDeleteStudent={handleDeleteStudent}
-              onAddStudent={handleTriggerAdd}
-              onUpdateServiceStatus={(studentId, newStatus) => {
-                setStudents((prev) =>
-                  prev.map((s) => (s.id === studentId ? { ...s, serviceStatus: newStatus, service_status: newStatus } : s))
-                );
-              }}
-            />
-          )}
-
-          {activeTab === "Settings" && (
-            <Settings 
-              theme={theme} 
-              onThemeChange={setTheme} 
-              visualTheme={visualTheme}
-              onVisualThemeChange={handleVisualThemeChange}
-              qrCode={qrCode}
-              onQrCodeChange={handleSaveQrCode}
-              onResetData={handleResetData} 
-              students={students}
-              onRestoreData={handleRestoreData}
-              isAdmin={true}
-            />
-          )}
-        </>
+        <AdminPortalLayout
+          students={students}
+          allNotes={classNotes}
+          onSelectStudent={(id) => {
+            setSelectedStudentId(id);
+            setActiveSubject(null);
+          }}
+          onAddStudent={handleTriggerAdd}
+          onEditStudent={handleTriggerEdit}
+          onDeleteStudent={handleDeleteStudent}
+          onUpdateStudentsList={(updated) => setStudents(updated)}
+          onToggleAttendance={(studentId, date, isPresent) =>
+            handleToggleAttendance(studentId, date, isPresent)
+          }
+          onUploadNote={() => {
+            setActiveTab("Notes");
+          }}
+          onOpenNotesManager={() => {
+            setActiveTab("Notes");
+          }}
+          onOpenTestsManager={() => {
+            setActiveTab("Dashboard");
+          }}
+          onOpenAvatarModal={(student) => {
+            setSelectedStudentId(student.id);
+            setIsAvatarOpen(true);
+          }}
+          onLogout={handleLogout}
+          darkMode={theme === "dark"}
+          onToggleDarkMode={() => setTheme(theme === "dark" ? "light" : "dark")}
+          onRefreshData={handleRefreshAdminDashboard}
+          isRefreshing={isRefreshing}
+        />
       );
     }
 

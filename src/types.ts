@@ -298,3 +298,237 @@ export interface TestAttemptRecord {
   answers?: Record<string, any>;
   userAnswers?: Record<string, string>; // questionId -> chosen answer
 }
+
+// ----------------------------------------------------
+// PHASE 6: ADMIN PORTAL ACADEMIC & OPERATIONAL TYPES
+// ----------------------------------------------------
+
+export interface AcademicCourse {
+  id: string;
+  name: string; // e.g. "Foundation Batch", "Class 10 CBSE", "UPSC CSE Prelims"
+  code: string; // e.g. "CBSE-10", "UPSC-2026"
+  description?: string;
+  category?: "school" | "competitive" | "upsc" | "vocational";
+  targetGrades?: string[]; // ["Class 9", "Class 10"]
+  activeBatchesCount?: number;
+  totalStudentsEnrolled?: number;
+  status: "active" | "archived" | "draft";
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface AcademicBatch {
+  id: string;
+  name: string; // e.g. "Batch A - Morning", "UPSC 2026 Target"
+  courseId?: string;
+  courseName?: string;
+  classGrade: string; // "Class 10", "UPSC", etc.
+  academicYear: string; // e.g. "2026-2027"
+  term?: string; // "Term 1", "Annual"
+  maxCapacity?: number;
+  assignedTeacherIds?: string[];
+  assignedStudentIds?: string[];
+  schedule?: string; // "Mon-Wed-Fri 4:00 PM"
+  status: "active" | "completed" | "upcoming";
+  createdAt: string;
+}
+
+export interface AcademicSubject {
+  id: string;
+  name: string;
+  code?: string;
+  courseId?: string;
+  classGrade: string;
+  icon?: string;
+  chaptersCount?: number;
+  topicsCount?: number;
+  description?: string;
+  createdAt: string;
+}
+
+export interface AcademicChapter {
+  id: string;
+  subjectId: string;
+  subjectName: string;
+  classGrade: string;
+  chapterNo: number;
+  chapterName: string;
+  description?: string;
+  topicsCount?: number;
+  notesCount?: number;
+  testsCount?: number;
+}
+
+export interface AcademicTopic {
+  id: string;
+  chapterId: string;
+  chapterNo: number;
+  subjectName: string;
+  classGrade: string;
+  topicNo: number | string;
+  topicName: string;
+  summary?: string;
+}
+
+export interface AdminAuditRecord {
+  id: string;
+  adminId: string;
+  adminEmail: string;
+  adminName?: string;
+  action: string; // e.g. "student.created", "note.deleted", "test.published", "fee.collected", "flag.toggled"
+  resource: "students" | "notes" | "tests" | "homework" | "attendance" | "fees" | "announcements" | "notifications" | "flags" | "roles" | "storage" | "settings";
+  resourceId?: string;
+  resourceName?: string;
+  previousValue?: any;
+  newValue?: any;
+  reason?: string;
+  timestamp: string;
+  ipAddress?: string;
+  status: "success" | "warning" | "failure";
+}
+
+export interface AdminAnnouncement {
+  id: string;
+  title: string;
+  content: string;
+  targetType: "all" | "course" | "batch" | "student";
+  targetScope?: string;
+  targetId?: string;
+  targetCourseId?: string;
+  targetBatchId?: string;
+  targetStudentId?: string;
+  targetStudentName?: string;
+  attachments?: Array<{
+    name: string;
+    url: string;
+    r2ObjectKey?: string;
+    fileSize?: number;
+    mimeType?: string;
+  }>;
+  isPinned: boolean;
+  expiryDate?: string;
+  authorId: string;
+  authorName: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface AdminNotificationSchedule {
+  id: string;
+  title: string;
+  body: string;
+  category: "notes" | "homework" | "tests" | "fees" | "attendance" | "announcements" | "general";
+  targetType: "all" | "batch" | "student";
+  targetBatchId?: string;
+  targetStudentId?: string;
+  scheduledFor?: string; // ISO string for future delivery
+  sentAt?: string;
+  status: "scheduled" | "sent" | "cancelled";
+  recipientCount?: number;
+  readCount?: number;
+  createdAt: string;
+}
+
+export interface AdminRolePermission {
+  module: "students" | "academics" | "notes" | "tests" | "homework" | "attendance" | "fees" | "announcements" | "notifications" | "feature_flags" | "audit_logs" | "storage" | "settings";
+  label: string;
+  canView: boolean;
+  canCreate: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+  canExport: boolean;
+}
+
+export interface AdminRoleDefinition {
+  id: string;
+  name: string; // "Admin", "Teacher", "Receptionist", "Parent", "Student", "Custom"
+  description: string;
+  isSystem: boolean; // cannot be deleted
+  userCount?: number;
+  permissions: AdminRolePermission[];
+  updatedAt: string;
+}
+
+export interface StudentHomeworkItem {
+  id: string;
+  title: string;
+  subject: string;
+  classGrade?: string;
+  batchId?: string;
+  batchName?: string;
+  description?: string;
+  dueDate: string;
+  totalMarks?: number;
+  assignedDate?: string;
+  assignedBy?: string;
+  studentId?: string;
+  studentName?: string;
+  status: "pending" | "submitted" | "evaluated" | "missed";
+  submissionDate?: string;
+  submissionAttachmentUrl?: string;
+  submissionAttachmentName?: string;
+  submissionText?: string;
+  submissionKey?: string;
+  marksObtained?: number;
+  evaluatedAt?: string;
+  evaluatorRemarks?: string;
+  feedback?: string;
+  assignedStudentIds?: string[];
+  createdAt?: string;
+}
+
+export interface StudentPortalFeatureFlags {
+  id?: string;
+  enableNotesTab: boolean;
+  enablePracticeTests: boolean;
+  enableHomeworkSubmissions: boolean;
+  enableAttendanceView: boolean;
+  enableFeeReceiptDownload: boolean;
+  enableAnnouncementsBoard: boolean;
+  enableLeaderboardRankings: boolean;
+  enableAiTutorAssistant: boolean;
+  enableProfilePhotoUploads: boolean;
+  enableStudyTimer: boolean;
+  maintenanceMode: boolean;
+  maintenanceMessage?: string;
+  enableNotes?: boolean;
+  enableHomework?: boolean;
+  enableAttendance?: boolean;
+  enableFeeStatus?: boolean;
+  enableNotifications?: boolean;
+  enableDashboard?: boolean;
+  enableAnalytics?: boolean;
+  enableProfile?: boolean;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface StorageConsistencyItem {
+  key: string;
+  size: number;
+  lastModified?: string;
+  category: "notes" | "practice-tests" | "homework" | "avatars" | "other";
+  hasFirestoreDoc: boolean;
+  firestoreDocId?: string;
+  isOrphan: boolean;
+}
+
+export interface StorageHealthOverview {
+  totalStorageBytes: number;
+  totalFilesCount: number;
+  referencedFilesCount?: number;
+  folderBreakdown: Record<string, { size: number; count: number }>;
+  largestFiles: Array<{ key: string; size: number; category: string; lastModified?: string }>;
+  orphanFilesCount: number;
+  orphansSize: number;
+  status: "healthy" | "needs_attention" | "error";
+  lastVerifiedAt?: string;
+  items?: Array<{
+    key: string;
+    sizeBytes: number;
+    associatedResourceName?: string;
+    isOrphan: boolean;
+    publicUrl?: string;
+  }>;
+}
+
