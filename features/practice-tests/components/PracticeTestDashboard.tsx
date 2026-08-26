@@ -62,7 +62,7 @@ export default function PracticeTestDashboard({
   // 1. Subscribe to Real-time Tests from Firestore
   useEffect(() => {
     setIsLoading(true);
-    const unsubscribe = practiceTestsService.subscribeToTests((freshTests) => {
+    const unsubscribe = practiceTestsService.subscribeToTests(undefined, (freshTests) => {
       setTests(freshTests);
       setIsLoading(false);
     });
@@ -118,7 +118,7 @@ export default function PracticeTestDashboard({
     e.stopPropagation();
     if (confirm(`Permanently delete "${test.title}" and its questions from Cloudflare R2?`)) {
       try {
-        await practiceTestsService.deletePracticeTest(test.id, test.r2ObjectKey);
+        await practiceTestsService.deleteTest(test.id, { id: "admin", name: "Admin" });
       } catch (err: any) {
         alert("Failed to delete test: " + err.message);
       }

@@ -105,12 +105,7 @@ export default function AdminTestBuilderModal({
     setValidationErrors([]);
     setValidationSuccess(null);
 
-    const result = practiceValidator.parseRawText(rawText, {
-      subject,
-      chapter,
-      topicName,
-      classGrade,
-    });
+    const result = practiceValidator.parseFormattedTextToQuestions(rawText);
 
     if (!result.success || !result.questions?.length) {
       setValidationErrors(result.errors.length ? result.errors : ["No valid questions parsed."]);
@@ -128,13 +123,13 @@ export default function AdminTestBuilderModal({
     try {
       const parsed = JSON.parse(jsonInput);
       const validation = practiceValidator.validateQuestionBank(parsed);
-      if (!validation.success) {
+      if (!validation.isValid || !validation.cleanQuestionBank) {
         setValidationErrors(validation.errors);
         return;
       }
-      setParsedQuestions(validation.questionBank!.questions);
-      if (validation.questionBank!.title && !title) setTitle(validation.questionBank!.title);
-      setValidationSuccess(`Valid Question Bank: ${validation.questionBank!.questions.length} questions loaded.`);
+      setParsedQuestions(validation.cleanQuestionBank.questions);
+      if (validation.cleanQuestionBank.title && !title) setTitle(validation.cleanQuestionBank.title);
+      setValidationSuccess(`Valid Question Bank: ${validation.cleanQuestionBank.questions.length} questions loaded.`);
     } catch (e: any) {
       setValidationErrors(["Invalid JSON format: " + e.message]);
     }
@@ -144,7 +139,7 @@ export default function AdminTestBuilderModal({
     setValidationErrors([]);
     setValidationSuccess(null);
 
-    const result = practiceValidator.parseCsv(csvInput);
+    const result = practiceValidator.parseCsvToQuestions(csvInput);
     if (!result.success || !result.questions?.length) {
       setValidationErrors(result.errors.length ? result.errors : ["No valid questions parsed from CSV."]);
       return;
@@ -187,7 +182,7 @@ export default function AdminTestBuilderModal({
 
     try {
       const testTitle = title || `${topicName || chapter} - ${subject} Practice Test`;
-      const testId = initialTest?.id || practiceTestsService.generateTestId(classGrade, subject, chapterNo, topicName);
+      const testId = initialTest?.id || `test_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       const totalMarks = parsedQuestions.reduce((acc, q) => acc + (q.marks || 4), 0);
 
       const bankPayload: QuestionBank = {
@@ -212,13 +207,13 @@ export default function AdminTestBuilderModal({
         // Atomic Replace Question Bank in R2
         const updated = await practiceTestsService.replaceQuestionBank(
           initialTest.id,
-          initialTest.r2ObjectKey,
-          bankPayload
+          bankPayload,
+          { id: "admin", name: "Admin" }
         );
         resultTest = updated.test;
       } else {
         // Create new Question Bank in R2 & Firestore
-        const created = await practiceTestsService.createQuestionBank(bankPayload);
+        const created = await practiceTestsService.createTest(bankPayload);
         resultTest = created.test;
       }
 

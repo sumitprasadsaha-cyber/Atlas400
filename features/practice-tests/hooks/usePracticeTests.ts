@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { PracticeTest, StudentTestAttempt } from "../../../shared/types/practice-tests.types";
+import { PracticeTest } from "../../../shared/types/practice-tests.types";
 import { practiceTestsService } from "../services/practice-tests.service";
 import { logger } from "../../../shared/utils/logger";
 
@@ -13,7 +13,7 @@ export function usePracticeTests(classId?: string, subjectId?: string) {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await practiceTestsService.getTestsBySubject(classId, subjectId);
+      const data = await practiceTestsService.getTests({ subject: subjectId });
       setTests(data);
     } catch (e: any) {
       logger.error("usePracticeTests: Failed to fetch tests", e);
@@ -27,8 +27,17 @@ export function usePracticeTests(classId?: string, subjectId?: string) {
     fetchTests();
   }, [fetchTests]);
 
-  const submitAttempt = async (attempt: StudentTestAttempt) => {
-    await practiceTestsService.submitAttempt(attempt);
+  const submitAttempt = async (payload: {
+    attemptId: string;
+    studentId: string;
+    studentName?: string;
+    practiceTestId: string;
+    r2ObjectKey: string;
+    answers: Record<string, any>;
+    timeTaken: number;
+    startedAt?: string;
+  }) => {
+    return await practiceTestsService.submitAttempt(payload);
   };
 
   return {
