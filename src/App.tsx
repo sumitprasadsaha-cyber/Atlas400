@@ -14,6 +14,9 @@ import StudyTimerModal from "./components/StudyTimerModal";
 import Settings from "./components/Settings";
 import Login from "./components/Login";
 import StudentDashboard, { StudentMyTab } from "./components/StudentDashboard";
+import { StudentPortalLayout } from "./components/student/StudentPortalLayout";
+import { practiceTestsService } from "../features/practice-tests/services/practice-tests.service";
+import { PracticeTest } from "../shared/types/practice-tests.types";
 import ErrorBoundary from "./components/ErrorBoundary";
 import LoadingProgressModal from "./components/LoadingProgressModal";
 import { progressService } from "./lib/progressService";
@@ -473,6 +476,19 @@ export default function App() {
       if (unsub) unsub();
     };
   }, []);
+
+  const [practiceTests, setPracticeTests] = useState<PracticeTest[]>([]);
+
+  // Subscribe to practice tests real-time updates
+  useEffect(() => {
+    if (!auth.isAuthenticated) return;
+    const unsub = practiceTestsService.subscribeToTests(undefined, (tests) => {
+      setPracticeTests(tests || []);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [auth.isAuthenticated]);
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(() => {
     // If a student session was preserved, preset selected student ID
     const cachedAuth = localStorage.getItem("tuition_auth_state");
@@ -1419,6 +1435,31 @@ export default function App() {
     );
   }
 
+  // --- Atlas 2.0 Phase 5: Dedicated Student Portal ---
+  if (auth.role === "student") {
+    if (!activeStudent) {
+      return (
+        <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-white space-y-4">
+          <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+          <div className="text-sm font-bold text-slate-300">Loading Student Portal...</div>
+        </div>
+      );
+    }
+
+    return (
+      <StudentPortalLayout
+        student={activeStudent}
+        allNotes={classNotes}
+        allPracticeTests={practiceTests}
+        onLogout={handleLogout}
+        onUpdateStudentAvatar={async (url) => {
+          await handleSaveProfilePhoto(activeStudent.id, url);
+        }}
+        onRefreshData={handleManualRefresh}
+      />
+    );
+  }
+
   const renderMainContent = () => {
     if (auth.role === "admin" && activeSubject && activeStudent) {
       return (
@@ -1690,13 +1731,11 @@ export default function App() {
             <button
               onClick={() => {
                 setActiveTab("Dashboard");
-                if (auth.role === "admin") {
-                  setSelectedStudentId(null);
-                }
+                setSelectedStudentId(null);
                 setActiveSubject(null);
               }}
               className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all flex-1 py-1 ${
-                activeTab === "Dashboard" && (auth.role === "student" || !selectedStudentId)
+                activeTab === "Dashboard" && !selectedStudentId
                   ? "text-blue-600 dark:text-blue-400 scale-102 font-bold"
                   : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
               }`}
@@ -1704,110 +1743,81 @@ export default function App() {
             >
               <LayoutDashboard className="w-5 h-5 stroke-[2]" />
               <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase mt-0.5">
-                {auth.role === "student" ? "dashboard" : "Dashboard"}
+                Dashboard
               </span>
             </button>
 
             {/* Nav Tab 2: Live Students (Admin only) */}
-            {auth.role === "admin" && (
-              <button
-                onClick={() => {
-                  setActiveTab("LiveStudents");
-                  setSelectedStudentId(null);
-                  setActiveSubject(null);
-                }}
-                className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all flex-1 py-1 ${
-                  activeTab === "LiveStudents"
-                    ? "text-emerald-600 dark:text-emerald-400 scale-102 font-bold"
-                    : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                }`}
-                id="nav-btn-live-students"
-              >
-                <div className="relative">
-                  <Radio className="w-5 h-5 stroke-[2]" />
-                  <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-                  </span>
-                </div>
-                <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase mt-0.5 flex items-center gap-1">
-                  🟢 Live
+            <button
+              onClick={() => {
+                setActiveTab("LiveStudents");
+                setSelectedStudentId(null);
+                setActiveSubject(null);
+              }}
+              className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all flex-1 py-1 ${
+                activeTab === "LiveStudents"
+                  ? "text-emerald-600 dark:text-emerald-400 scale-102 font-bold"
+                  : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+              }`}
+              id="nav-btn-live-students"
+            >
+              <div className="relative">
+                <Radio className="w-5 h-5 stroke-[2]" />
+                <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                 </span>
-              </button>
-            )}
+              </div>
+              <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase mt-0.5 flex items-center gap-1">
+                🟢 Live
+              </span>
+            </button>
 
-            {/* Nav Tab 2: Notes (Admin only) */}
-            {auth.role === "admin" && (
-              <button
-                onClick={() => {
-                  setActiveTab("Notes");
-                  setSelectedStudentId(null);
-                  setActiveSubject(null);
-                }}
-                className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all flex-1 py-1 ${
-                  activeTab === "Notes"
-                    ? "text-blue-600 dark:text-blue-400 scale-102 font-bold"
-                    : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                }`}
-                id="nav-btn-notes"
-              >
-                <FolderKanban className="w-5 h-5 stroke-[2]" />
-                <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase mt-0.5">
-                  Notes
-                </span>
-              </button>
-            )}
+            {/* Nav Tab 3: Notes (Admin only) */}
+            <button
+              onClick={() => {
+                setActiveTab("Notes");
+                setSelectedStudentId(null);
+                setActiveSubject(null);
+              }}
+              className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all flex-1 py-1 ${
+                activeTab === "Notes"
+                  ? "text-blue-600 dark:text-blue-400 scale-102 font-bold"
+                  : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+              }`}
+              id="nav-btn-notes"
+            >
+              <FolderKanban className="w-5 h-5 stroke-[2]" />
+              <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase mt-0.5">
+                Notes
+              </span>
+            </button>
 
-            {/* Nav Tab 2: My Study Space (Students only) */}
-            {auth.role === "student" && (
-              <button
-                onClick={() => {
-                  setActiveTab("My");
-                  setActiveSubject(null);
-                }}
-                className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all flex-1 py-1 ${
-                  activeTab === "My"
-                    ? "text-blue-600 dark:text-blue-400 scale-102 font-bold"
-                    : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                }`}
-                id="nav-btn-my"
-              >
-                <BookOpen className="w-5 h-5 stroke-[2]" />
-                <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase mt-0.5">
-                  My Study Space
-                </span>
-              </button>
-            )}
+            {/* Nav Tab 4: Students */}
+            <button
+              onClick={() => {
+                setActiveTab("Students");
+                setSelectedStudentId(null);
+                setActiveSubject(null);
+              }}
+              className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all flex-1 py-1 ${
+                activeTab === "Students" || selectedStudentId
+                  ? "text-blue-600 dark:text-blue-400 scale-102 font-bold"
+                  : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+              }`}
+              id="nav-btn-students"
+            >
+              <Users className="w-5 h-5 stroke-[2]" />
+              <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase mt-0.5">
+                Students
+              </span>
+            </button>
 
-            {/* Nav Tab 3: Students (Admin only) */}
-            {auth.role === "admin" && (
-              <button
-                onClick={() => {
-                  setActiveTab("Students");
-                  setSelectedStudentId(null);
-                  setActiveSubject(null);
-                }}
-                className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all flex-1 py-1 ${
-                  (activeTab === "Students" || selectedStudentId)
-                    ? "text-blue-600 dark:text-blue-400 scale-102 font-bold"
-                    : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                }`}
-                id="nav-btn-students"
-              >
-                <Users className="w-5 h-5 stroke-[2]" />
-                <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase mt-0.5">
-                  Students
-                </span>
-              </button>
-            )}
-
-            {/* Nav Tab 3: Settings */}
+            {/* Nav Tab 5: Settings */}
             <button
               onClick={() => {
                 setActiveTab("Settings");
-                if (auth.role === "admin") {
-                  setSelectedStudentId(null);
-                }
+                setSelectedStudentId(null);
                 setActiveSubject(null);
               }}
               className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all flex-1 py-1 ${
