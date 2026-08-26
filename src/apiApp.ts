@@ -10,7 +10,7 @@ import {
   headObjectFromR2,
   getR2ServerConfig,
   isR2Configured,
-} from "./lib/r2Server";
+} from "../api/_lib/r2Server";
 
 export const apiApp = express();
 
@@ -166,99 +166,60 @@ router.get("/r2/health", (req, res) => {
   const configured = isR2Configured();
   return res.json({
     status: "ok",
-    storageBackend: configured ? "Cloudflare R2" : "Local Storage (R2 Fallback)",
     configured,
     bucket: config.bucket,
-    hasEndpoint: Boolean(config.endpoint),
-    hasPublicUrl: Boolean(config.publicUrl),
+    storage: "Cloudflare R2",
+    timestamp: new Date().toISOString(),
   });
 });
 
 // 2. Generate Pre-signed URL (GET or PUT)
 router.post("/r2/signed-url", async (req, res) => {
   try {
-    const { bucket, key, expiresIn, operation, contentType } = req.body;
-    if (!key) {
-      return res.status(400).json({ error: "Missing required 'key' parameter." });
+    const { bucket, key, storageKey, expiresIn, operation, contentType } = req.body;
+    const targetKey = storageKey || key;
+    if (!targetKey) {
+      return res.status(400).json({ error: "Missing required 'storageKey' parameter." });
     }
 
-    const cleanKey = key.replace(/^\/+/, "");
+    const cleanKey = String(targetKey).replace(/^\/+/, "");
     const config = getR2ServerConfig();
     const actualBucket = (bucket || config.bucket || "academy-connect-files").trim();
-
-    console.log("=== [BACKEND R2 RETRIEVAL PIPELINE] ===");
-    console.log("incoming storageKey:", key);
-    console.log("incoming bucket:", bucket);
-    console.log("bucket actually used:", actualBucket);
-    console.log("object key actually used:", cleanKey);
-
-    let headStatus = 200;
-    let headContentType = contentType || "application/octet-stream";
-    let headContentLength = 0;
-    let exists = true;
-    let effectiveKey = cleanKey;
-
-    try {
-      const headCheck = await headObjectFromR2({ bucket: actualBucket, key: cleanKey });
-      exists = headCheck.exists;
-      headStatus = headCheck.exists ? 200 : 404;
-      if (headCheck.contentType) headContentType = headCheck.contentType;
-      if (headCheck.contentLength) headContentLength = headCheck.contentLength;
-      if (headCheck.resolvedKey) effectiveKey = headCheck.resolvedKey;
-
-      console.log("=== [VALIDATE SIGNED URL / OBJECT] ===");
-      console.log("HTTP status from R2:", headStatus);
-      console.log("content-type:", headContentType);
-      console.log("content-length:", headContentLength);
-      console.log("effective resolved key:", effectiveKey);
-      if (!exists) {
-        console.error("Requested key:", key);
-        console.error("Bucket:", actualBucket);
-        console.error("Exact key sent to R2:", cleanKey);
-      }
-      console.log("==============================================");
-    } catch (headErr: any) {
-      console.warn("[Server R2] Head verification warning:", headErr?.message || headErr);
-    }
+    const expirySeconds = Number(expiresIn) || 600; // 10 minutes default
 
     const signedUrl = await generateR2SignedUrl({
       bucket: actualBucket,
-      key: effectiveKey,
-      expiresIn: Number(expiresIn) || 3600,
+      key: cleanKey,
+      expiresIn: expirySeconds,
       operation: operation === "putObject" ? "putObject" : "getObject",
-      contentType: headContentType,
+      contentType: contentType,
     });
-
-    console.log("signed URL generated:", signedUrl);
 
     return res.json({
       success: true,
       signedUrl,
-      exists,
-      status: headStatus,
-      contentType: headContentType,
-      contentLength: headContentLength,
       bucket: actualBucket,
-      key: effectiveKey,
+      storageKey: cleanKey,
+      expiresIn: expirySeconds,
     });
   } catch (err: any) {
     console.error("[Server R2] Error generating signed URL:", err);
     return res.status(500).json({
       error: err.message || "Failed to generate Cloudflare R2 signed URL.",
-      stack: process.env.NODE_ENV !== "production" ? err.stack : undefined,
     });
   }
 });
 
-// 3. Upload File directly via Backend Proxy
+// 3. Upload File to R2
 router.post("/r2/upload", async (req, res) => {
   try {
     const bucket = (req.query.bucket as string) || req.body?.bucket;
-    const key = (req.query.key as string) || req.body?.key;
-    let contentType = (req.query.mimeType as string) || req.headers["content-type"] || "application/octet-stream";
+    const key = (req.query.key as string) || req.body?.key || req.body?.storageKey;
+    let contentType = (req.query.mimeType as string) || req.body?.mimeType || req.headers["content-type"] || "application/octet-stream";
+    let originalFilename = (req.query.fileName as string) || req.body?.fileName || req.body?.originalFilename || "document.pdf";
 
-    if (!key) {
-      return res.status(400).json({ error: "Missing required 'key' query parameter or body property." });
+    if (contentType.includes(";")) {
+      contentType = contentType.split(";")[0].trim();
     }
 
     let buffer: Buffer;
@@ -270,6 +231,7 @@ router.post("/r2/upload", async (req, res) => {
           if (parsed.base64) {
             buffer = Buffer.from(parsed.base64, "base64");
             if (parsed.mimeType) contentType = parsed.mimeType;
+            if (parsed.fileName) originalFilename = parsed.fileName;
           } else {
             buffer = req.body;
           }
@@ -282,6 +244,7 @@ router.post("/r2/upload", async (req, res) => {
     } else if (req.body && typeof req.body === "object" && req.body.base64) {
       buffer = Buffer.from(req.body.base64, "base64");
       if (req.body.mimeType) contentType = req.body.mimeType;
+      if (req.body.fileName) originalFilename = req.body.fileName;
     } else if (typeof req.body === "string") {
       buffer = Buffer.from(req.body, "utf-8");
     } else {
@@ -292,168 +255,36 @@ router.post("/r2/upload", async (req, res) => {
       return res.status(400).json({ error: "Upload buffer is empty." });
     }
 
-    console.log(`[Server R2] Uploading object key="${key}", size=${buffer.length} bytes, contentType="${contentType}"`);
+    let storageKey = key;
+    if (!storageKey) {
+      const sanitizedName = originalFilename.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const timestamp = Date.now();
+      const randomHex = Math.random().toString(36).substring(2, 8);
+      storageKey = `notes/${timestamp}-${randomHex}-${sanitizedName}`;
+    }
+
+    const cleanKey = String(storageKey).replace(/^\/+/, "");
 
     const result = await uploadObjectToR2({
       bucket,
-      key,
+      key: cleanKey,
       body: buffer,
       contentType,
     });
 
-    const config = getR2ServerConfig();
-    const downloadUrl = `/api/r2/download?bucket=${encodeURIComponent(result.bucket)}&key=${encodeURIComponent(key)}`;
-    const publicUrl = config.publicUrl
-      ? `${config.publicUrl}/${key.replace(/^\/+/, "")}`
-      : downloadUrl;
-
     return res.json({
       success: true,
       bucket: result.bucket,
-      key: result.key,
-      etag: result.etag,
-      url: downloadUrl,
-      publicUrl: publicUrl,
-      size: buffer.length,
+      storageKey: result.key,
       mimeType: contentType,
+      fileSize: buffer.length,
+      originalFilename,
     });
   } catch (err: any) {
-    console.error("[Server R2] Upload error:", {
-      endpoint: "/api/r2/upload",
-      error: err.message,
-      stack: err.stack,
-    });
+    console.error("[Server R2] Upload error:", err);
     return res.status(500).json({
       error: err.message || "Failed to upload file to Cloudflare R2.",
-      endpoint: "/api/r2/upload",
-      stack: err.stack,
     });
-  }
-});
-
-// 4. Download / Stream File from R2 - HEAD
-router.head("/r2/download", async (req, res) => {
-  try {
-    const bucket = req.query.bucket as string | undefined;
-    const key = req.query.key as string | undefined;
-
-    if (!key) {
-      return res.status(400).end();
-    }
-
-    const cleanKey = key.replace(/^\/+/, "");
-    const config = getR2ServerConfig();
-    const actualBucket = bucket || config.bucket || "academy-connect-files";
-    const head = await headObjectFromR2({ bucket: actualBucket, key: cleanKey });
-
-    if (!head.exists) {
-      console.error("=== [BACKEND R2 HEAD 404] ===", { key, actualBucket, cleanKey });
-      return res.status(404).end();
-    }
-
-    let contentType = (req.query.mimeType as string) || head.contentType || "application/octet-stream";
-    if (contentType === "application/octet-stream" || !contentType) {
-      if (cleanKey.toLowerCase().endsWith(".pdf")) contentType = "application/pdf";
-      else if (cleanKey.toLowerCase().endsWith(".png")) contentType = "image/png";
-      else if (cleanKey.toLowerCase().endsWith(".jpg") || cleanKey.toLowerCase().endsWith(".jpeg")) contentType = "image/jpeg";
-      else if (cleanKey.toLowerCase().endsWith(".webp")) contentType = "image/webp";
-      else if (cleanKey.toLowerCase().endsWith(".gif")) contentType = "image/gif";
-      else if (cleanKey.toLowerCase().endsWith(".svg")) contentType = "image/svg+xml";
-      else if (cleanKey.toLowerCase().endsWith(".json")) contentType = "application/json";
-    }
-
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Authorization, Accept");
-    res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type, ETag, Content-Disposition");
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Accept-Ranges", "bytes");
-    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-    if (head.etag) res.setHeader("ETag", head.etag);
-    if (head.contentLength) res.setHeader("Content-Length", head.contentLength);
-
-    return res.status(200).end();
-  } catch (err: any) {
-    return res.status(404).end();
-  }
-});
-
-// Download / Stream file - GET
-router.get("/r2/download", async (req, res) => {
-  try {
-    const bucket = req.query.bucket as string | undefined;
-    const key = req.query.key as string | undefined;
-
-    if (!key) {
-      return res.status(400).send("Missing required 'key' query parameter.");
-    }
-
-    const cleanKey = key.replace(/^\/+/, "");
-    const config = getR2ServerConfig();
-    const actualBucket = bucket || config.bucket || "academy-connect-files";
-
-    console.log("=== [BACKEND R2 DOWNLOAD / STREAM] ===");
-    console.log("incoming storageKey:", key);
-    console.log("incoming bucket:", bucket);
-    console.log("bucket actually used:", actualBucket);
-    console.log("object key actually used:", cleanKey);
-
-    const range = req.headers.range;
-    const obj = await getObjectFromR2({ bucket: actualBucket, key: cleanKey, range });
-
-    if (!obj.body) {
-      console.error("=== [BACKEND R2 DOWNLOAD 404] ===", { key, actualBucket, cleanKey });
-      return res.status(404).send("File not found in Cloudflare R2.");
-    }
-
-    let contentType = (req.query.mimeType as string) || obj.contentType || "application/octet-stream";
-    if (contentType === "application/octet-stream" || !contentType) {
-      if (cleanKey.toLowerCase().endsWith(".pdf")) contentType = "application/pdf";
-      else if (cleanKey.toLowerCase().endsWith(".png")) contentType = "image/png";
-      else if (cleanKey.toLowerCase().endsWith(".jpg") || cleanKey.toLowerCase().endsWith(".jpeg")) contentType = "image/jpeg";
-      else if (cleanKey.toLowerCase().endsWith(".webp")) contentType = "image/webp";
-      else if (cleanKey.toLowerCase().endsWith(".gif")) contentType = "image/gif";
-      else if (cleanKey.toLowerCase().endsWith(".svg")) contentType = "image/svg+xml";
-      else if (cleanKey.toLowerCase().endsWith(".json")) contentType = "application/json";
-    }
-
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Authorization, Accept");
-    res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type, ETag, Content-Disposition");
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Accept-Ranges", "bytes");
-    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-
-    if (obj.etag) {
-      res.setHeader("ETag", obj.etag);
-    }
-
-    if (obj.contentRange) {
-      res.status(206);
-      res.setHeader("Content-Range", obj.contentRange);
-    }
-
-    if (obj.contentLength) {
-      res.setHeader("Content-Length", obj.contentLength);
-    }
-
-    if (req.query.download === "true" || req.query.filename) {
-      const downloadFilename = (req.query.filename as string) || cleanKey.split("/").pop() || "download";
-      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadFilename)}"`);
-    }
-
-    obj.body.pipe(res);
-  } catch (err: any) {
-    console.error("[Server R2] Download error:", {
-      endpoint: "/api/r2/download",
-      error: err.message,
-      stack: err.stack,
-    });
-    if (err.name === "NoSuchKey" || err.name === "NotFound" || err.$metadata?.httpStatusCode === 404) {
-      return res.status(404).send("File not found in Cloudflare R2.");
-    }
-    return res.status(500).send(`Cloudflare R2 Download Error: ${err.message || err}`);
   }
 });
 

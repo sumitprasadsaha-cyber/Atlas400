@@ -345,7 +345,7 @@ export async function getObjectFromR2(params: {
 }
 
 /**
- * Generates a presigned URL or proxy streaming URL for downloading or uploading to Cloudflare R2 / Local Storage.
+ * Generates a direct presigned URL for downloading or uploading to Cloudflare R2.
  */
 export async function generateR2SignedUrl(params: {
   bucket?: string;
@@ -357,7 +357,7 @@ export async function generateR2SignedUrl(params: {
   const config = getR2ServerConfig();
   const bucketName = params.bucket || config.bucket;
   const cleanKey = params.key.replace(/^\/+/, "");
-  const expiresIn = params.expiresIn || 3600;
+  const expiresIn = params.expiresIn || 600; // 10 minutes default
   const operation = params.operation || "getObject";
 
   if (isR2Configured()) {
@@ -378,12 +378,19 @@ export async function generateR2SignedUrl(params: {
       });
       return await getSignedUrl(client, command, { expiresIn });
     } catch (err: any) {
-      console.warn(`[R2Server] generateR2SignedUrl falling back to proxy URL for ${cleanKey}:`, err?.message || err);
+      console.warn(`[R2Server] generateR2SignedUrl S3 error for ${cleanKey}:`, err?.message || err);
+      if (config.publicUrl) {
+        return `${config.publicUrl}/${cleanKey}`;
+      }
+      throw err;
     }
   }
 
-  // Seamless fallback to proxy streaming URL
-  return `/api/r2/download?bucket=${encodeURIComponent(bucketName)}&key=${encodeURIComponent(cleanKey)}`;
+  if (config.publicUrl) {
+    return `${config.publicUrl}/${cleanKey}`;
+  }
+
+  return `/data/storage/${bucketName}/${cleanKey}`;
 }
 
 /**

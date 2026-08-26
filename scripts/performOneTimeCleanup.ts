@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { uploadObjectToR2, deleteObjectsFromR2, listObjectsFromR2 } from "../src/lib/r2Server";
+import { uploadObjectToR2, deleteObjectsFromR2, listObjectsFromR2 } from "../api/_lib/r2Server";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "https://kffaehofciebfqczhfxm.supabase.co";
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_t9Xgetmt4736XUtCrAq8pQ_zcTJWzUg";

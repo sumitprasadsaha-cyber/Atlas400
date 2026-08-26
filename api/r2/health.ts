@@ -11,10 +11,9 @@ export default function handler(req: any, res: any) {
   const configured = isR2Configured();
   return res.status(200).json({
     status: "ok",
-    storageBackend: configured ? "Cloudflare R2" : "Local Storage (R2 Fallback)",
     configured,
     bucket: config.bucket,
-    hasEndpoint: Boolean(config.endpoint),
-    hasPublicUrl: Boolean(config.publicUrl),
+    storage: "Cloudflare R2",
+    timestamp: new Date().toISOString(),
   });
 }

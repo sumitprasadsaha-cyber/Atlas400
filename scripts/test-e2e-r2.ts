@@ -6,7 +6,7 @@ import {
   getObjectFromR2,
   deleteObjectFromR2,
   generateR2SignedUrl,
-} from "../src/lib/r2Server";
+} from "../api/_lib/r2Server";
 import { getFirebaseDb } from "../src/lib/firebase";
 import { collection, getDocs } from "firebase/firestore";
 import { Readable } from "stream";

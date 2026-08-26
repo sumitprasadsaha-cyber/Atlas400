@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { getBucketName, getResolvedViewUrl, uploadFileToR2 } from "../src/lib/storageService";
-import { uploadObjectToR2, getObjectFromR2, generateR2SignedUrl, deleteObjectFromR2 } from "../src/lib/r2Server";
+import { uploadObjectToR2, getObjectFromR2, generateR2SignedUrl, deleteObjectFromR2 } from "../api/_lib/r2Server";
 
 async function main() {
   const studentId = "student-1784378546110";

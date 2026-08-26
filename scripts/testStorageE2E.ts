@@ -9,7 +9,7 @@ import {
   deleteObjectFromR2,
   listObjectsFromR2,
   getR2ServerConfig,
-} from "../src/lib/r2Server";
+} from "../api/_lib/r2Server";
 
 const config = getR2ServerConfig();
 const bucket = config.bucket;
