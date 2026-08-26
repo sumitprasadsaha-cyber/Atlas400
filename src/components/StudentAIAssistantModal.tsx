@@ -56,6 +56,7 @@ export default function StudentAIAssistantModal({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [dailyQuotaRemaining, setDailyQuotaRemaining] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [lastFailedQuery, setLastFailedQuery] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -136,12 +137,14 @@ export default function StudentAIAssistantModal({
       };
 
       setMessages((prev) => [...prev, aiMessage]);
+      setLastFailedQuery(null);
       if (typeof response.remainingDailyQuota === "number") {
         setDailyQuotaRemaining(response.remainingDailyQuota);
       }
     } catch (err: any) {
       console.error("Student AI error:", err);
       setErrorMsg(err.message || "Failed to reach AI Tutor. Please try again.");
+      setLastFailedQuery(textToSend);
     } finally {
       setLoading(false);
     }
@@ -309,9 +312,21 @@ export default function StudentAIAssistantModal({
           )}
 
           {errorMsg && (
-            <div className="flex items-center gap-2 rounded-xl bg-red-50 p-3 text-xs text-red-700 border border-red-200">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              <span>{errorMsg}</span>
+            <div className="flex items-center justify-between gap-2 rounded-xl bg-red-50 p-3 text-xs text-red-700 border border-red-200">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+                <span>{errorMsg}</span>
+              </div>
+              {lastFailedQuery && (
+                <button
+                  onClick={() => handleSendMessage(lastFailedQuery)}
+                  disabled={loading}
+                  className="shrink-0 flex items-center gap-1 px-2.5 py-1 text-xs font-semibold bg-red-100 text-red-800 hover:bg-red-200 rounded-lg transition disabled:opacity-50 cursor-pointer"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Retry
+                </button>
+              )}
             </div>
           )}
 
