@@ -274,6 +274,7 @@ export interface UploadPayload {
   contentType: string;
   fileName?: string;
   size: number;
+  fields?: Record<string, string>;
 }
 
 /**
@@ -297,6 +298,15 @@ export async function extractUploadPayload(req: any): Promise<UploadPayload> {
   let resolvedBucket = (req.query?.bucket as string) || (req.body?.bucket as string) || "";
   let resolvedContentType = (req.query?.mimeType as string) || (req.body?.mimeType as string) || "";
   let resolvedFileName = (req.query?.filename as string) || (req.body?.filename as string) || "";
+  let extractedFields: Record<string, string> = {};
+
+  if (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) {
+    for (const [k, v] of Object.entries(req.body)) {
+      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+        extractedFields[k] = String(v);
+      }
+    }
+  }
 
   // 1. Handle multipart/form-data
   if (reqContentType.includes("multipart/form-data")) {
@@ -304,8 +314,9 @@ export async function extractUploadPayload(req: any): Promise<UploadPayload> {
     const boundary = boundaryMatch ? boundaryMatch[1].trim().replace(/^["']|["']$/g, "") : "";
     if (boundary && rawBuffer.length > 0) {
       const parsed = parseMultipartFormData(rawBuffer, boundary);
+      extractedFields = { ...extractedFields, ...parsed.fields };
       if (parsed.files.length > 0) {
-        const filePart = parsed.files.find((f) => f.name === "file" || f.name === "pdf") || parsed.files[0];
+        const filePart = parsed.files.find((f) => f.name === "file" || f.name === "pdf" || f.name === "image" || f.name === "note") || parsed.files[0];
         resolvedBuffer = filePart.data;
         resolvedFileName = resolvedFileName || filePart.filename || "";
         resolvedContentType = resolvedContentType || filePart.contentType || getMimeType(resolvedFileName);
@@ -331,6 +342,11 @@ export async function extractUploadPayload(req: any): Promise<UploadPayload> {
           resolvedKey = resolvedKey || parsed.key || parsed.storagePath || "";
           resolvedBucket = resolvedBucket || parsed.bucket || "";
           resolvedContentType = resolvedContentType || parsed.mimeType || "";
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+              extractedFields[k] = String(v);
+            }
+          }
         }
       } catch {}
     }
@@ -353,5 +369,6 @@ export async function extractUploadPayload(req: any): Promise<UploadPayload> {
     contentType: resolvedContentType,
     fileName: resolvedFileName,
     size: resolvedBuffer.length,
+    fields: extractedFields,
   };
 }

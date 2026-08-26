@@ -47,7 +47,27 @@ router.all("/storage", (req, res) => storageHandler(req, res));
 // 2. AI API (/api/ai)
 router.all("/ai", (req, res) => aiHandler(req, res));
 
-// 3. Notes API (/api/notes)
+// 3. Notes API (/api/notes, /api/notes/upload, /api/notes/:id/replace, /api/notes/:id, /api/admin/notes, /api/student/notes)
+router.post("/notes/upload", (req, res) => {
+  req.query.action = "upload";
+  return notesHandler(req, res);
+});
+router.put("/notes/:id/replace", (req, res) => {
+  req.query.action = "replace";
+  return notesHandler(req, res);
+});
+router.delete("/notes/:id", (req, res) => {
+  req.query.action = "delete";
+  return notesHandler(req, res);
+});
+router.get("/admin/notes", (req, res) => {
+  req.query.action = "admin";
+  return notesHandler(req, res);
+});
+router.get("/student/notes", (req, res) => {
+  req.query.action = "student";
+  return notesHandler(req, res);
+});
 router.all("/notes", (req, res) => notesHandler(req, res));
 
 // 4. Practice Tests API (/api/practice-tests)
