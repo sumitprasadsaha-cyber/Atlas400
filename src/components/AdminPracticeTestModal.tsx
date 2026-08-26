@@ -43,8 +43,9 @@ import {
 } from "../lib/practiceTestService";
 import { uploadQuestionImageToStorage } from "../lib/storageService";
 import { createPracticeTestChangeHandler } from "../utils/practiceTestState";
-import { supabase } from "../lib/supabaseClient";
 import { deduplicateAttempts } from "../lib/testScorePersistence";
+import { getFirebaseDb } from "../lib/firebase";
+import { collection, query, where, getDocs } from "firebase/firestore";
 
 interface AdminPracticeTestModalProps {
   isOpen: boolean;
@@ -233,43 +234,54 @@ export default function AdminPracticeTestModal({
     const fetchDirectAttempts = async () => {
       try {
         const expectedTestId = buildTopicTestId(classGrade, subject, chapterNo, topicName);
-        const { data, error } = await supabase
-          .from("student_practice_test_attempts")
-          .select("*")
-          .or(`test_id.eq.${expectedTestId},and(class_grade.ilike.${classGrade},subject.ilike.${subject},chapter_no.eq.${chapterNo},topic_name.ilike.${topicName})`)
-          .range(0, 9999);
+        const db = await getFirebaseDb();
+        if (!db) return;
 
-        if (!error && Array.isArray(data) && isMounted) {
-          const converted: TestAttemptRecord[] = data.map((row) => ({
-            id: row.id || `att_${row.timestamp || Date.now()}`,
-            studentId: row.student_id || "",
-            studentName: row.student_name || "Student",
-            testId: row.test_id,
-            topicId: row.topic_id,
-            chapterId: row.chapter_id,
-            subjectId: row.subject_id,
-            classGrade: row.class_grade || "",
-            subject: row.subject || "",
-            chapterNo: row.chapter_no || 0,
-            chapterName: row.chapter_name || "",
-            topicName: row.topic_name || "",
-            testType: row.test_type || "topic",
-            attemptNumber: row.attempt_number || 1,
-            date: row.date || new Date().toISOString(),
-            timestamp: row.timestamp || Date.now(),
-            timeTakenSeconds: row.time_taken_seconds || 0,
-            score: row.score || 0,
-            totalMarks: row.total_marks || row.total_questions || 0,
-            totalQuestions: row.total_questions || 0,
-            percentage: row.percentage || 0,
-            correctAnswersCount: row.correct_answers_count || 0,
-            wrongAnswersCount: row.wrong_answers_count || 0,
-            userAnswers: row.user_answers || {}
-          }));
+        const q = query(collection(db, "student_attempts"), where("subject", "==", subject));
+        const snap = await getDocs(q);
+
+        if (isMounted) {
+          const converted: TestAttemptRecord[] = [];
+          snap.forEach((docSnap) => {
+            const row = docSnap.data() as any;
+            const isMatch =
+              (row.testId === expectedTestId || row.practiceTestId === expectedTestId) ||
+              (Number(row.chapterNo || row.chapter) === Number(chapterNo) &&
+                (row.topicName || "").toLowerCase().trim() === (topicName || "").toLowerCase().trim());
+
+            if (isMatch) {
+              converted.push({
+                id: docSnap.id,
+                studentId: row.studentId || row.student_id || "",
+                studentName: row.studentName || row.student_name || "Student",
+                testId: row.testId || row.practiceTestId || expectedTestId,
+                topicId: row.topicId,
+                chapterId: row.chapterId,
+                subjectId: row.subjectId,
+                classGrade: row.classGrade || row.class_grade || classGrade,
+                subject: row.subject || subject,
+                chapterNo: Number(row.chapterNo || row.chapter || chapterNo),
+                chapterName: row.chapterName || row.chapter_name || "",
+                topicName: row.topicName || row.topic_name || topicName,
+                testType: row.testType || row.test_type || "topic",
+                attemptNumber: row.attemptNumber || row.attempt_number || 1,
+                date: row.submittedAt || row.date || new Date().toISOString(),
+                timestamp: row.timestamp || new Date(row.submittedAt || Date.now()).getTime(),
+                timeTakenSeconds: row.timeTaken || row.timeTakenSeconds || 0,
+                score: row.score || row.finalScore || 0,
+                totalMarks: row.totalMarks || row.total_marks || 0,
+                totalQuestions: row.totalQuestions || row.questionCount || 0,
+                percentage: row.percentage || 0,
+                correctAnswersCount: row.correct || row.correctCount || 0,
+                wrongAnswersCount: row.wrong || row.wrongCount || 0,
+                userAnswers: row.answers || row.userAnswers || {},
+              });
+            }
+          });
           setAttemptsList((prev) => deduplicateAttempts([...prev, ...converted]));
         }
       } catch (err) {
-        console.warn("[AdminPracticeTestModal] Error loading direct attempts:", err);
+        console.warn("[AdminPracticeTestModal] Error loading direct attempts from Firestore:", err);
       }
     };
 
@@ -723,7 +735,7 @@ export default function AdminPracticeTestModal({
     setEditingQuestion(q);
     setEditQText(q.question);
     setEditQOptions([...q.options]);
-    setEditQCorrectAns(q.correctAnswer);
+    setEditQCorrectAns(String(q.correctAnswer || ""));
     setEditQType(q.type);
     setEditQImageUrl(q.imageUrl || "");
     setEditQImageLabel(q.imageLabel || "");

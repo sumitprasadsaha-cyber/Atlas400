@@ -13,13 +13,18 @@ export const COLLECTIONS = {
   APP_CONFIG: "app_config",
   NOTES: "notes",
 
+  // Phase 4 Collections
+  PRACTICE_TESTS: "practice_tests",
+  STUDENT_ATTEMPTS: "student_attempts",
+  TEST_ATTEMPTS: "student_attempts", // alias for backward compatibility
+  PRACTICE_RESULTS: "practice_results",
+  PRACTICE_ASSIGNMENTS: "practice_assignments",
+
   // Future Phase Collections
   TEACHERS: "teachers",
   CLASSES: "classes",
   SUBJECTS: "subjects",
   NOTES_METADATA: "notes_metadata",
-  PRACTICE_TESTS: "practice_tests",
-  TEST_ATTEMPTS: "test_attempts",
   ATTENDANCE: "attendance",
   FEES: "fees",
   HOMEWORK: "homework",

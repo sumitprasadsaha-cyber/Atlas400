@@ -91,6 +91,46 @@ service cloud.firestore {
              data.status in ["active", "hidden", "deleted"];
     }
 
+    function isValidPracticeTest(data) {
+      return data.id is string &&
+             data.title is string && data.title.size() <= 256 &&
+             data.subject is string && data.subject.size() <= 128 &&
+             data.chapter is string && data.chapter.size() <= 128 &&
+             data.r2ObjectKey is string && data.r2ObjectKey.size() <= 512 &&
+             data.questionCount is number && data.questionCount >= 0 &&
+             data.duration is number && data.duration > 0 &&
+             data.totalMarks is number && data.totalMarks > 0 &&
+             data.visibility is bool &&
+             data.status in ["published", "draft", "archived", "deleted"];
+    }
+
+    function isValidStudentAttempt(data) {
+      return data.attemptId is string &&
+             data.studentId is string &&
+             data.practiceTestId is string &&
+             data.startedAt is string &&
+             data.status in ["in_progress", "submitted", "abandoned"] &&
+             data.answers is map;
+    }
+
+    function isValidPracticeResult(data) {
+      return data.id is string &&
+             data.attemptId is string &&
+             data.studentId is string &&
+             data.practiceTestId is string &&
+             data.finalScore is number &&
+             data.totalMarks is number &&
+             data.passStatus in ["passed", "failed"];
+    }
+
+    function isValidPracticeAssignment(data) {
+      return data.id is string &&
+             data.practiceTestId is string &&
+             data.assignedBatches is list &&
+             data.dueDate is string &&
+             data.visibility is bool;
+    }
+
     // 4. COLLECTION MATCH RULES
 
     // USERS COLLECTION
@@ -158,6 +198,43 @@ service cloud.firestore {
                       (isSignedIn() &&
                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['downloadCount', 'lastDownloadedAt']));
       allow delete: if isAdmin();
+    }
+
+    // PRACTICE TESTS COLLECTION (PHASE 4)
+    // Admin: Full CRUD (Create, Edit, Delete, Hide, Publish, Replace)
+    // Student: Read metadata for published and visible tests
+    match /practice_tests/{testId} {
+      allow read: if isSignedIn() && (isAdmin() || (resource.data.visibility == true && resource.data.status == "published"));
+      allow create: if isAdmin() && isValidPracticeTest(request.resource.data);
+      allow update: if isAdmin() && isValidPracticeTest(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // STUDENT ATTEMPTS COLLECTION (PHASE 4)
+    // Admin: Read all attempts, delete/manage attempts
+    // Student: Read and manage own attempts (auto-save answers & submit)
+    match /student_attempts/{attemptId} {
+      allow read: if isSignedIn() && (isAdmin() || resource.data.studentId == request.auth.uid || isAssociatedStudent(resource.data.studentId));
+      allow create: if isSignedIn() && isValidStudentAttempt(request.resource.data) && (request.resource.data.studentId == request.auth.uid || isAssociatedStudent(request.resource.data.studentId) || isAdmin());
+      allow update: if isSignedIn() && isValidStudentAttempt(request.resource.data) && (resource.data.studentId == request.auth.uid || isAssociatedStudent(resource.data.studentId) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // PRACTICE RESULTS COLLECTION (PHASE 4)
+    // Admin: Read all results, generate analytics
+    // Student: Read own results
+    match /practice_results/{resultId} {
+      allow read: if isSignedIn() && (isAdmin() || resource.data.studentId == request.auth.uid || isAssociatedStudent(resource.data.studentId));
+      allow create, update: if isSignedIn() && (isAdmin() || request.resource.data.studentId == request.auth.uid || isAssociatedStudent(request.resource.data.studentId));
+      allow delete: if isAdmin();
+    }
+
+    // PRACTICE ASSIGNMENTS COLLECTION (PHASE 4)
+    // Admin: Full CRUD
+    // Student: Read assignments
+    match /practice_assignments/{assignmentId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
     }
   }
 }

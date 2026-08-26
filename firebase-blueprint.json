@@ -125,6 +125,88 @@
         "version": { "type": "number" }
       },
       "required": ["id", "title", "subject", "r2ObjectKey", "size", "uploadedBy", "uploadedAt", "updatedAt", "status", "isVisible", "version"]
+    },
+    "practice_test": {
+      "title": "PracticeTest",
+      "description": "Practice test metadata document stored in Firestore referencing R2 question bank JSON",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "subject": { "type": "string" },
+        "chapter": { "type": "string" },
+        "batch": { "type": "string" },
+        "description": { "type": "string" },
+        "r2ObjectKey": { "type": "string" },
+        "questionCount": { "type": "number" },
+        "duration": { "type": "number" },
+        "totalMarks": { "type": "number" },
+        "negativeMarking": { "type": "number" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "status": { "type": "string", "enum": ["published", "draft", "archived", "deleted"] },
+        "version": { "type": "number" },
+        "visibility": { "type": "boolean" },
+        "tags": { "type": "array" }
+      },
+      "required": ["id", "title", "subject", "chapter", "r2ObjectKey", "questionCount", "duration", "totalMarks", "createdBy", "createdAt", "updatedAt", "status", "version", "visibility"]
+    },
+    "student_attempt": {
+      "title": "StudentAttempt",
+      "description": "Student practice test attempt with real-time auto-saving progress and submission responses",
+      "type": "object",
+      "properties": {
+        "attemptId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "practiceTestId": { "type": "string" },
+        "startedAt": { "type": "string" },
+        "submittedAt": { "type": "string" },
+        "timeTaken": { "type": "number" },
+        "answers": { "type": "object" },
+        "score": { "type": "number" },
+        "percentage": { "type": "number" },
+        "correct": { "type": "number" },
+        "wrong": { "type": "number" },
+        "unanswered": { "type": "number" },
+        "status": { "type": "string", "enum": ["in_progress", "submitted", "abandoned"] }
+      },
+      "required": ["attemptId", "studentId", "practiceTestId", "startedAt", "answers", "status"]
+    },
+    "practice_result": {
+      "title": "PracticeResult",
+      "description": "Evaluated practice test score, percentile, and performance analytics",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "attemptId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "practiceTestId": { "type": "string" },
+        "finalScore": { "type": "number" },
+        "totalMarks": { "type": "number" },
+        "percentage": { "type": "number" },
+        "rank": { "type": "number" },
+        "percentile": { "type": "number" },
+        "passStatus": { "type": "string", "enum": ["passed", "failed"] },
+        "completionTime": { "type": "number" }
+      },
+      "required": ["id", "attemptId", "studentId", "practiceTestId", "finalScore", "totalMarks", "percentage", "passStatus", "completionTime"]
+    },
+    "practice_assignment": {
+      "title": "PracticeAssignment",
+      "description": "Test assignment scheduling for batches and individual students",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "practiceTestId": { "type": "string" },
+        "assignedBatches": { "type": "array" },
+        "assignedStudents": { "type": "array" },
+        "dueDate": { "type": "string" },
+        "visibility": { "type": "boolean" },
+        "assignedBy": { "type": "string" },
+        "assignedAt": { "type": "string" }
+      },
+      "required": ["id", "practiceTestId", "assignedBatches", "dueDate", "visibility", "assignedBy", "assignedAt"]
     }
   },
   "firestore": {
@@ -155,6 +237,22 @@
     "/notes/{noteId}": {
       "schema": "note",
       "description": "Phase 3 educational note metadata documents"
+    },
+    "/practice_tests/{testId}": {
+      "schema": "practice_test",
+      "description": "Phase 4 practice test metadata documents referencing Cloudflare R2 question bank JSON"
+    },
+    "/student_attempts/{attemptId}": {
+      "schema": "student_attempt",
+      "description": "Phase 4 real-time student test attempts with auto-saving progress"
+    },
+    "/practice_results/{resultId}": {
+      "schema": "practice_result",
+      "description": "Phase 4 final performance records, ranks, and percentiles"
+    },
+    "/practice_assignments/{assignmentId}": {
+      "schema": "practice_assignment",
+      "description": "Phase 4 batch and student test assignment schedules"
     }
   }
 }

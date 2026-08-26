@@ -221,19 +221,26 @@ export interface TuitionStats {
 
 export interface ParsedAssessmentQuestion {
   id: string;
-  classGrade: string;
-  subject: string;
-  chapterNo: number;
-  chapterName: string;
-  topicName: string;
-  type: "mcq" | "true_false" | "assertion_reason";
+  classGrade?: string;
+  subject?: string;
+  chapterNo?: number;
+  chapterName?: string;
+  topicName?: string;
+  type?: "mcq" | "true_false" | "assertion_reason";
   question: string;
-  options: string[]; // Clean option text for student view (e.g. ["A. Plants and animals", "B. Internal and external forces"])
-  correctAnswer: string; // "A" | "B" | "C" | "D" or "True" | "False"
+  options: string[]; // Clean option text for student view
+  correctAnswer: string | number; // "A" | "B" | "C" | "D" or index
   explanation?: string; // Optional explanation for the answer
-  imageUrl?: string; // Optional image data URL or hosted image URL for diagram/image-based questions
-  imageLabel?: string; // Optional diagram label, e.g. "Ocean-floor diagram"
-  imagePosition?: "above" | "below"; // "above" or "below" the question text
+  imageUrl?: string; // Optional image data URL or hosted image URL
+  image?: string; // R2 image URL
+  diagram?: string;
+  reference?: string;
+  hint?: string;
+  difficulty?: "easy" | "medium" | "hard";
+  marks?: number;
+  negativeMarks?: number;
+  imageLabel?: string; // Optional diagram label
+  imagePosition?: "above" | "below";
   rawText?: string;
   published?: boolean;
   orderIndex?: number;
@@ -257,28 +264,37 @@ export interface TopicPracticeTest {
 
 export interface TestAttemptRecord {
   id: string;
+  attemptId?: string;
   studentId: string;
   studentName: string;
   testId?: string;
+  practiceTestId?: string;
   topicId?: string;
   chapterId?: string;
   subjectId?: string;
   classGrade: string;
   subject: string;
   chapterNo: number;
-  chapterName: string;
+  chapterName?: string;
   topicName: string; // Topic Name OR "Full Chapter Test"
   testType: "topic" | "full_chapter";
-  attemptNumber: number; // 1, 2, 3...
-  date: string; // Formatted date string
-  timestamp: number;
-  timeTakenSeconds: number; // In seconds
+  attemptNumber?: number; // 1, 2, 3...
+  date?: string; // Formatted date string
+  submittedAt?: string;
+  startedAt?: string;
+  timestamp?: number;
+  timeTaken?: number;
+  timeTakenSeconds?: number; // In seconds
   score: number; // Marks obtained, e.g. 18
   totalMarks?: number; // Total marks, e.g. 20
-  totalQuestions: number; // e.g., 20
-  percentage: number; // e.g., 90
-  correctAnswersCount: number;
-  wrongAnswersCount: number;
+  totalQuestions?: number; // e.g., 20
+  percentage?: number; // e.g., 90
+  correct?: number;
+  correctAnswersCount?: number;
+  wrong?: number;
+  wrongAnswersCount?: number;
+  unanswered?: number;
   unattemptedCount?: number;
-  userAnswers: Record<string, string>; // questionId -> chosen answer
+  answers?: Record<string, any>;
+  userAnswers?: Record<string, string>; // questionId -> chosen answer
 }

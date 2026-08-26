@@ -648,6 +648,500 @@ router.post("/r2/list", async (req, res) => {
   }
 });
 
+// ========================================================
+// PRACTICE TESTS API ROUTES (PHASE 4)
+// ========================================================
+
+// 1. Upload Question Bank to Cloudflare R2
+router.post("/practice/upload", async (req, res) => {
+  try {
+    const { uploadObjectToR2, getR2ServerConfig, headObjectFromR2 } = await import("../api/_lib/r2Server");
+    const { validateQuestionBank } = await import("../shared/validation/practice.validator");
+
+    let payload = req.body;
+    if (typeof payload === "string") {
+      try {
+        payload = JSON.parse(payload);
+      } catch (err: any) {
+        return res.status(400).json({ success: false, error: { message: "Invalid JSON format: " + err.message } });
+      }
+    }
+
+    const { subject, chapter, testId, title, duration, batch, description } = payload || {};
+    const validation = validateQuestionBank(payload, { testId, title, subject, chapter, batch, duration });
+
+    if (!validation.isValid || !validation.cleanQuestionBank) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          message: "Validation failed for practice test question bank.",
+          details: validation.errors,
+          warnings: validation.warnings,
+        },
+      });
+    }
+
+    const cleanBank = validation.cleanQuestionBank;
+    const normSubject = (cleanBank.subject || "general").toLowerCase().replace(/[^a-z0-9]/g, "_");
+    const normChapter = (cleanBank.chapter || "ch1").toLowerCase().replace(/[^a-z0-9]/g, "_");
+    const cleanTestId = cleanBank.testId.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+    const r2ObjectKey = `practice-tests/${normSubject}/${normChapter}/${cleanTestId}.json`;
+    const jsonString = JSON.stringify(cleanBank, null, 2);
+    const jsonBuffer = Buffer.from(jsonString, "utf-8");
+
+    const config = getR2ServerConfig();
+    const bucket = (req.query?.bucket as string) || config.bucket || "academy-connect-files";
+
+    const uploadResult = await uploadObjectToR2({
+      bucket,
+      key: r2ObjectKey,
+      body: jsonBuffer,
+      contentType: "application/json",
+      metadata: {
+        testid: cleanBank.testId,
+        title: encodeURIComponent(cleanBank.title),
+        subject: encodeURIComponent(cleanBank.subject),
+        chapter: encodeURIComponent(cleanBank.chapter),
+        questioncount: String(cleanBank.questions.length),
+        version: String(cleanBank.version),
+      },
+    });
+
+    const head = await headObjectFromR2({ bucket, key: r2ObjectKey });
+    if (!head.exists) {
+      throw new Error("Failed to verify question bank upload in Cloudflare R2.");
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        testId: cleanBank.testId,
+        title: cleanBank.title,
+        subject: cleanBank.subject,
+        chapter: cleanBank.chapter,
+        batch: cleanBank.batch,
+        description: cleanBank.description,
+        questionCount: cleanBank.questions.length,
+        duration: cleanBank.duration,
+        totalMarks: cleanBank.totalMarks,
+        negativeMarking: cleanBank.negativeMarking,
+        r2ObjectKey,
+        bucket: uploadResult.bucket,
+        fileSize: jsonBuffer.length,
+        version: cleanBank.version,
+        url: `/api/practice/download?key=${encodeURIComponent(r2ObjectKey)}`,
+        warnings: validation.warnings,
+      },
+      message: "Practice test question bank uploaded and validated successfully.",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("[Practice Upload] Error:", err);
+    return res.status(500).json({ success: false, error: { message: err.message || "Failed to upload question bank." } });
+  }
+});
+
+// 2. Download Question Bank or Pre-signed redirect
+router.get("/practice/download", async (req, res) => {
+  try {
+    const { generateR2SignedUrl, getR2ServerConfig, headObjectFromR2, getObjectFromR2 } = await import("../api/_lib/r2Server");
+    const key = (req.query?.key as string) || (req.query?.r2ObjectKey as string) || (req.query?.storageKey as string);
+    if (!key) {
+      return res.status(400).json({ success: false, error: { message: "Missing required 'key' parameter." } });
+    }
+
+    const cleanKey = String(key).replace(/^\/+/, "");
+    const config = getR2ServerConfig();
+    const bucket = ((req.query?.bucket as string) || config.bucket || "academy-connect-files").trim();
+    const expiresIn = Number(req.query?.expiresIn) || 300;
+
+    const head = await headObjectFromR2({ bucket, key: cleanKey });
+    if (!head.exists) {
+      return res.status(404).json({ success: false, error: { message: `Question bank not found in storage: ${cleanKey}` } });
+    }
+
+    const signedUrl = await generateR2SignedUrl({
+      bucket,
+      key: cleanKey,
+      expiresIn,
+      operation: "getObject",
+      contentType: head.contentType,
+    });
+
+    const isDirectFetch = req.query?.direct === "true" || req.query?.fetchJson === "true";
+    if (isDirectFetch && cleanKey.endsWith(".json")) {
+      const obj = await getObjectFromR2({ bucket, key: cleanKey });
+      if (obj.body) {
+        res.setHeader("Content-Type", "application/json");
+        return obj.body.pipe(res);
+      }
+    }
+
+    if (req.query?.redirect === "true") {
+      return res.redirect(302, signedUrl);
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        signedUrl,
+        r2ObjectKey: cleanKey,
+        bucket,
+        expiresIn,
+        contentType: head.contentType,
+        contentLength: head.contentLength,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("[Practice Download] Error:", err);
+    return res.status(500).json({ success: false, error: { message: err.message || "Failed to download question bank." } });
+  }
+});
+
+// 3. Generate Signed URL for Practice Test Assets
+router.post("/practice/signed-url", async (req, res) => {
+  try {
+    const { generateR2SignedUrl, getR2ServerConfig, headObjectFromR2 } = await import("../api/_lib/r2Server");
+    const { key, r2ObjectKey, storageKey, operation, contentType, expiresIn } = req.body || {};
+    const targetKey = r2ObjectKey || storageKey || key;
+    if (!targetKey) {
+      return res.status(400).json({ success: false, error: { message: "Missing required 'r2ObjectKey' parameter." } });
+    }
+
+    const cleanKey = String(targetKey).replace(/^\/+/, "");
+    const config = getR2ServerConfig();
+    const bucket = (req.body?.bucket || config.bucket || "academy-connect-files").trim();
+    const expirySeconds = Number(expiresIn) || 300;
+
+    if (operation !== "putObject") {
+      const head = await headObjectFromR2({ bucket, key: cleanKey });
+      if (!head.exists) {
+        return res.status(404).json({ success: false, error: { message: `Question bank not found in storage: ${cleanKey}` } });
+      }
+    }
+
+    const signedUrl = await generateR2SignedUrl({
+      bucket,
+      key: cleanKey,
+      expiresIn: expirySeconds,
+      operation: operation === "putObject" ? "putObject" : "getObject",
+      contentType: contentType || (cleanKey.endsWith(".json") ? "application/json" : undefined),
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: { signedUrl, r2ObjectKey: cleanKey, bucket, expiresIn: expirySeconds },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: { message: err.message || "Signed URL generation failed." } });
+  }
+});
+
+// 4. Delete Practice Test from R2
+const handlePracticeDelete = async (req: express.Request, res: express.Response) => {
+  try {
+    const { deleteObjectFromR2, deleteObjectsFromR2, headObjectFromR2, getR2ServerConfig } = await import("../api/_lib/r2Server");
+    const { r2ObjectKey, key, imageKeys, associatedKeys } = req.body || {};
+    const targetKey = r2ObjectKey || key || req.query?.key || req.query?.r2ObjectKey;
+
+    if (!targetKey) {
+      return res.status(400).json({ success: false, error: { message: "Missing required 'r2ObjectKey' parameter." } });
+    }
+
+    const cleanKey = String(targetKey).replace(/^\/+/, "");
+    const config = getR2ServerConfig();
+    const bucket = (req.body?.bucket || req.query?.bucket || config.bucket || "academy-connect-files").trim();
+    const deletedKeys: string[] = [];
+
+    await deleteObjectFromR2({ bucket, key: cleanKey });
+    deletedKeys.push(cleanKey);
+
+    const extraKeys: string[] = [];
+    if (Array.isArray(imageKeys)) extraKeys.push(...imageKeys);
+    if (Array.isArray(associatedKeys)) extraKeys.push(...associatedKeys);
+
+    if (extraKeys.length > 0) {
+      const cleanExtraKeys = extraKeys.map((k) => String(k).replace(/^\/+/, "")).filter(Boolean);
+      await deleteObjectsFromR2({ bucket, keys: cleanExtraKeys });
+      deletedKeys.push(...cleanExtraKeys);
+    }
+
+    const verifyHead = await headObjectFromR2({ bucket, key: cleanKey });
+    return res.status(200).json({
+      success: true,
+      data: { r2ObjectKey: cleanKey, deletedKeys, verifiedClean: !verifyHead.exists, bucket },
+      message: "Practice test JSON and associated media purged completely from Cloudflare R2.",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: { message: err.message || "Failed to delete files from R2." } });
+  }
+};
+router.delete("/practice/delete", handlePracticeDelete);
+router.post("/practice/delete", handlePracticeDelete);
+
+// 5. Atomic Replace Practice Test
+const handlePracticeReplace = async (req: express.Request, res: express.Response) => {
+  try {
+    const { uploadObjectToR2, deleteObjectFromR2, deleteObjectsFromR2, headObjectFromR2, getR2ServerConfig } = await import("../api/_lib/r2Server");
+    const { validateQuestionBank } = await import("../shared/validation/practice.validator");
+
+    let payload = req.body;
+    if (typeof payload === "string") {
+      try {
+        payload = JSON.parse(payload);
+      } catch (err: any) {
+        return res.status(400).json({ success: false, error: { message: "Invalid JSON: " + err.message } });
+      }
+    }
+
+    const { oldR2ObjectKey, oldKey, newQuestionBank, oldImageKeys, version } = payload || {};
+    const previousKey = oldR2ObjectKey || oldKey;
+
+    const validation = validateQuestionBank(newQuestionBank || payload);
+    if (!validation.isValid || !validation.cleanQuestionBank) {
+      return res.status(400).json({
+        success: false,
+        error: { message: "Validation failed for replacement question bank.", details: validation.errors },
+      });
+    }
+
+    const cleanBank = validation.cleanQuestionBank;
+    const nextVersion = (Number(version) || Number(cleanBank.version) || 1) + 1;
+    cleanBank.version = nextVersion;
+
+    const normSubject = (cleanBank.subject || "general").toLowerCase().replace(/[^a-z0-9]/g, "_");
+    const normChapter = (cleanBank.chapter || "ch1").toLowerCase().replace(/[^a-z0-9]/g, "_");
+    const cleanTestId = cleanBank.testId.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+    const newR2ObjectKey = `practice-tests/${normSubject}/${normChapter}/${cleanTestId}_v${nextVersion}.json`;
+    const jsonBuffer = Buffer.from(JSON.stringify(cleanBank, null, 2), "utf-8");
+
+    const config = getR2ServerConfig();
+    const bucket = (req.query?.bucket as string) || config.bucket || "academy-connect-files";
+
+    await uploadObjectToR2({
+      bucket,
+      key: newR2ObjectKey,
+      body: jsonBuffer,
+      contentType: "application/json",
+      metadata: { testid: cleanBank.testId, version: String(nextVersion), questioncount: String(cleanBank.questions.length) },
+    });
+
+    const newHead = await headObjectFromR2({ bucket, key: newR2ObjectKey });
+    if (!newHead.exists) {
+      throw new Error(`Failed to verify replacement upload in R2 for key: ${newR2ObjectKey}`);
+    }
+
+    let oldKeyDeleted = false;
+    if (previousKey && previousKey !== newR2ObjectKey) {
+      const cleanOldKey = String(previousKey).replace(/^\/+/, "");
+      await deleteObjectFromR2({ bucket, key: cleanOldKey });
+      const oldHead = await headObjectFromR2({ bucket, key: cleanOldKey });
+      oldKeyDeleted = !oldHead.exists;
+    }
+
+    if (Array.isArray(oldImageKeys) && oldImageKeys.length > 0) {
+      const cleanImgKeys = oldImageKeys.map((k) => String(k).replace(/^\/+/, "")).filter(Boolean);
+      await deleteObjectsFromR2({ bucket, keys: cleanImgKeys });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        testId: cleanBank.testId,
+        title: cleanBank.title,
+        subject: cleanBank.subject,
+        chapter: cleanBank.chapter,
+        questionCount: cleanBank.questions.length,
+        duration: cleanBank.duration,
+        totalMarks: cleanBank.totalMarks,
+        negativeMarking: cleanBank.negativeMarking,
+        r2ObjectKey: newR2ObjectKey,
+        oldR2ObjectKey: previousKey || null,
+        oldKeyDeleted,
+        version: nextVersion,
+        fileSize: jsonBuffer.length,
+      },
+      message: "Practice test replaced atomically in Cloudflare R2.",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: { message: err.message || "Failed to replace practice test." } });
+  }
+};
+router.patch("/practice/replace", handlePracticeReplace);
+router.post("/practice/replace", handlePracticeReplace);
+
+// 6. Submit and Evaluate Practice Test
+router.post("/practice/submit", async (req, res) => {
+  try {
+    const { getObjectFromR2, getR2ServerConfig } = await import("../api/_lib/r2Server");
+    const { attemptId, studentId, studentName, practiceTestId, r2ObjectKey, answers, timeTaken, startedAt } = req.body || {};
+
+    if (!studentId || !practiceTestId || !r2ObjectKey) {
+      return res.status(400).json({
+        success: false,
+        error: { message: "Missing studentId, practiceTestId, or r2ObjectKey." },
+      });
+    }
+
+    const config = getR2ServerConfig();
+    const bucket = (req.body?.bucket || config.bucket || "academy-connect-files").trim();
+
+    const r2Response = await getObjectFromR2({ bucket, key: r2ObjectKey });
+    if (!r2Response.body) {
+      return res.status(404).json({ success: false, error: { message: `Question bank not found in R2: ${r2ObjectKey}` } });
+    }
+
+    const chunks: any[] = [];
+    for await (const chunk of r2Response.body as any) {
+      chunks.push(chunk);
+    }
+    const jsonStr = Buffer.concat(chunks).toString("utf-8");
+    const questionBank = JSON.parse(jsonStr);
+
+    const studentAnswers = answers || {};
+    let earnedMarks = 0;
+    let correctCount = 0;
+    let wrongCount = 0;
+    let unansweredCount = 0;
+
+    const difficultyBreakdown: any = {
+      easy: { total: 0, correct: 0, score: 0 },
+      medium: { total: 0, correct: 0, score: 0 },
+      hard: { total: 0, correct: 0, score: 0 },
+    };
+
+    const reviewItems: any[] = [];
+
+    questionBank.questions.forEach((q: any, idx: number) => {
+      const qDiff = (q.difficulty || "medium") as "easy" | "medium" | "hard";
+      if (difficultyBreakdown[qDiff]) {
+        difficultyBreakdown[qDiff].total += 1;
+      }
+
+      const qId = q.id || `q_${idx + 1}`;
+      const givenAns = studentAnswers[qId];
+      const hasAnswered = givenAns !== undefined && givenAns !== null && givenAns !== "";
+      let isCorrect = false;
+
+      if (!hasAnswered) {
+        unansweredCount += 1;
+      } else {
+        if (typeof q.correctAnswer === "number") {
+          isCorrect = Number(givenAns) === q.correctAnswer;
+        } else if (typeof q.correctAnswer === "string") {
+          isCorrect = String(givenAns).trim().toLowerCase() === String(q.correctAnswer).trim().toLowerCase();
+        }
+
+        if (isCorrect) {
+          correctCount += 1;
+          const marks = q.marks || 4;
+          earnedMarks += marks;
+          if (difficultyBreakdown[qDiff]) {
+            difficultyBreakdown[qDiff].correct += 1;
+            difficultyBreakdown[qDiff].score += marks;
+          }
+        } else {
+          wrongCount += 1;
+          const penalty = q.negativeMarks !== undefined ? q.negativeMarks : (questionBank.negativeMarking || 0);
+          earnedMarks -= penalty;
+        }
+      }
+
+      reviewItems.push({
+        id: qId,
+        questionNumber: idx + 1,
+        question: q.question,
+        options: q.options,
+        correctAnswer: q.correctAnswer,
+        studentAnswer: hasAnswered ? givenAns : null,
+        isCorrect,
+        isSkipped: !hasAnswered,
+        explanation: q.explanation || "No explanation provided.",
+        reference: q.reference,
+        hint: q.hint,
+        difficulty: qDiff,
+        marks: q.marks,
+        negativeMarks: q.negativeMarks,
+      });
+    });
+
+    earnedMarks = Math.max(0, earnedMarks);
+    const totalMarks = questionBank.totalMarks || (questionBank.questions.length * 4);
+    const percentage = totalMarks > 0 ? Math.round((earnedMarks / totalMarks) * 10000) / 100 : 0;
+    const passStatus = percentage >= 40 ? "passed" : "failed";
+    const finalAttemptId = attemptId || `att_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        attempt: {
+          attemptId: finalAttemptId,
+          studentId,
+          studentName: studentName || "Student",
+          practiceTestId,
+          testTitle: questionBank.title,
+          subject: questionBank.subject,
+          chapter: questionBank.chapter,
+          startedAt: startedAt || now,
+          submittedAt: now,
+          timeTaken: Number(timeTaken) || 0,
+          answers: studentAnswers,
+          score: earnedMarks,
+          totalMarks,
+          percentage,
+          passed: passStatus === "passed",
+          passStatus,
+          correct: correctCount,
+          wrong: wrongCount,
+          unanswered: unansweredCount,
+          status: "submitted",
+        },
+        result: {
+          id: finalAttemptId,
+          attemptId: finalAttemptId,
+          studentId,
+          studentName: studentName || "Student",
+          practiceTestId,
+          testTitle: questionBank.title,
+          subject: questionBank.subject,
+          chapter: questionBank.chapter,
+          finalScore: earnedMarks,
+          totalMarks,
+          percentage,
+          passStatus,
+          completionTime: Number(timeTaken) || 0,
+          correctCount,
+          wrongCount,
+          unansweredCount,
+          breakdownByDifficulty: difficultyBreakdown,
+          generatedAt: now,
+        },
+        review: reviewItems,
+      },
+      message: "Practice test submitted and evaluated successfully.",
+      timestamp: now,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: { message: err.message || "Evaluation error." } });
+  }
+});
+
+// 7. Results & Analytics
+router.get("/practice/results", async (req, res) => {
+  return res.status(200).json({
+    success: true,
+    query: req.query,
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Mount router on both /api and / to handle both direct and rewritten paths safely
 apiApp.use("/api", router);
 apiApp.use("/", router);

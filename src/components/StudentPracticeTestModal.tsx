@@ -257,17 +257,18 @@ export default function StudentPracticeTestModal({
         return;
       }
 
+      const correctStr = String(q.correctAnswer || "");
       if (q.type !== "true_false") {
         // q.correctAnswer is e.g. "B" or "1. B"
         // studentAns is option letter e.g. "B" or full string
-        if (studentAns.toLowerCase().startsWith(q.correctAnswer.toLowerCase())) {
+        if (studentAns.toLowerCase().startsWith(correctStr.toLowerCase())) {
           correctCount++;
         } else {
           wrongCount++;
         }
       } else {
         // True / False
-        if (studentAns.toLowerCase().trim() === q.correctAnswer.toLowerCase().trim()) {
+        if (studentAns.toLowerCase().trim() === correctStr.toLowerCase().trim()) {
           correctCount++;
         } else {
           wrongCount++;
@@ -525,7 +526,7 @@ export default function StudentPracticeTestModal({
                   const hasAnswered = studentAns !== undefined && studentAns !== null;
 
                   const isOptionCorrect = (optValue: string) => {
-                    const corrNorm = currentQuestion.correctAnswer.trim().toLowerCase();
+                    const corrNorm = String(currentQuestion.correctAnswer || "").trim().toLowerCase();
                     const optNorm = optValue.trim().toLowerCase();
                     const optChar = optNorm.charAt(0);
                     const corrChar = corrNorm.charAt(0);
@@ -781,10 +782,11 @@ export default function StudentPracticeTestModal({
                     let isCorrect = false;
 
                     if (isAttempted) {
+                      const corrStr = String(q.correctAnswer || "");
                       if (q.type !== "true_false") {
-                        isCorrect = userAns.toLowerCase().startsWith(q.correctAnswer.toLowerCase());
+                        isCorrect = userAns.toLowerCase().startsWith(corrStr.toLowerCase());
                       } else {
-                        isCorrect = userAns.toLowerCase().trim() === q.correctAnswer.toLowerCase().trim();
+                        isCorrect = userAns.toLowerCase().trim() === corrStr.toLowerCase().trim();
                       }
                     }
 

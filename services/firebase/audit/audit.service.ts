@@ -20,10 +20,25 @@ export const auditService = {
   },
 
   /**
-   * Alias for log
+   * Records a structured audit log entry with individual fields
    */
-  async logEvent(entry: Omit<AuditLog, "timestamp"> & { timestamp?: string }): Promise<void> {
-    return this.log(entry);
+  async logAction(
+    userId: string,
+    action: string,
+    resource: string,
+    resourceId?: string,
+    details?: Record<string, any>,
+    status: "SUCCESS" | "FAILURE" = "SUCCESS"
+  ): Promise<void> {
+    return this.log({
+      userId,
+      role: "admin",
+      action,
+      resource,
+      resourceId,
+      status,
+      details,
+    });
   },
 
   /**
