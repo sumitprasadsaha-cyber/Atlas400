@@ -43,7 +43,7 @@ export const r2UploadService = {
       const resJson: ApiResponse<R2UploadResult> = await response.json();
 
       if (!response.ok || !resJson.success) {
-        const errorMsg = !resJson.success && resJson.error ? resJson.error.message : `HTTP ${response.status}`;
+        const errorMsg = "error" in resJson && resJson.error ? resJson.error.message : `HTTP ${response.status}`;
         throw new Error(`Upload failed: ${errorMsg}`);
       }
 

@@ -1,1 +1,1 @@
-export * from "../../shared/types/practice-tests.types";
+export * from "../../../shared/types/practice-tests.types";

@@ -29,7 +29,7 @@ export const r2SignedUrlService = {
       const resJson: ApiResponse<R2SignedUrlResult> = await response.json();
 
       if (!response.ok || !resJson.success) {
-        const errorMsg = !resJson.success && resJson.error ? resJson.error.message : `HTTP ${response.status}`;
+        const errorMsg = "error" in resJson && resJson.error ? resJson.error.message : `HTTP ${response.status}`;
         throw new Error(`Failed to get signed URL: ${errorMsg}`);
       }
 

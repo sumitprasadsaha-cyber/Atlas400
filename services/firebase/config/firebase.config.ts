@@ -14,7 +14,7 @@ export interface FirebaseConfig {
 }
 
 function getValidatedFirebaseConfig(): FirebaseConfig {
-  const env = typeof import.meta !== "undefined" && import.meta.env ? import.meta.env : {};
+  const env = (typeof import.meta !== "undefined" && import.meta.env ? import.meta.env : {}) as Record<string, string | undefined>;
 
   const apiKey = env.VITE_FIREBASE_API_KEY || "AIzaSyDummyDevApiKeyForBuild123456789";
   const authDomain = env.VITE_FIREBASE_AUTH_DOMAIN || "atlas-tuition.firebaseapp.com";

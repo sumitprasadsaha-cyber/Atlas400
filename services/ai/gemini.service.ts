@@ -13,7 +13,7 @@ export const aiService = {
 
       const resJson: ApiResponse<AiChatResult> = await response.json();
       if (!response.ok || !resJson.success) {
-        const errorMsg = !resJson.success && resJson.error ? resJson.error.message : `HTTP ${response.status}`;
+        const errorMsg = "error" in resJson && resJson.error ? resJson.error.message : `HTTP ${response.status}`;
         throw new Error(errorMsg);
       }
 
@@ -35,7 +35,7 @@ export const aiService = {
 
       const resJson: ApiResponse<AiReportResult> = await response.json();
       if (!response.ok || !resJson.success) {
-        const errorMsg = !resJson.success && resJson.error ? resJson.error.message : `HTTP ${response.status}`;
+        const errorMsg = "error" in resJson && resJson.error ? resJson.error.message : `HTTP ${response.status}`;
         throw new Error(errorMsg);
       }
 

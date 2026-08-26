@@ -1,1 +1,1 @@
-export * from "../../shared/types/teacher.types";
+export * from "../../../shared/types/teacher.types";
