@@ -1,4 +1,7 @@
 import { getResolvedViewUrl, getBucketName } from "./storageService";
+import { openNote, resolveDirectNoteUrl } from "./noteOpener";
+
+export { openNote, resolveDirectNoteUrl };
 
 /**
  * Resolves a Supabase storage path or generic URL to a fresh secure HTTPS signed/public URL.

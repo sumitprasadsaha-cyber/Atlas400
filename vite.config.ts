@@ -74,16 +74,21 @@ export default defineConfig(({ command, mode }) => {
           skipWaiting: true,
           navigateFallbackDenylist: [
             /^\/api\//,
-            /\.(pdf|jpe?g|png|webp|gif|svg|bmp)$/i,
+            /\.(pdf|jpe?g|png|webp|gif|svg|bmp|heic|heif)$/i,
             /r2\.cloudflarestorage\.com/i,
+            /r2\.dev/i,
+            /cloudflare/i,
+            /X-Amz-/i,
             /storage/i,
           ],
           runtimeCaching: [
             {
               urlPattern: ({ url }) =>
-                url.pathname.startsWith('/api/r2/') ||
                 url.hostname.includes('r2.cloudflarestorage.com') ||
-                /\.(pdf|jpe?g|png|webp|gif|svg)$/i.test(url.pathname),
+                url.hostname.includes('r2.dev') ||
+                url.search.includes('X-Amz-') ||
+                url.pathname.startsWith('/api/') ||
+                /\.(pdf|jpe?g|png|webp|gif|svg|bmp|heic|heif)$/i.test(url.pathname),
               handler: 'NetworkOnly',
             },
           ],

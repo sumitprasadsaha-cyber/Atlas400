@@ -65,11 +65,13 @@ function getSafeLocalPath(bucket: string, key: string): string {
  * Returns MIME type based on file extension.
  */
 function getMimeTypeFromKey(key: string): string {
-  const lower = key.toLowerCase();
+  const lower = key.toLowerCase().split("?")[0].split("#")[0];
   if (lower.endsWith(".pdf")) return "application/pdf";
   if (lower.endsWith(".png")) return "image/png";
   if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
   if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".heic")) return "image/heic";
+  if (lower.endsWith(".heif")) return "image/heif";
   if (lower.endsWith(".gif")) return "image/gif";
   if (lower.endsWith(".svg")) return "image/svg+xml";
   if (lower.endsWith(".json")) return "application/json";
@@ -355,10 +357,16 @@ export async function generateR2SignedUrl(params: {
   contentType?: string;
 }): Promise<string> {
   const config = getR2ServerConfig();
-  const bucketName = params.bucket || config.bucket;
+  const bucketName = params.bucket || config.bucket || "academy-connect-files";
   const cleanKey = params.key.replace(/^\/+/, "");
   const expiresIn = params.expiresIn || 3600;
   const operation = params.operation || "getObject";
+  const mimeType = params.contentType || getMimeTypeFromKey(cleanKey);
+
+  // If public URL / custom CDN domain is configured, return the direct HTTPS URL for viewing
+  if (config.publicUrl && operation === "getObject") {
+    return `${config.publicUrl.replace(/\/+$/, "")}/${cleanKey}`;
+  }
 
   if (isR2Configured()) {
     try {
@@ -367,23 +375,30 @@ export async function generateR2SignedUrl(params: {
         const command = new PutObjectCommand({
           Bucket: bucketName,
           Key: cleanKey,
-          ContentType: params.contentType || getMimeTypeFromKey(cleanKey),
+          ContentType: mimeType,
         });
         return await getSignedUrl(client, command, { expiresIn });
       }
 
+      // Generate direct pre-signed URL with inline Content-Disposition so browsers/mobile OS view natively
       const command = new GetObjectCommand({
         Bucket: bucketName,
         Key: cleanKey,
+        ResponseContentDisposition: "inline",
+        ResponseContentType: mimeType,
       });
       return await getSignedUrl(client, command, { expiresIn });
     } catch (err: any) {
-      console.warn(`[R2Server] generateR2SignedUrl falling back to proxy URL for ${cleanKey}:`, err?.message || err);
+      console.warn(`[R2Server] generateR2SignedUrl error for ${cleanKey}:`, err?.message || err);
     }
   }
 
-  // Seamless fallback to proxy streaming URL
-  return `/api/r2/download?bucket=${encodeURIComponent(bucketName)}&key=${encodeURIComponent(cleanKey)}`;
+  // Fallback to public URL if configured
+  if (config.publicUrl) {
+    return `${config.publicUrl.replace(/\/+$/, "")}/${cleanKey}`;
+  }
+
+  return "";
 }
 
 /**

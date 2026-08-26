@@ -66,6 +66,7 @@ export function getR2BucketName(customBucket?: string): string {
 
 /**
  * Generates a public URL for an R2 object if a public URL/domain is configured.
+ * Never returns serverless proxy endpoints.
  */
 export function getR2PublicUrl(bucket: string, key: string): string {
   const cleanKey = key.replace(/^\/+/, "");
@@ -75,13 +76,12 @@ export function getR2PublicUrl(bucket: string, key: string): string {
     getRuntimeEnv("R2_CUSTOM_DOMAIN") ||
     getRuntimeEnv("VITE_R2_CUSTOM_DOMAIN");
 
-  if (customDomain) {
+  if (customDomain && customDomain.trim().length > 0) {
     const base = customDomain.trim().replace(/\/+$/, "");
     return `${base}/${cleanKey}`;
   }
 
-  // Fallback to internal API streaming URL via consolidated storage API
-  return `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`;
+  return "";
 }
 
 export interface R2SignedUrlDetails {

@@ -10,6 +10,7 @@ import {
   getR2BucketName,
   getR2PublicUrl,
   getR2SignedUrl,
+  getR2SignedUrlDetails,
   uploadToR2,
   downloadFromR2,
   deleteFromR2,
@@ -660,7 +661,7 @@ export async function getResolvedViewUrl(
     }
   }
 
-  const sanitizedPath = sanitizeStoragePath(cleanInput, bucket);
+  const sanitizedPath = sanitizeStoragePath(cleanInput, bucket).replace(/^\/+/, "");
 
   console.log(`[StorageService] Resolving View URL:`);
   console.log(`  - Bucket: "${bucket}"`);
@@ -674,10 +675,34 @@ export async function getResolvedViewUrl(
     throw new Error("Invalid storage path specified.");
   }
 
-  // Same-origin proxy URL gives reliable streaming, handles HTTP range, and bypasses CORS restrictions
-  const proxyUrl = `/api/r2/download?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(sanitizedPath)}`;
-  console.log(`[StorageService] Final URL used by viewer (R2 Proxy): ${proxyUrl}`);
-  return proxyUrl;
+  // 1. If direct public R2 domain/URL is configured, return it directly
+  const directPublicUrl = getR2PublicUrl(bucket, sanitizedPath);
+  if (directPublicUrl && !directPublicUrl.includes("/api/")) {
+    console.log(`[StorageService] Using direct public R2 URL: ${directPublicUrl}`);
+    return directPublicUrl;
+  }
+
+  // 2. Request direct pre-signed URL with inline Content-Disposition from Cloudflare R2
+  try {
+    const signedDetails = await getR2SignedUrlDetails({
+      bucket,
+      key: sanitizedPath,
+      expiresIn: 3600,
+      operation: "getObject",
+    });
+    if (signedDetails.signedUrl && !signedDetails.signedUrl.includes("/api/")) {
+      console.log(`[StorageService] Using direct pre-signed R2 URL: ${signedDetails.signedUrl}`);
+      return signedDetails.signedUrl;
+    }
+  } catch (signErr) {
+    console.warn("[StorageService] Pre-signed URL retrieval warning:", signErr);
+  }
+
+  if (cleanInput.startsWith("http://") || cleanInput.startsWith("https://")) {
+    return cleanInput;
+  }
+
+  throw new Error("Unable to resolve direct Cloudflare R2 storage URL.");
 }
 
 /**

@@ -137,6 +137,8 @@ export function getMimeType(keyOrFilename: string, fallback: string = "applicati
   if (lower.endsWith(".png")) return "image/png";
   if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
   if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".heic")) return "image/heic";
+  if (lower.endsWith(".heif")) return "image/heif";
   if (lower.endsWith(".gif")) return "image/gif";
   if (lower.endsWith(".svg")) return "image/svg+xml";
   if (lower.endsWith(".json")) return "application/json";
