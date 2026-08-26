@@ -46,10 +46,9 @@ import {
 import { migrateLegacyNotesToClassNotes, filterClassNotesForStudent, getStudentSubjects, isSubjectMatching } from "./utils/classNoteHelper";
 import { deleteFileFromStorage, uploadProfilePhoto } from "./lib/storageService";
 import { safeLocalStorageSetItem, safeLocalStorageGetItem, safeLocalStorageRemoveItem } from "./lib/safeStorage";
-import { supabase } from "./lib/supabaseClient";
 import { APP_VERSION } from "./config";
 import { initializeAdminSync, initializeStudentSync, cleanupOnLogout } from "./lib/appSync";
-import { fetchStudentTestAttemptsFromSupabase } from "./lib/testScorePersistence";
+import { fetchStudentTestAttempts } from "./lib/testScorePersistence";
 
 function normalizeStudent(student: Partial<Student> | null | undefined): Student {
   const rawStatus = (student?.serviceStatus || student?.service_status || "active").toString().toLowerCase().trim();
@@ -306,17 +305,17 @@ export default function App() {
     }
   }, [auth.isAuthenticated, auth.role, auth.loggedInStudentId]);
 
-  // Synchronize practice test attempts & topic scores from Supabase & Firestore permanently
+  // Synchronize practice test attempts & topic scores from Firestore & R2 permanently
   useEffect(() => {
     if (!auth.isAuthenticated) return;
 
     if (auth.role === "student" && auth.loggedInStudentId) {
-      fetchStudentTestAttemptsFromSupabase(auth.loggedInStudentId);
+      fetchStudentTestAttempts(auth.loggedInStudentId);
     }
 
     const unsubscribe = subscribeToTestAttempts(() => {
       if (auth.role === "student" && auth.loggedInStudentId) {
-        fetchStudentTestAttemptsFromSupabase(auth.loggedInStudentId);
+        fetchStudentTestAttempts(auth.loggedInStudentId);
       }
     });
     return () => {
@@ -1311,7 +1310,7 @@ export default function App() {
       updatedStudent = {
         ...studentToUpdate,
         avatarUrl: metadata.downloadUrl || dataUrl,
-        avatarStorageProvider: "supabase",
+        avatarStorageProvider: "r2",
         avatarBucket: metadata.bucket,
         avatarStoragePath: metadata.storagePath,
       };

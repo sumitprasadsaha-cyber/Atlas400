@@ -1,22 +1,30 @@
 /**
  * Student Practice Test Score Persistence Service
  * 
- * Provides complete cross-device synchronization for student practice test scores using Supabase.
+ * Provides complete cross-device synchronization for student practice test scores using Firebase Firestore and Cloudflare R2.
  * Enforces per-student isolation, duplicate attempt prevention, and instant real-time UI updates.
  */
 
-import { supabase } from "./supabaseClient";
 import { TestAttemptRecord } from "../types";
 import { 
   getLocalTestAttempts, 
   saveLocalTestAttemptsCache, 
   saveTestAttemptDoc, 
-  subscribeToTestAttempts 
+  subscribeToTestAttempts
 } from "./firestoreService";
+import { getFirebaseDb } from "./firebase";
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  deleteDoc,
+  doc,
+  writeBatch
+} from "firebase/firestore";
 import {
   downloadFromR2,
   uploadToR2,
-  deleteFromR2,
   deleteMultipleFromR2,
   listFromR2,
   getR2BucketName,
@@ -45,6 +53,23 @@ async function uploadJsonToR2(key: string, data: any): Promise<void> {
     await uploadToR2({ bucket: PRACTICE_TESTS_BUCKET, key, file: blob, mimeType: "application/json" });
   } catch (err) {
     console.warn(`[ScorePersistence] R2 upload error for ${key}:`, err);
+  }
+}
+
+export async function syncTestAttemptsToR2Storage(attempts: TestAttemptRecord[]): Promise<boolean> {
+  try {
+    await uploadJsonToR2("practice_tests/test_attempts.json", attempts);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchTestAttemptsFromR2Storage(): Promise<TestAttemptRecord[] | null> {
+  try {
+    return await downloadJsonFromR2<TestAttemptRecord[]>("practice_tests/test_attempts.json");
+  } catch {
+    return null;
   }
 }
 
@@ -104,10 +129,10 @@ export function deduplicateAttempts(attempts: TestAttemptRecord[]): TestAttemptR
 }
 
 /**
- * Fetch a student's practice test attempts directly from Supabase Storage & DB.
+ * Fetch a student's practice test attempts directly from Firestore & Cloudflare R2.
  * Synchronizes across devices seamlessly on login and screen load.
  */
-export async function fetchStudentTestAttemptsFromSupabase(
+export async function fetchStudentTestAttempts(
   studentId: string,
   studentName?: string
 ): Promise<TestAttemptRecord[]> {
@@ -116,55 +141,33 @@ export async function fetchStudentTestAttemptsFromSupabase(
 
   let remoteAttempts: TestAttemptRecord[] = [];
 
-  // 1. Fetch student-specific JSON file from Cloudflare R2 bucket
+  // 1. Fetch from Firestore test_attempts collection
+  try {
+    const db = await getFirebaseDb();
+    if (db) {
+      const colRef = collection(db, "test_attempts");
+      const q = query(colRef, where("studentId", "==", studentId));
+      const snap = await getDocs(q);
+      snap.forEach((docSnap) => {
+        const d = docSnap.data() as TestAttemptRecord;
+        if (d && d.studentId) {
+          remoteAttempts.push({ ...d, id: d.id || docSnap.id });
+        }
+      });
+    }
+  } catch (err) {
+    console.warn(`[ScorePersistence] Firestore test_attempts query error for ${studentId}:`, err);
+  }
+
+  // 2. Fetch student-specific JSON file from Cloudflare R2 bucket
   try {
     const filePath = getStudentAttemptStoragePath(studentId);
     const parsed = await downloadJsonFromR2<TestAttemptRecord[]>(filePath);
-    if (Array.isArray(parsed)) {
-      remoteAttempts = parsed;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      remoteAttempts = [...remoteAttempts, ...parsed];
     }
   } catch (err) {
     console.warn(`[ScorePersistence] Error downloading per-student file for ${studentId} from R2:`, err);
-  }
-
-  // 2. Also query Supabase DB Table if it exists
-  try {
-    const { data: dbData, error: dbErr } = await supabase
-      .from("student_practice_test_attempts")
-      .select("*")
-      .or(`student_id.eq.${studentId},student_id.eq.${cId}`);
-
-    if (!dbErr && dbData && Array.isArray(dbData) && dbData.length > 0) {
-      const converted: TestAttemptRecord[] = dbData.map((row) => ({
-        id: row.id || `att_${row.timestamp || Date.now()}`,
-        studentId: row.student_id || studentId,
-        studentName: row.student_name || studentName || "",
-        testId: row.test_id,
-        topicId: row.topic_id,
-        chapterId: row.chapter_id,
-        subjectId: row.subject_id,
-        classGrade: row.class_grade || "",
-        subject: row.subject || "",
-        chapterNo: row.chapter_no || 0,
-        chapterName: row.chapter_name || "",
-        topicName: row.topic_name || "",
-        testType: row.test_type || "topic",
-        attemptNumber: row.attempt_number || 1,
-        date: row.date || new Date().toISOString(),
-        timestamp: row.timestamp || Date.now(),
-        timeTakenSeconds: row.time_taken_seconds || 0,
-        score: row.score || 0,
-        totalMarks: row.total_marks || row.total_questions || 0,
-        totalQuestions: row.total_questions || 0,
-        percentage: row.percentage || 0,
-        correctAnswersCount: row.correct_answers_count || 0,
-        wrongAnswersCount: row.wrong_answers_count || 0,
-        userAnswers: row.user_answers || {}
-      }));
-      remoteAttempts = [...remoteAttempts, ...converted];
-    }
-  } catch (err) {
-    // DB table might not exist; Storage fallback works
   }
 
   // 3. Fallback: Download global test_attempts.json from Cloudflare R2
@@ -196,11 +199,14 @@ export async function fetchStudentTestAttemptsFromSupabase(
   return cleanRemote;
 }
 
+// Alias for backward compatibility
+export const fetchStudentTestAttemptsFromSupabase = fetchStudentTestAttempts;
+
 /**
- * Saves or updates a practice test attempt in Supabase Storage and Supabase DB.
+ * Saves or updates a practice test attempt in Cloudflare R2 and Firestore.
  * Prevents duplicates and ensures score synchronization across all devices.
  */
-export async function savePracticeTestAttemptToSupabase(
+export async function savePracticeTestAttempt(
   attempt: TestAttemptRecord
 ): Promise<TestAttemptRecord> {
   if (!attempt || !attempt.studentId) {
@@ -218,11 +224,11 @@ export async function savePracticeTestAttemptToSupabase(
   mergeAttemptsIntoMemoryAndCache([attempt]);
   notifyScoreUpdate();
 
-  // 2. ASYNCHRONOUS BACKGROUND SYNC: Save to Supabase Storage, DB table, and Firestore without blocking UI
+  // 2. ASYNCHRONOUS BACKGROUND SYNC: Save to Cloudflare R2 and Firestore without blocking UI
   (async () => {
     try {
       // 2a. Fetch existing student attempts to preserve attempt history and deduplicate
-      let existingStudentAttempts = await fetchStudentTestAttemptsFromSupabase(studentId, attempt.studentName);
+      let existingStudentAttempts = await fetchStudentTestAttempts(studentId, attempt.studentName);
 
       const existingIndex = existingStudentAttempts.findIndex((a) => {
         const aTopicNorm = (a.topicName || "").toLowerCase().trim().replace(/[^a-z0-9]/g, "");
@@ -277,46 +283,14 @@ export async function savePracticeTestAttemptToSupabase(
         console.warn("[ScorePersistence] Global attempts upload error:", err);
       }
 
-      // 2d. Try DB Table upsert if table exists
-      try {
-        await supabase.from("student_practice_test_attempts").upsert({
-          id: updatedAttempt.id,
-          student_id: studentId,
-          student_name: attempt.studentName,
-          test_id: attempt.testId,
-          topic_id: attempt.topicId,
-          chapter_id: attempt.chapterId,
-          subject_id: attempt.subjectId,
-          class_grade: attempt.classGrade,
-          subject: attempt.subject,
-          chapter_no: attempt.chapterNo,
-          chapter_name: attempt.chapterName,
-          topic_name: attempt.topicName,
-          test_type: attempt.testType,
-          attempt_number: updatedAttempt.attemptNumber,
-          date: updatedAttempt.date,
-          timestamp: updatedAttempt.timestamp,
-          time_taken_seconds: updatedAttempt.timeTakenSeconds,
-          score: updatedAttempt.score,
-          total_marks: updatedAttempt.totalMarks || updatedAttempt.totalQuestions,
-          total_questions: updatedAttempt.totalQuestions,
-          percentage: updatedAttempt.percentage,
-          correct_answers_count: updatedAttempt.correctAnswersCount,
-          wrong_answers_count: updatedAttempt.wrongAnswersCount,
-          user_answers: updatedAttempt.userAnswers
-        });
-      } catch (err) {
-        // DB table might not exist
-      }
-
-      // 2e. Save to Firestore doc
+      // 2d. Save to Firestore document
       try {
         await saveTestAttemptDoc(updatedAttempt);
       } catch (err) {
         console.warn("[ScorePersistence] Firestore save error:", err);
       }
 
-      // 2f. Synchronize in memory & session cache
+      // 2e. Synchronize in memory & session cache
       scoreSessionCache.set(cacheKey, updatedAttempt);
       mergeAttemptsIntoMemoryAndCache([updatedAttempt]);
     } catch (bgErr) {
@@ -326,6 +300,9 @@ export async function savePracticeTestAttemptToSupabase(
 
   return attempt;
 }
+
+// Alias for backward compatibility
+export const savePracticeTestAttemptToSupabase = savePracticeTestAttempt;
 
 /**
  * Merges new attempts into in-memory array and local storage cache
@@ -356,10 +333,10 @@ export function getCachedAttemptsFromMemory(): TestAttemptRecord[] {
 }
 
 /**
- * Legacy support helper: Load student test scores
+ * Load student test scores helper
  */
 export async function loadStudentTestScores(studentId: string): Promise<TestAttemptRecord[]> {
-  return fetchStudentTestAttemptsFromSupabase(studentId);
+  return fetchStudentTestAttempts(studentId);
 }
 
 function findMatchingAttempt(
@@ -395,7 +372,7 @@ function findMatchingAttempt(
 
 /**
  * Optimized simultaneous score fetcher.
- * Queries Supabase directly using indexed student_id and returns the specific saved attempt for a topic.
+ * Queries Firestore and local caches for a specific topic score.
  * Uses session caching and promise deduplication to prevent redundant requests.
  */
 export async function fetchStudentScore(
@@ -442,52 +419,33 @@ export async function fetchStudentScore(
         return existing;
       }
 
-      // 2. Perform targeted Supabase DB query with minimal required columns
-      const { data, error } = await supabase
-        .from("student_practice_test_attempts")
-        .select("id, student_id, student_name, test_id, topic_id, chapter_id, subject_id, class_grade, subject, chapter_no, chapter_name, topic_name, test_type, attempt_number, date, timestamp, time_taken_seconds, score, total_marks, total_questions, percentage, correct_answers_count, wrong_answers_count, user_answers")
-        .eq("student_id", studentId)
-        .order("timestamp", { ascending: false })
-        .limit(20);
-
-      if (!error && Array.isArray(data) && data.length > 0) {
-        const converted: TestAttemptRecord[] = data.map((row) => ({
-          id: row.id || `att_${row.timestamp || Date.now()}`,
-          studentId: row.student_id || studentId,
-          studentName: row.student_name || "",
-          testId: row.test_id,
-          topicId: row.topic_id,
-          chapterId: row.chapter_id,
-          subjectId: row.subject_id,
-          classGrade: row.class_grade || "",
-          subject: row.subject || "",
-          chapterNo: row.chapter_no || 0,
-          chapterName: row.chapter_name || "",
-          topicName: row.topic_name || "",
-          testType: row.test_type || "topic",
-          attemptNumber: row.attempt_number || 1,
-          date: row.date || new Date().toISOString(),
-          timestamp: row.timestamp || Date.now(),
-          timeTakenSeconds: row.time_taken_seconds || 0,
-          score: row.score || 0,
-          totalMarks: row.total_marks || row.total_questions || 0,
-          totalQuestions: row.total_questions || 0,
-          percentage: row.percentage || 0,
-          correctAnswersCount: row.correct_answers_count || 0,
-          wrongAnswersCount: row.wrong_answers_count || 0,
-          userAnswers: row.user_answers || {}
-        }));
-
-        mergeAttemptsIntoMemoryAndCache(converted);
-        const match = findMatchingAttempt(converted, normStudent, normClass, normSubj, chapterNo, normTopic, testType);
-        if (match) {
-          scoreSessionCache.set(cacheKey, match);
-          return match;
+      // 2. Query Firestore test_attempts collection
+      try {
+        const db = await getFirebaseDb();
+        if (db) {
+          const colRef = collection(db, "test_attempts");
+          const q = query(colRef, where("studentId", "==", studentId));
+          const snap = await getDocs(q);
+          const docs: TestAttemptRecord[] = [];
+          snap.forEach((d) => {
+            const row = d.data() as TestAttemptRecord;
+            if (row) docs.push({ ...row, id: row.id || d.id });
+          });
+          if (docs.length > 0) {
+            mergeAttemptsIntoMemoryAndCache(docs);
+            const match = findMatchingAttempt(docs, normStudent, normClass, normSubj, chapterNo, normTopic, testType);
+            if (match) {
+              scoreSessionCache.set(cacheKey, match);
+              return match;
+            }
+          }
         }
+      } catch (fsErr) {
+        console.warn("[ScorePersistence] Firestore fetchStudentScore error:", fsErr);
       }
 
-      // 3. Fallback to per-student storage file if DB is empty
-      const storageAttempts = await fetchStudentTestAttemptsFromSupabase(studentId);
+      // 3. Fallback to per-student R2 storage file
+      const storageAttempts = await fetchStudentTestAttempts(studentId);
       const storageMatch = findMatchingAttempt(storageAttempts, normStudent, normClass, normSubj, chapterNo, normTopic, testType);
       if (storageMatch) {
         scoreSessionCache.set(cacheKey, storageMatch);
@@ -525,35 +483,28 @@ export function clearTestScoreCache(): void {
 }
 
 /**
- * Permanently deletes ALL student practice test attempts, scores, and marks from Supabase DB,
- * Supabase Storage, and local/memory caches.
+ * Permanently deletes ALL student practice test attempts, scores, and marks from Firestore,
+ * Cloudflare R2, and local/memory caches.
  */
 export async function deleteAllAttemptsAndScoresFromPersistence(): Promise<{ success: boolean; deletedCount: number }> {
   console.log("[ScorePersistence] [START_DELETE_ALL] Initiating permanent deletion of ALL student practice test attempts and marks.");
   let deletedCount = 0;
 
-  // 1. Delete all rows from Supabase DB table `student_practice_test_attempts`
+  // 1. Delete all docs from Firestore collection `test_attempts`
   try {
-    const { data: dbRows, error: selectErr } = await supabase
-      .from("student_practice_test_attempts")
-      .select("id")
-      .range(0, 9999);
-
-    if (!selectErr && Array.isArray(dbRows) && dbRows.length > 0) {
-      const ids = dbRows.map((r) => r.id);
-      deletedCount = ids.length;
-      console.log(`[ScorePersistence] Deleting ${ids.length} student attempt records from Supabase DB...`);
-      for (let i = 0; i < ids.length; i += 100) {
-        const chunk = ids.slice(i, i + 100);
-        await supabase.from("student_practice_test_attempts").delete().in("id", chunk);
-      }
+    const db = await getFirebaseDb();
+    if (db) {
+      const colRef = collection(db, "test_attempts");
+      const snap = await getDocs(colRef);
+      const batch = writeBatch(db);
+      snap.forEach((d) => {
+        batch.delete(d.ref);
+        deletedCount++;
+      });
+      await batch.commit();
     }
-
-    // Direct wipe queries
-    await supabase.from("student_practice_test_attempts").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("student_practice_test_attempts").delete().gte("timestamp", 0);
   } catch (err) {
-    console.warn("[ScorePersistence] Error deleting all attempts from Supabase DB:", err);
+    console.warn("[ScorePersistence] Error deleting all attempts from Firestore:", err);
   }
 
   // 2. Clear Cloudflare R2 `practice_tests/test_attempts.json` and student attempt files
@@ -582,8 +533,8 @@ export async function deleteAllAttemptsAndScoresFromPersistence(): Promise<{ suc
 }
 
 /**
- * Permanently deletes all student attempts and scores for a specific topic from Supabase DB,
- * Supabase Storage, Firestore, memory cache, and local storage.
+ * Permanently deletes all student attempts and scores for a specific topic from Firestore,
+ * Cloudflare R2, memory cache, and local storage.
  */
 export async function deleteTopicAttemptsFromPersistence(
   classGrade: string,
@@ -600,48 +551,33 @@ export async function deleteTopicAttemptsFromPersistence(
 
   let deletedCount = 0;
 
-  // 1. Delete matching rows from Supabase DB table `student_practice_test_attempts`
+  // 1. Delete matching documents from Firestore `test_attempts`
   try {
-    const { data: dbRows, error: selectErr } = await supabase
-      .from("student_practice_test_attempts")
-      .select("id, class_grade, subject, chapter_no, topic_name")
-      .range(0, 9999);
-
-    if (!selectErr && Array.isArray(dbRows)) {
-      const idsToDelete = dbRows
-        .filter((row) => {
-          const rClass = (row.class_grade || "").toLowerCase().trim();
-          const rSubj = (row.subject || "").toLowerCase().trim();
-          const rTopic = (row.topic_name || "").toLowerCase().trim();
-          const rTopicClean = rTopic.replace(/[^a-z0-9]/g, "");
-          const isChapterMatch = Number(row.chapter_no) === Number(chapterNo);
-          return (
-            (rClass === normClass && rSubj === normSubj && isChapterMatch && (rTopic === normTopic || rTopicClean === normTopicClean)) ||
-            (isChapterMatch && rTopicClean === normTopicClean)
-          );
-        })
-        .map((r) => r.id);
-
-      if (idsToDelete.length > 0) {
-        console.log(`[ScorePersistence] Deleting ${idsToDelete.length} attempts from Supabase DB...`);
-        for (let i = 0; i < idsToDelete.length; i += 100) {
-          const chunk = idsToDelete.slice(i, i + 100);
-          await supabase.from("student_practice_test_attempts").delete().in("id", chunk);
+    const db = await getFirebaseDb();
+    if (db) {
+      const colRef = collection(db, "test_attempts");
+      const snap = await getDocs(colRef);
+      const batch = writeBatch(db);
+      snap.forEach((d) => {
+        const row = d.data() as TestAttemptRecord;
+        if (!row) return;
+        const rClass = (row.classGrade || "").toLowerCase().trim();
+        const rSubj = (row.subject || "").toLowerCase().trim();
+        const rTopic = (row.topicName || "").toLowerCase().trim();
+        const rTopicClean = rTopic.replace(/[^a-z0-9]/g, "");
+        const isChapterMatch = Number(row.chapterNo) === Number(chapterNo);
+        const isMatch =
+          (rClass === normClass && rSubj === normSubj && isChapterMatch && (rTopic === normTopic || rTopicClean === normTopicClean)) ||
+          (isChapterMatch && rTopicClean === normTopicClean);
+        if (isMatch) {
+          batch.delete(d.ref);
+          deletedCount++;
         }
-        deletedCount += idsToDelete.length;
-      }
+      });
+      await batch.commit();
     }
-
-    // Direct deletion fallback
-    await supabase.from("student_practice_test_attempts").delete().match({
-      class_grade: classGrade,
-      subject: subject,
-      chapter_no: chapterNo,
-      topic_name: topicName
-    });
-    await supabase.from("student_practice_test_attempts").delete().eq("topic_name", topicName);
   } catch (err) {
-    console.warn("[ScorePersistence] Error deleting attempts from Supabase DB:", err);
+    console.warn("[ScorePersistence] Error deleting attempts from Firestore:", err);
   }
 
   // 2. Delete/filter matching attempts in Cloudflare R2 `practice_tests/test_attempts.json`
@@ -810,7 +746,9 @@ export function subscribeToStudentTestScores(
 }
 
 export default {
+  fetchStudentTestAttempts,
   fetchStudentTestAttemptsFromSupabase,
+  savePracticeTestAttempt,
   savePracticeTestAttemptToSupabase,
   getCachedAttemptsFromMemory,
   deduplicateAttempts,

@@ -876,18 +876,10 @@ export async function deleteStudentDoc(studentId: string): Promise<void> {
       handleFirestoreError(err, OperationType.DELETE, `students/${studentId}`);
     }
   }
-
-  // 3. Delete student practice test attempts in Supabase
-  try {
-    const { supabase } = await import("./supabaseClient");
-    await supabase.from("student_practice_test_attempts").delete().eq("student_id", studentId);
-  } catch (e) {
-    console.warn("[Firestore] Error deleting student test attempts in Supabase:", e);
-  }
 }
 
 /**
- * Permanently purge any "Unnamed Student" or invalid empty student records across LocalStorage, Firestore, and Supabase.
+ * Permanently purge any "Unnamed Student" or invalid empty student records across LocalStorage and Firestore.
  */
 export async function purgeUnnamedStudents(): Promise<void> {
   // 1. Clean localStorage
@@ -928,15 +920,6 @@ export async function purgeUnnamedStudents(): Promise<void> {
     }
   } catch (e) {
     console.warn("[Purge] Error purging Firestore students:", e);
-  }
-
-  // 3. Clean Supabase test attempts for Unnamed Student
-  try {
-    const { supabase } = await import("./supabaseClient");
-    await supabase.from("student_practice_test_attempts").delete().ilike("student_name", "%unnamed student%");
-    await supabase.from("student_practice_test_attempts").delete().eq("student_name", "");
-  } catch (e) {
-    console.warn("[Purge] Error cleaning Supabase test attempts for Unnamed Student:", e);
   }
 }
 
@@ -1929,29 +1912,6 @@ export async function updateStudentServiceStatus(
     console.warn("[StudentServiceStatus] Error updating Firestore service status:", err);
   }
 
-  // 3. Update Supabase Database Table
-  try {
-    const { supabase } = await import("./supabaseClient");
-    if (supabase) {
-      const { error: updateErr } = await supabase
-        .from("students")
-        .update({ service_status: newStatus, updated_at: new Date().toISOString() })
-        .eq("id", studentId);
-
-      if (updateErr) {
-        // Fallback to upsert if record doesn't exist yet
-        const { error: upsertErr } = await supabase
-          .from("students")
-          .upsert({ id: studentId, service_status: newStatus, updated_at: new Date().toISOString() }, { onConflict: "id" });
-        if (upsertErr) {
-          console.warn("[StudentServiceStatus] Supabase service_status upsert warning:", upsertErr.message);
-        }
-      }
-    }
-  } catch (err) {
-    console.warn("[StudentServiceStatus] Error syncing to Supabase table:", err);
-  }
-
   if (process.env.NODE_ENV !== "production") {
     console.log("[StudentServiceStatus] update success:", true, "refreshed status:", newStatus);
   }
@@ -1967,31 +1927,7 @@ export async function fetchStudentServiceStatus(
 ): Promise<"active" | "paused" | "ended"> {
   if (!studentId || typeof studentId !== "string") return "active";
 
-  // 1. Attempt fetching from Supabase table first
-  try {
-    const { supabase } = await import("./supabaseClient");
-    if (supabase) {
-      const { data, error } = await supabase
-        .from("students")
-        .select("service_status")
-        .eq("id", studentId)
-        .maybeSingle();
-
-      if (!error && data && data.service_status) {
-        const val = String(data.service_status).toLowerCase();
-        if (val === "paused" || val === "ended" || val === "active") {
-          if (process.env.NODE_ENV !== "production") {
-            console.log("[StudentServiceStatus] fetched status from Supabase:", val);
-          }
-          return val as "active" | "paused" | "ended";
-        }
-      }
-    }
-  } catch (err) {
-    console.warn("[StudentServiceStatus] Error reading from Supabase:", err);
-  }
-
-  // 2. Fallback to Firestore
+  // 1. Fetch from Firestore
   try {
     const db = await getFirebaseDb();
     if (db) {
@@ -2015,7 +1951,7 @@ export async function fetchStudentServiceStatus(
     console.warn("[StudentServiceStatus] Error reading from Firestore:", err);
   }
 
-  // 3. Fallback to local storage cache
+  // 2. Fallback to local storage cache
   try {
     const students = getLocalStudents();
     const found = students.find((s) => s.id === studentId);
@@ -2046,13 +1982,13 @@ export interface FreshAdminDashboardData {
 }
 
 /**
- * Force fresh refetch of all Admin Dashboard data directly from database (Firestore & Supabase).
+ * Force fresh refetch of all Admin Dashboard data directly from Firestore database.
  * Bypasses cached state, fetches resources in parallel, and updates local cache atomically.
  */
 export async function fetchFreshAdminDashboardData(): Promise<FreshAdminDashboardData> {
   const db = await getFirebaseDb();
 
-  // 1. Force network query for Students from Firestore & Supabase
+  // 1. Force network query for Students from Firestore
   const fetchStudentsTask = (async (): Promise<Student[]> => {
     let firestoreList: Student[] = [];
     if (db) {
@@ -2081,37 +2017,6 @@ export async function fetchFreshAdminDashboardData(): Promise<FreshAdminDashboar
       } catch (err) {
         console.warn("[Admin Dashboard Refresh] Firestore students query error:", err);
       }
-    }
-
-    // Check Supabase students table to complement/merge latest fields
-    try {
-      const { supabase } = await import("./supabaseClient");
-      if (supabase) {
-        const { data: sbStudents, error } = await supabase.from("students").select("*");
-        if (!error && Array.isArray(sbStudents) && sbStudents.length > 0) {
-          const sbMap = new Map<string, any>();
-          sbStudents.forEach((st) => {
-            if (st.id) sbMap.set(st.id, st);
-          });
-
-          // Merge any service_status or updated fields from Supabase
-          if (firestoreList.length > 0) {
-            firestoreList = firestoreList.map((fsStudent) => {
-              const sbMatch = sbMap.get(fsStudent.id);
-              if (sbMatch && sbMatch.service_status) {
-                return {
-                  ...fsStudent,
-                  serviceStatus: sbMatch.service_status,
-                  service_status: sbMatch.service_status,
-                };
-              }
-              return fsStudent;
-            });
-          }
-        }
-      }
-    } catch (sbErr) {
-      console.warn("[Admin Dashboard Refresh] Supabase students fetch warning:", sbErr);
     }
 
     if (firestoreList.length > 0) {

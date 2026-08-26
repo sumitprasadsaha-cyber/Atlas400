@@ -79,7 +79,7 @@ function validatePdfBlob(blob: Blob | null): Blob {
 }
 
 export interface R2UploadMetadata {
-  storageProvider: "r2" | "supabase";
+  storageProvider: "r2";
   bucket: string;
   storagePath: string;
   storageKey?: string;

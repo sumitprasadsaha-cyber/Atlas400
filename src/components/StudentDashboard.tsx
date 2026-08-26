@@ -78,7 +78,6 @@ import { openNoteInNativeViewer } from "../lib/nativePdfService";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import { getPdfDownloadUrl } from "../lib/pdfService";
 import { dataUrlToBlob } from "../utils/pdfUtils";
-import { supabase } from "../lib/supabaseClient";
 import ChapterProgressBottomSheet from "./ChapterProgressBottomSheet";
 import { getChapterProgressRecord, getStatusConfig, calculateSubjectProgress, calculateSubjectWeightedProgress, calculateSubjectTestProgress, SubjectReportData, normalizeStatusLabel } from "../utils/chapterProgressHelper";
 import SubjectReportModal from "./SubjectReportModal";

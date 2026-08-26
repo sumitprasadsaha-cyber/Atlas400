@@ -43,8 +43,7 @@ import {
 } from "../lib/practiceTestService";
 import { uploadQuestionImageToStorage } from "../lib/storageService";
 import { createPracticeTestChangeHandler } from "../utils/practiceTestState";
-import { supabase } from "../lib/supabaseClient";
-import { deduplicateAttempts } from "../lib/testScorePersistence";
+import { deduplicateAttempts, getCachedAttemptsFromMemory } from "../lib/testScorePersistence";
 
 interface AdminPracticeTestModalProps {
   isOpen: boolean;
@@ -230,46 +229,27 @@ export default function AdminPracticeTestModal({
       }
     };
 
-    const fetchDirectAttempts = async () => {
+    const fetchDirectAttempts = () => {
       try {
-        const expectedTestId = buildTopicTestId(classGrade, subject, chapterNo, topicName);
-        const { data, error } = await supabase
-          .from("student_practice_test_attempts")
-          .select("*")
-          .or(`test_id.eq.${expectedTestId},and(class_grade.ilike.${classGrade},subject.ilike.${subject},chapter_no.eq.${chapterNo},topic_name.ilike.${topicName})`)
-          .range(0, 9999);
+        const cached = getCachedAttemptsFromMemory();
+        const normClass = (classGrade || "").toLowerCase().trim();
+        const normSubj = (subject || "").toLowerCase().trim();
+        const normTopic = (topicName || "").toLowerCase().trim().replace(/[^a-z0-9]/g, "");
 
-        if (!error && Array.isArray(data) && isMounted) {
-          const converted: TestAttemptRecord[] = data.map((row) => ({
-            id: row.id || `att_${row.timestamp || Date.now()}`,
-            studentId: row.student_id || "",
-            studentName: row.student_name || "Student",
-            testId: row.test_id,
-            topicId: row.topic_id,
-            chapterId: row.chapter_id,
-            subjectId: row.subject_id,
-            classGrade: row.class_grade || "",
-            subject: row.subject || "",
-            chapterNo: row.chapter_no || 0,
-            chapterName: row.chapter_name || "",
-            topicName: row.topic_name || "",
-            testType: row.test_type || "topic",
-            attemptNumber: row.attempt_number || 1,
-            date: row.date || new Date().toISOString(),
-            timestamp: row.timestamp || Date.now(),
-            timeTakenSeconds: row.time_taken_seconds || 0,
-            score: row.score || 0,
-            totalMarks: row.total_marks || row.total_questions || 0,
-            totalQuestions: row.total_questions || 0,
-            percentage: row.percentage || 0,
-            correctAnswersCount: row.correct_answers_count || 0,
-            wrongAnswersCount: row.wrong_answers_count || 0,
-            userAnswers: row.user_answers || {}
-          }));
-          setAttemptsList((prev) => deduplicateAttempts([...prev, ...converted]));
+        const matches = cached.filter((a) => {
+          if (!a) return false;
+          const aClass = (a.classGrade || "").toLowerCase().trim();
+          const aSubj = (a.subject || "").toLowerCase().trim();
+          const aTopic = (a.topicName || "").toLowerCase().trim().replace(/[^a-z0-9]/g, "");
+          const isChMatch = Number(a.chapterNo) === Number(chapterNo);
+          return aClass === normClass && aSubj === normSubj && isChMatch && aTopic === normTopic;
+        });
+
+        if (matches.length > 0 && isMounted) {
+          setAttemptsList((prev) => deduplicateAttempts([...prev, ...matches]));
         }
       } catch (err) {
-        console.warn("[AdminPracticeTestModal] Error loading direct attempts:", err);
+        console.warn("[AdminPracticeTestModal] Error loading attempts:", err);
       }
     };
 

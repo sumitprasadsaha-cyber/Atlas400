@@ -671,24 +671,23 @@ import {
   subscribeToTestAttempts,
   saveLocalTestAttemptsCache
 } from "../lib/firestoreService";
-import { 
-  syncTestAttemptsToSupabaseStorage, 
-  fetchTestAttemptsFromSupabaseStorage 
-} from "../lib/practiceTestService";
 import {
   savePracticeTestAttemptToSupabase,
   fetchStudentTestAttemptsFromSupabase,
+  fetchStudentTestAttempts,
   getCachedAttemptsFromMemory,
   mergeAttemptsIntoMemoryAndCache,
-  notifyScoreUpdate
+  notifyScoreUpdate,
+  syncTestAttemptsToR2Storage,
+  fetchTestAttemptsFromR2Storage
 } from "../lib/testScorePersistence";
 
-export { subscribeToTestAttempts, fetchStudentTestAttemptsFromSupabase };
+export { subscribeToTestAttempts, fetchStudentTestAttemptsFromSupabase, fetchStudentTestAttempts };
 
 if (typeof window !== "undefined") {
   (async () => {
     try {
-      const remote = await fetchTestAttemptsFromSupabaseStorage();
+      const remote = await fetchTestAttemptsFromR2Storage();
       if (remote && remote.length > 0) {
         const local = getLocalTestAttempts();
         const mergedMap = new Map<string, TestAttemptRecord>();
@@ -703,7 +702,7 @@ if (typeof window !== "undefined") {
         saveLocalTestAttemptsCache(mergedList);
       }
     } catch (e) {
-      console.warn("[AssessmentParser] Bootstrapping attempts from Supabase storage warning:", e);
+      console.warn("[AssessmentParser] Bootstrapping attempts from R2 storage warning:", e);
     }
   })();
 }

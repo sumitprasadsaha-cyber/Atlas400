@@ -76,8 +76,8 @@ export interface ChapterNote {
   allowedStudentIds?: string[];
   allowedClasses?: string[];
 
-  // Cloudflare R2 / Storage metadata
-  storageProvider?: "r2" | "supabase";
+  // Cloudflare R2 Storage metadata
+  storageProvider?: "r2";
   bucket?: string;
   storagePath?: string;
   storage_path?: string;
@@ -107,7 +107,7 @@ export interface ChapterProgressData {
 
 export interface StudentReport {
   id: string;
-  storageProvider: "r2" | "supabase";
+  storageProvider: "r2";
   bucket: string;
   storagePath: string;
   fileName: string;
@@ -161,7 +161,7 @@ export interface Student {
   enrolledSubjects: string[]; // e.g. ["Computer Science", "English", "Mathematics", "Science"]
   avatarUrl?: string; // custom image url
   avatarColor?: string; // fallback background color
-  avatarStorageProvider?: "supabase";
+  avatarStorageProvider?: "r2";
   avatarBucket?: string;
   avatarStoragePath?: string;
   notes: Record<string, ChapterNote[]>; // subject -> list of pdf notes
