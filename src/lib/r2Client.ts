@@ -488,29 +488,39 @@ export async function downloadFromR2(params: {
 export async function deleteFromR2(params: {
   bucket?: string;
   key: string;
-  }): Promise<{ success: boolean; bucket: string; key: string }> {
+}): Promise<{ success: boolean; bucket: string; key: string }> {
   const bucket = getR2BucketName(params.bucket);
   const cleanKey = params.key.replace(/^\/+/, "");
   const baseUrl = getApiBaseUrl();
+  const endpoint = `${baseUrl}/api/storage?action=delete`;
+  const payload = { bucket, key: cleanKey };
 
-  const response = await fetch(`${baseUrl}/api/storage?action=delete`, {
+  console.log(`[R2Client] Deleting note:`);
+  console.log(`  - Cloudflare object key: ${cleanKey}`);
+  console.log(`  - API endpoint: ${endpoint}`);
+  console.log(`  - Request body:`, payload);
+
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bucket, key: cleanKey }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
     let errMessage = `HTTP ${response.status}`;
     try {
       const parsed = await response.json();
-      errMessage = parsed.error || errMessage;
+      errMessage = parsed.error || parsed.details || errMessage;
     } catch {
       // ignore
     }
+    console.error(`[R2Client] Cloudflare R2 deletion failed (${response.status}): ${errMessage}`);
     throw new Error(`Cloudflare R2 deletion failed: ${errMessage}`);
   }
 
-  return { success: true, bucket, key: cleanKey };
+  const result = await response.json().catch(() => ({ success: true }));
+  console.log(`[R2Client] Deletion confirmed from storage for key: "${cleanKey}"`);
+  return { success: true, bucket, key: cleanKey, ...result };
 }
 
 /**
@@ -523,22 +533,28 @@ export async function deleteMultipleFromR2(params: {
   const bucket = getR2BucketName(params.bucket);
   const cleanKeys = params.keys.map((k) => k.replace(/^\/+/, "")).filter(Boolean);
   const baseUrl = getApiBaseUrl();
+  const endpoint = `${baseUrl}/api/storage?action=delete-multiple`;
+  const payload = { bucket, keys: cleanKeys };
 
   if (cleanKeys.length === 0) {
     return { success: true, deleted: [] };
   }
 
-  const response = await fetch(`${baseUrl}/api/storage?action=delete-multiple`, {
+  console.log(`[R2Client] Batch deleting ${cleanKeys.length} objects from storage:`);
+  console.log(`  - API endpoint: ${endpoint}`);
+  console.log(`  - Request body:`, payload);
+
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bucket, keys: cleanKeys }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
     let errMessage = `HTTP ${response.status}`;
     try {
       const parsed = await response.json();
-      errMessage = parsed.error || errMessage;
+      errMessage = parsed.error || parsed.details || errMessage;
     } catch {
       // ignore
     }

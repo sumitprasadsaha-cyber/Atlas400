@@ -2,37 +2,130 @@ import path from "path";
 import { Readable } from "stream";
 
 /**
- * Normalizes and sanitizes storage key paths, removing leading slashes and path traversals.
+ * Normalizes and sanitizes storage key paths, extracting keys from URLs or query strings,
+ * removing leading slashes, decoding URI components, and preventing path traversals.
  */
 export function sanitizeKey(key: string, bucketName?: string): string {
   if (!key) return "";
-  let clean = String(key).trim().replace(/\\/g, "/");
+  let clean = String(key).trim();
 
-  // Remove full URLs if accidentally passed
+  // 0. Handle JSON metadata strings
+  if (clean.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(clean);
+      if (parsed.storagePath) {
+        clean = String(parsed.storagePath).trim();
+      } else if (parsed.key) {
+        clean = String(parsed.key).trim();
+      } else if (parsed.storageKey) {
+        clean = String(parsed.storageKey).trim();
+      } else if (parsed.downloadUrl) {
+        clean = String(parsed.downloadUrl).trim();
+      } else if (parsed.url) {
+        clean = String(parsed.url).trim();
+      }
+    } catch {
+      // Ignore JSON parse errors
+    }
+  }
+
+  // 1. Extract from key/storageKey/storagePath query params in URLs or relative paths
+  if (clean.includes("key=") || clean.includes("storageKey=") || clean.includes("storagePath=")) {
+    try {
+      const fakeBase = "http://localhost";
+      const urlObj = new URL(clean.startsWith("http") ? clean : `${fakeBase}${clean.startsWith("/") ? "" : "/"}${clean}`);
+      const keyParam = urlObj.searchParams.get("key") || urlObj.searchParams.get("storageKey") || urlObj.searchParams.get("storagePath");
+      if (keyParam) {
+        clean = decodeURIComponent(keyParam);
+      }
+    } catch {
+      const match = clean.match(/[?&](?:key|storageKey|storagePath)=([^&]+)/);
+      if (match && match[1]) {
+        clean = decodeURIComponent(match[1]);
+      }
+    }
+  }
+
+  // 2. Normalize slashes & remove quotes
+  clean = clean.replace(/\\/g, "/");
+  clean = clean.replace(/^["']|["']$/g, "");
+
+  // 3. Handle gs:// or s3:// protocol URLs
+  if (clean.startsWith("gs://") || clean.startsWith("s3://")) {
+    const withoutPrefix = clean.substring(5);
+    const slashIdx = withoutPrefix.indexOf("/");
+    if (slashIdx !== -1) {
+      clean = withoutPrefix.substring(slashIdx + 1);
+    } else {
+      clean = "";
+    }
+  }
+
+  // 4. Handle full HTTP/HTTPS URLs (R2 public domain or proxy URL)
   if (clean.startsWith("http://") || clean.startsWith("https://")) {
     try {
-      const parsed = new URL(clean);
-      clean = parsed.pathname;
+      const urlObj = new URL(clean);
+      const pathname = urlObj.pathname;
+      const keyParam = urlObj.searchParams.get("key") || urlObj.searchParams.get("storageKey");
+      if (keyParam) {
+        clean = decodeURIComponent(keyParam);
+      } else {
+        const segments = pathname.replace(/^\/+/, "").split("/");
+        if (bucketName && segments[0] === bucketName) {
+          segments.shift();
+        }
+        clean = segments.join("/");
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
+  }
+
+  // 5. Decode URI encoding safely
+  if (clean.includes("%")) {
+    try {
+      let decoded = decodeURIComponent(clean);
+      if (decoded.includes("%")) {
+        decoded = decodeURIComponent(decoded);
+      }
+      clean = decoded;
     } catch {
       // ignore
     }
   }
 
-  // Remove leading bucket name if prefixed
+  // 6. Strip query parameters and hash fragments if any remain
+  if (clean.includes("?")) {
+    clean = clean.split("?")[0];
+  }
+  if (clean.includes("#")) {
+    clean = clean.split("#")[0];
+  }
+
+  // 7. Remove leading bucket name if prefixed
   if (bucketName) {
     const bucketPrefix = `${bucketName}/`;
     if (clean.startsWith(bucketPrefix)) {
       clean = clean.substring(bucketPrefix.length);
     }
   }
+  if (clean.startsWith("academy-connect-files/")) {
+    clean = clean.substring("academy-connect-files/".length);
+  }
 
-  // Remove leading slashes and collapse duplicate slashes
+  // 8. Remove leading slashes and collapse duplicate slashes
   clean = clean.replace(/^\/+/, "").replace(/\/{2,}/g, "/");
 
-  // Prevent path traversal
+  // 9. Prevent path traversal
   clean = clean.replace(/\.\./g, "_");
 
-  return clean;
+  // 10. Clean individual path segments
+  const segments = clean
+    .split("/")
+    .map((seg) => seg.trim())
+    .filter((seg) => seg.length > 0 && seg !== "." && seg !== "..");
+
+  return segments.join("/");
 }
 
 /**

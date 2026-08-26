@@ -1,6 +1,6 @@
 import { handleOptions, sendSuccess, sendError, setCorsHeaders } from "./_lib/responses";
 import { validateAction } from "./_lib/validation";
-import { sanitizeKey, getMimeType } from "./_lib/utils";
+import { sanitizeKey, getMimeType, parseRequestBody } from "./_lib/utils";
 import {
   uploadObjectToR2,
   getObjectFromR2,
@@ -32,16 +32,17 @@ export default async function handler(req: any, res: any) {
   if (handleOptions(req, res)) return;
 
   try {
+    const parsedBody = parseRequestBody(req.body);
     // Determine action from query, body, or URL
-    const actionParam = req.query.action || req.body?.action || (req.method === "GET" && req.query.key ? "download" : "upload");
+    const actionParam = req.query.action || parsedBody?.action || (req.method === "GET" && req.query.key ? "download" : "upload");
     const action = validateAction<StorageAction>(actionParam, ALLOWED_ACTIONS, "download");
 
     switch (action) {
       // 1. GENERATE SIGNED URL
       case "signed-url": {
-        const { bucket, key, expiresIn, operation, contentType } = req.body || req.query;
+        const { bucket, key, expiresIn, operation, contentType } = parsedBody || req.body || req.query;
         if (!key) {
-          return res.status(400).json({ error: "Missing required 'key' parameter." });
+          return res.status(400).json({ success: false, error: "Missing required 'key' parameter." });
         }
 
         const config = getR2ServerConfig();
@@ -236,28 +237,42 @@ export default async function handler(req: any, res: any) {
 
       // 5. DELETE SINGLE OBJECT
       case "delete": {
-        const bucket = req.body?.bucket || (req.query.bucket as string);
+        const bucket = parsedBody?.bucket || req.body?.bucket || (req.query.bucket as string);
         const key =
+          parsedBody?.key ||
+          parsedBody?.storagePath ||
+          parsedBody?.storageKey ||
+          parsedBody?.path ||
           req.body?.key ||
           req.body?.storagePath ||
+          req.body?.storageKey ||
           req.body?.path ||
           (req.query.key as string) ||
           (req.query.storagePath as string) ||
+          (req.query.storageKey as string) ||
           (req.query.path as string);
 
         if (!key) {
-          return res.status(400).json({ error: "Missing required 'key' parameter." });
+          return res.status(400).json({ success: false, error: "Missing required 'key' parameter for deletion." });
         }
 
-        const cleanKey = sanitizeKey(String(key), bucket);
-        const result = await deleteObjectFromR2({ bucket, key: cleanKey });
-        return sendSuccess(res, result);
+        const config = getR2ServerConfig();
+        const actualBucket = (bucket || config.bucket || "academy-connect-files").trim();
+        const cleanKey = sanitizeKey(String(key), actualBucket);
+
+        if (!cleanKey) {
+          return res.status(400).json({ success: false, error: "Invalid or empty storage key provided." });
+        }
+
+        console.log(`[Storage API] Deleting object from Cloudflare R2: bucket="${actualBucket}", key="${cleanKey}"`);
+        const result = await deleteObjectFromR2({ bucket: actualBucket, key: cleanKey });
+        return sendSuccess(res, { success: true, deleted: true, ...result });
       }
 
       // 6. DELETE MULTIPLE OBJECTS
       case "delete-multiple": {
-        const bucket = req.body?.bucket || (req.query.bucket as string);
-        let keys = req.body?.keys || req.query?.keys;
+        const bucket = parsedBody?.bucket || req.body?.bucket || (req.query.bucket as string);
+        let keys = parsedBody?.keys || req.body?.keys || req.query?.keys;
         if (typeof keys === "string") {
           try {
             keys = JSON.parse(keys);
@@ -267,42 +282,48 @@ export default async function handler(req: any, res: any) {
         }
 
         if (!keys || !Array.isArray(keys) || keys.length === 0) {
-          return res.status(400).json({ error: "Missing or invalid 'keys' array parameter." });
+          return res.status(400).json({ success: false, error: "Missing or invalid 'keys' array parameter." });
         }
 
-        const cleanKeys = keys.map((k) => sanitizeKey(k, bucket)).filter(Boolean);
-        const result = await deleteObjectsFromR2({ bucket, keys: cleanKeys });
-        return sendSuccess(res, result);
+        const config = getR2ServerConfig();
+        const actualBucket = (bucket || config.bucket || "academy-connect-files").trim();
+        const cleanKeys = keys.map((k) => sanitizeKey(k, actualBucket)).filter(Boolean);
+
+        console.log(`[Storage API] Deleting multiple objects from Cloudflare R2: bucket="${actualBucket}", count=${cleanKeys.length}`);
+        const result = await deleteObjectsFromR2({ bucket: actualBucket, keys: cleanKeys });
+        return sendSuccess(res, { success: true, ...result });
       }
 
       // 7. ATOMIC REPLACE
       case "replace": {
-        const bucket = (req.query.bucket as string) || req.body?.bucket;
-        const oldKey = req.body?.oldKey || req.body?.oldStoragePath || (req.query.oldKey as string);
-        const newKey = req.body?.newKey || req.body?.newStoragePath || req.body?.key || (req.query.key as string);
-        const base64 = req.body?.base64;
-        const mimeType = req.body?.mimeType || (req.query.mimeType as string) || "application/octet-stream";
+        const bucket = (req.query.bucket as string) || parsedBody?.bucket || req.body?.bucket;
+        const oldKey = parsedBody?.oldKey || parsedBody?.oldStoragePath || req.body?.oldKey || req.body?.oldStoragePath || (req.query.oldKey as string);
+        const newKey = parsedBody?.newKey || parsedBody?.newStoragePath || parsedBody?.key || req.body?.newKey || req.body?.newStoragePath || req.body?.key || (req.query.key as string);
+        const base64 = parsedBody?.base64 || req.body?.base64;
+        const mimeType = parsedBody?.mimeType || req.body?.mimeType || (req.query.mimeType as string) || "application/octet-stream";
+
+        const config = getR2ServerConfig();
+        const actualBucket = (bucket || config.bucket || "academy-connect-files").trim();
 
         if (oldKey) {
           try {
-            const cleanOldKey = sanitizeKey(oldKey, bucket);
-            await deleteObjectFromR2({ bucket, key: cleanOldKey });
+            const cleanOldKey = sanitizeKey(oldKey, actualBucket);
+            await deleteObjectFromR2({ bucket: actualBucket, key: cleanOldKey });
           } catch (delErr) {
             console.warn(`[Storage API] Old object was not found or already deleted: ${oldKey}`, delErr);
           }
         }
 
         if (newKey && base64) {
-          const cleanNewKey = sanitizeKey(newKey, bucket);
+          const cleanNewKey = sanitizeKey(newKey, actualBucket);
           const buffer = Buffer.from(base64, "base64");
           const uploadRes = await uploadObjectToR2({
-            bucket,
+            bucket: actualBucket,
             key: cleanNewKey,
             body: buffer,
             contentType: mimeType,
           });
 
-          const config = getR2ServerConfig();
           const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(uploadRes.bucket)}&key=${encodeURIComponent(cleanNewKey)}`;
           const publicUrl = config.publicUrl
             ? `${config.publicUrl}/${cleanNewKey}`

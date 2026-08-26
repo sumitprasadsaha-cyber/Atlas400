@@ -394,8 +394,12 @@ export async function deleteObjectFromR2(params: {
   key: string;
 }): Promise<{ success: boolean; bucket: string; key: string }> {
   const config = getR2ServerConfig();
-  const bucketName = params.bucket || config.bucket;
+  const bucketName = (params.bucket || config.bucket || "academy-connect-files").trim();
   const cleanKey = params.key.replace(/^\/+/, "");
+
+  if (!cleanKey) {
+    return { success: true, bucket: bucketName, key: "" };
+  }
 
   if (isR2Configured()) {
     try {
@@ -408,7 +412,7 @@ export async function deleteObjectFromR2(params: {
       await client.send(command);
       console.log(`[R2Server] Successfully deleted object from Cloudflare R2: bucket="${bucketName}", key="${cleanKey}"`);
     } catch (err: any) {
-      console.warn(`[R2Server] R2 DeleteObject notice: ${err.message || err}`);
+      console.warn(`[R2Server] R2 DeleteObject notice for "${cleanKey}":`, err?.message || err);
     }
   }
 
@@ -443,7 +447,7 @@ export async function deleteObjectsFromR2(params: {
   }
 
   const config = getR2ServerConfig();
-  const bucketName = params.bucket || config.bucket;
+  const bucketName = (params.bucket || config.bucket || "academy-connect-files").trim();
 
   if (isR2Configured()) {
     try {
@@ -456,8 +460,9 @@ export async function deleteObjectsFromR2(params: {
         },
       });
       await client.send(command);
+      console.log(`[R2Server] Successfully batch deleted ${cleanKeys.length} objects from Cloudflare R2`);
     } catch (err: any) {
-      console.warn(`[R2Server] R2 DeleteObjects notice:`, err.message || err);
+      console.warn(`[R2Server] R2 DeleteObjects notice:`, err?.message || err);
     }
   }
 

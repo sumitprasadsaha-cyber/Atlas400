@@ -135,17 +135,24 @@ export function sanitizeStoragePath(rawPath: string | null | undefined, bucketNa
     }
   }
 
-  // 1. Check for /api/r2/download or /api/r2/view endpoint (either absolute or relative URL)
-  if (cleaned.includes("/api/r2/download") || cleaned.includes("/api/r2/view") || cleaned.includes("/api/r2/signed-url")) {
+  // 1. Check for /api/storage, /api/notes, /api/r2 endpoints or any query parameters
+  if (
+    cleaned.includes("/api/storage") ||
+    cleaned.includes("/api/notes") ||
+    cleaned.includes("/api/r2/") ||
+    cleaned.includes("key=") ||
+    cleaned.includes("storageKey=") ||
+    cleaned.includes("storagePath=")
+  ) {
     try {
       const fakeBase = "http://localhost";
       const urlObj = new URL(cleaned.startsWith("http") ? cleaned : `${fakeBase}${cleaned.startsWith("/") ? "" : "/"}${cleaned}`);
-      const keyParam = urlObj.searchParams.get("key");
+      const keyParam = urlObj.searchParams.get("key") || urlObj.searchParams.get("storageKey") || urlObj.searchParams.get("storagePath");
       if (keyParam) {
         cleaned = decodeURIComponent(keyParam);
       }
     } catch {
-      const match = cleaned.match(/[?&]key=([^&]+)/);
+      const match = cleaned.match(/[?&](?:key|storageKey|storagePath)=([^&]+)/);
       if (match && match[1]) {
         cleaned = decodeURIComponent(match[1]);
       }

@@ -1011,7 +1011,13 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       const bucket = deletingNote.bucket || "academy-connect-files";
       const rawStoragePath = deletingNote.storagePath || deletingNote.pdfUrl || "";
 
-      // 1. Delete actual uploaded file from Storage using its stored storage path/key
+      console.log("Deleting note");
+      console.log(`Firestore document id: ${deletedNoteId}`);
+      console.log(`Cloudflare object key: ${rawStoragePath}`);
+      console.log(`API endpoint: /api/storage?action=delete`);
+      console.log(`Request body:`, { bucket, key: rawStoragePath });
+
+      // 1. Delete actual uploaded file from Storage using its stored storage path/key FIRST
       if (rawStoragePath) {
         try {
           await deleteFileFromStorage(rawStoragePath, bucket);

@@ -1,6 +1,6 @@
 import { handleOptions, sendSuccess, sendError } from "./_lib/responses";
 import { validateAction } from "./_lib/validation";
-import { sanitizeKey, getMimeType } from "./_lib/utils";
+import { sanitizeKey, getMimeType, parseRequestBody } from "./_lib/utils";
 import { uploadObjectToR2, deleteObjectFromR2, getObjectFromR2, headObjectFromR2, getR2ServerConfig } from "./_lib/r2";
 import { NotesAction } from "./_shared/types";
 
@@ -20,15 +20,16 @@ export default async function handler(req: any, res: any) {
   if (handleOptions(req, res)) return;
 
   try {
-    const actionParam = req.query.action || req.body?.action || (req.method === "GET" ? "get" : "create");
+    const parsedBody = parseRequestBody(req.body);
+    const actionParam = req.query.action || parsedBody?.action || (req.method === "GET" ? "get" : "create");
     const action = validateAction<NotesAction>(actionParam, ALLOWED_ACTIONS, "list");
 
     switch (action) {
       // 1. CREATE / UPLOAD NOTE
       case "create": {
-        const { title, subject, classGrade, chapterNo, chapterName, topicName, fileName, base64, mimeType, bucket } = req.body || {};
+        const { title, subject, classGrade, chapterNo, chapterName, topicName, fileName, base64, mimeType, bucket } = parsedBody || req.body || {};
         if (!title || !subject || !classGrade) {
-          return res.status(400).json({ error: "Missing required note metadata (title, subject, classGrade)." });
+          return res.status(400).json({ success: false, error: "Missing required note metadata (title, subject, classGrade)." });
         }
 
         let storageKey = "";
