@@ -214,7 +214,80 @@ export async function uploadToR2(params: {
 
   const errors: string[] = [];
 
-  // Step 1: Upload directly via Same-Origin Backend API Proxy (/api/storage?action=upload)
+  // Step 1: Upload via FormData multipart (Native browser streaming, handles any file format cleanly)
+  try {
+    const uploadApiUrl = `${baseUrl}/api/storage?action=upload&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}&mimeType=${encodeURIComponent(mimeType)}`;
+
+    if (typeof FormData !== "undefined" && typeof XMLHttpRequest !== "undefined") {
+      const formResult = await new Promise<R2UploadResult>((resolve, reject) => {
+        try {
+          const formData = new FormData();
+          formData.append("file", params.file, (params.file as File).name || cleanKey.split("/").pop() || "file.pdf");
+          formData.append("bucket", bucket);
+          formData.append("key", cleanKey);
+          formData.append("mimeType", mimeType);
+
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", uploadApiUrl, true);
+
+          if (xhr.upload && params.onProgress) {
+            xhr.upload.onprogress = (e) => {
+              if (e.lengthComputable && e.total > 0) {
+                const pct = Math.min(99, Math.max(0, Math.round((e.loaded / e.total) * 100)));
+                params.onProgress!(pct);
+              }
+            };
+          }
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              if (params.onProgress) params.onProgress(100);
+              try {
+                const resData = JSON.parse(xhr.responseText || "{}");
+                const finalUrl = resData.publicUrl || resData.url || getR2PublicUrl(bucket, cleanKey);
+                resolve({
+                  bucket,
+                  key: cleanKey,
+                  url: finalUrl,
+                  size: params.file.size,
+                  mimeType,
+                  etag: resData.etag,
+                });
+              } catch {
+                resolve({
+                  bucket,
+                  key: cleanKey,
+                  url: getR2PublicUrl(bucket, cleanKey),
+                  size: params.file.size,
+                  mimeType,
+                });
+              }
+            } else {
+              let errDetail = `HTTP ${xhr.status}`;
+              try {
+                const parsed = JSON.parse(xhr.responseText);
+                errDetail = parsed.error || parsed.message || errDetail;
+              } catch {}
+              reject(new Error(`FormData Upload: ${errDetail}`));
+            }
+          };
+
+          xhr.onerror = () => reject(new Error("FormData Upload: Network Error"));
+          xhr.ontimeout = () => reject(new Error("FormData Upload: Timeout"));
+          xhr.send(formData);
+        } catch (err: any) {
+          reject(new Error(`FormData Upload Exception: ${err?.message || err}`));
+        }
+      });
+
+      return formResult;
+    }
+  } catch (formDataError: any) {
+    console.warn("[R2Client] FormData upload attempt encountered an issue:", formDataError);
+    errors.push(formDataError?.message || String(formDataError));
+  }
+
+  // Step 2: Upload directly via binary body
   try {
     const uploadApiUrl = `${baseUrl}/api/storage?action=upload&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}&mimeType=${encodeURIComponent(mimeType)}`;
 
@@ -239,7 +312,7 @@ export async function uploadToR2(params: {
               if (params.onProgress) params.onProgress(100);
               try {
                 const resData = JSON.parse(xhr.responseText || "{}");
-                const finalUrl = resData.url || getR2PublicUrl(bucket, cleanKey);
+                const finalUrl = resData.publicUrl || resData.url || getR2PublicUrl(bucket, cleanKey);
                 resolve({
                   bucket,
                   key: cleanKey,
@@ -295,7 +368,7 @@ export async function uploadToR2(params: {
         return {
           bucket,
           key: cleanKey,
-          url: resData.url || getR2PublicUrl(bucket, cleanKey),
+          url: resData.publicUrl || resData.url || getR2PublicUrl(bucket, cleanKey),
           size: params.file.size,
           mimeType,
           etag: resData.etag,

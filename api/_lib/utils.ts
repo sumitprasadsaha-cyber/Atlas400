@@ -178,11 +178,180 @@ export function parseRequestBody<T = any>(body: any): T {
 /**
  * Converts Readable stream or Buffer into a Buffer.
  */
-export async function streamToBuffer(stream: Readable): Promise<Buffer> {
+export async function streamToBuffer(stream: Readable | any): Promise<Buffer> {
+  if (Buffer.isBuffer(stream)) return stream;
+  if (!stream || typeof stream.on !== "function") return Buffer.alloc(0);
+
   const chunks: Buffer[] = [];
   return new Promise((resolve, reject) => {
-    stream.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    stream.on("data", (chunk: any) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
     stream.on("end", () => resolve(Buffer.concat(chunks)));
     stream.on("error", reject);
   });
+}
+
+export interface ParsedMultipartPart {
+  name: string;
+  filename?: string;
+  contentType: string;
+  data: Buffer;
+}
+
+export interface ParsedMultipartResult {
+  fields: Record<string, string>;
+  files: ParsedMultipartPart[];
+}
+
+/**
+ * High-performance, zero-dependency multipart/form-data buffer parser.
+ */
+export function parseMultipartFormData(buffer: Buffer, boundary: string): ParsedMultipartResult {
+  const result: ParsedMultipartResult = {
+    fields: {},
+    files: [],
+  };
+
+  if (!buffer || buffer.length === 0 || !boundary) {
+    return result;
+  }
+
+  const boundaryBuffer = Buffer.from(`--${boundary}`);
+  const crlfcrlf = Buffer.from("\r\n\r\n");
+
+  let start = buffer.indexOf(boundaryBuffer);
+  while (start !== -1) {
+    const nextStart = buffer.indexOf(boundaryBuffer, start + boundaryBuffer.length);
+    if (nextStart === -1) break;
+
+    // Slice part data including headers and trailing CRLF
+    const partBuffer = buffer.subarray(start + boundaryBuffer.length, nextStart);
+    const headerEndIndex = partBuffer.indexOf(crlfcrlf);
+
+    if (headerEndIndex !== -1) {
+      const headerText = partBuffer.subarray(0, headerEndIndex).toString("utf-8");
+      // Strip leading \r\n from headers if present
+      const cleanHeaders = headerText.replace(/^\r\n/, "");
+      
+      // Data is after \r\n\r\n, and before the trailing \r\n
+      let bodyData = partBuffer.subarray(headerEndIndex + crlfcrlf.length);
+      if (bodyData.length >= 2 && bodyData[bodyData.length - 2] === 0x0d && bodyData[bodyData.length - 1] === 0x0a) {
+        bodyData = bodyData.subarray(0, bodyData.length - 2);
+      }
+
+      // Parse headers
+      const nameMatch = cleanHeaders.match(/name="([^"]+)"/i);
+      const filenameMatch = cleanHeaders.match(/filename="([^"]+)"/i);
+      const contentTypeMatch = cleanHeaders.match(/Content-Type:\s*([^\r\n;]+)/i);
+
+      const fieldName = nameMatch ? nameMatch[1] : "";
+      const filename = filenameMatch ? filenameMatch[1] : undefined;
+      const contentType = contentTypeMatch ? contentTypeMatch[1].trim() : "application/octet-stream";
+
+      if (fieldName) {
+        if (filename !== undefined) {
+          result.files.push({
+            name: fieldName,
+            filename,
+            contentType,
+            data: bodyData,
+          });
+        } else {
+          result.fields[fieldName] = bodyData.toString("utf-8");
+        }
+      }
+    }
+
+    start = nextStart;
+  }
+
+  return result;
+}
+
+export interface UploadPayload {
+  buffer: Buffer;
+  key: string;
+  bucket: string;
+  contentType: string;
+  fileName?: string;
+  size: number;
+}
+
+/**
+ * Extracts normalized upload payload from diverse HTTP request structures
+ * (multipart/form-data, raw binary buffer, base64 in JSON, or streaming requests).
+ */
+export async function extractUploadPayload(req: any): Promise<UploadPayload> {
+  const reqContentType = (req.headers?.["content-type"] || req.headers?.["Content-Type"] || "").toLowerCase();
+  
+  let rawBuffer: Buffer = Buffer.alloc(0);
+  if (Buffer.isBuffer(req.body)) {
+    rawBuffer = req.body;
+  } else if (req.body?.rawBuffer && Buffer.isBuffer(req.body.rawBuffer)) {
+    rawBuffer = req.body.rawBuffer;
+  } else if (typeof req.on === "function" && req.readable) {
+    rawBuffer = await streamToBuffer(req);
+  }
+
+  let resolvedBuffer: Buffer = Buffer.alloc(0);
+  let resolvedKey = (req.query?.key as string) || (req.body?.key as string) || "";
+  let resolvedBucket = (req.query?.bucket as string) || (req.body?.bucket as string) || "";
+  let resolvedContentType = (req.query?.mimeType as string) || (req.body?.mimeType as string) || "";
+  let resolvedFileName = (req.query?.filename as string) || (req.body?.filename as string) || "";
+
+  // 1. Handle multipart/form-data
+  if (reqContentType.includes("multipart/form-data")) {
+    const boundaryMatch = reqContentType.match(/boundary=([^;]+)/i);
+    const boundary = boundaryMatch ? boundaryMatch[1].trim().replace(/^["']|["']$/g, "") : "";
+    if (boundary && rawBuffer.length > 0) {
+      const parsed = parseMultipartFormData(rawBuffer, boundary);
+      if (parsed.files.length > 0) {
+        const filePart = parsed.files.find((f) => f.name === "file" || f.name === "pdf") || parsed.files[0];
+        resolvedBuffer = filePart.data;
+        resolvedFileName = resolvedFileName || filePart.filename || "";
+        resolvedContentType = resolvedContentType || filePart.contentType || getMimeType(resolvedFileName);
+      }
+      resolvedKey = resolvedKey || parsed.fields.key || parsed.fields.storagePath || parsed.fields.path || "";
+      resolvedBucket = resolvedBucket || parsed.fields.bucket || "";
+      resolvedContentType = resolvedContentType || parsed.fields.mimeType || "";
+    }
+  }
+
+  // 2. Handle JSON with base64 payload
+  if (resolvedBuffer.length === 0) {
+    if (req.body && typeof req.body === "object" && req.body.base64) {
+      resolvedBuffer = Buffer.from(req.body.base64, "base64");
+      resolvedKey = resolvedKey || req.body.key || req.body.storagePath || "";
+      resolvedBucket = resolvedBucket || req.body.bucket || "";
+      resolvedContentType = resolvedContentType || req.body.mimeType || "";
+    } else if (rawBuffer.length > 0 && reqContentType.includes("application/json")) {
+      try {
+        const parsed = JSON.parse(rawBuffer.toString("utf-8"));
+        if (parsed.base64) {
+          resolvedBuffer = Buffer.from(parsed.base64, "base64");
+          resolvedKey = resolvedKey || parsed.key || parsed.storagePath || "";
+          resolvedBucket = resolvedBucket || parsed.bucket || "";
+          resolvedContentType = resolvedContentType || parsed.mimeType || "";
+        }
+      } catch {}
+    }
+  }
+
+  // 3. Handle raw binary buffer directly
+  if (resolvedBuffer.length === 0 && rawBuffer.length > 0) {
+    resolvedBuffer = rawBuffer;
+  }
+
+  // 4. Resolve MIME Type & Filename fallbacks
+  if (!resolvedContentType || resolvedContentType === "application/octet-stream") {
+    resolvedContentType = getMimeType(resolvedKey || resolvedFileName || "file.pdf");
+  }
+
+  return {
+    buffer: resolvedBuffer,
+    key: resolvedKey,
+    bucket: resolvedBucket,
+    contentType: resolvedContentType,
+    fileName: resolvedFileName,
+    size: resolvedBuffer.length,
+  };
 }

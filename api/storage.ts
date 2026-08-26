@@ -1,6 +1,6 @@
 import { handleOptions, sendSuccess, sendError, setCorsHeaders } from "./_lib/responses";
 import { validateAction } from "./_lib/validation";
-import { sanitizeKey, getMimeType, parseRequestBody } from "./_lib/utils";
+import { sanitizeKey, getMimeType, parseRequestBody, extractUploadPayload } from "./_lib/utils";
 import {
   uploadObjectToR2,
   getObjectFromR2,
@@ -87,52 +87,27 @@ export default async function handler(req: any, res: any) {
 
       // 2. UPLOAD FILE
       case "upload": {
-        const bucket = (req.query.bucket as string) || req.body?.bucket;
-        const key = (req.query.key as string) || req.body?.key;
-        let contentType = (req.query.mimeType as string) || req.headers["content-type"] || "application/octet-stream";
+        const payload = await extractUploadPayload(req);
+        const bucket = (req.query.bucket as string) || (parsedBody?.bucket as string) || payload.bucket;
+        const key = (req.query.key as string) || (parsedBody?.key as string) || payload.key;
+        const contentType = payload.contentType || (req.query.mimeType as string) || (parsedBody?.mimeType as string) || getMimeType(key || payload.fileName || "file.pdf");
 
         if (!key) {
-          return res.status(400).json({ error: "Missing required 'key' query parameter or body property." });
+          return res.status(400).json({ error: "Missing required 'key' query parameter, form field, or body property." });
+        }
+
+        if (!payload.buffer || payload.buffer.length === 0) {
+          return res.status(400).json({ error: "Upload buffer is empty or no valid file/body data received." });
         }
 
         const config = getR2ServerConfig();
-        const cleanKey = sanitizeKey(key, bucket);
-
-        let buffer: Buffer;
-        if (Buffer.isBuffer(req.body)) {
-          const reqContentType = req.headers["content-type"] || "";
-          if (reqContentType.includes("application/json")) {
-            try {
-              const parsed = JSON.parse(req.body.toString("utf8"));
-              if (parsed.base64) {
-                buffer = Buffer.from(parsed.base64, "base64");
-                if (parsed.mimeType) contentType = parsed.mimeType;
-              } else {
-                buffer = req.body;
-              }
-            } catch {
-              buffer = req.body;
-            }
-          } else {
-            buffer = req.body;
-          }
-        } else if (req.body && typeof req.body === "object" && req.body.base64) {
-          buffer = Buffer.from(req.body.base64, "base64");
-          if (req.body.mimeType) contentType = req.body.mimeType;
-        } else if (typeof req.body === "string") {
-          buffer = Buffer.from(req.body, "utf-8");
-        } else {
-          return res.status(400).json({ error: "No upload body data received." });
-        }
-
-        if (!buffer || buffer.length === 0) {
-          return res.status(400).json({ error: "Upload buffer is empty." });
-        }
+        const actualBucket = (bucket || config.bucket || "academy-connect-files").trim();
+        const cleanKey = sanitizeKey(key, actualBucket);
 
         const result = await uploadObjectToR2({
-          bucket,
+          bucket: actualBucket,
           key: cleanKey,
-          body: buffer,
+          body: payload.buffer,
           contentType,
         });
 
@@ -147,8 +122,9 @@ export default async function handler(req: any, res: any) {
           etag: result.etag,
           url: downloadUrl,
           publicUrl: publicUrl,
-          size: buffer.length,
+          size: payload.buffer.length,
           mimeType: contentType,
+          filename: payload.fileName,
         });
       }
 

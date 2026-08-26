@@ -594,8 +594,19 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       };
 
       console.log(`[UploadPipeline] [Step 3] Metadata constructed. Persisting to database...`, newNote);
-      await saveClassNoteDoc(newNote);
-      console.log(`[UploadPipeline] [Step 4] Metadata inserted successfully: id=${newNote.id}`);
+      try {
+        await saveClassNoteDoc(newNote);
+        console.log(`[UploadPipeline] [Step 4] Metadata inserted successfully: id=${newNote.id}`);
+      } catch (firestoreErr: any) {
+        console.error("[UploadPipeline] Firestore metadata creation failed. Rolling back R2 upload...", firestoreErr);
+        try {
+          await deleteFileFromStorage(uploadRes.bucket, exactKey);
+          console.log(`[UploadPipeline] Rolled back orphaned R2 object: ${exactKey}`);
+        } catch (cleanupErr) {
+          console.error("[UploadPipeline] Failed to delete orphaned R2 object during rollback:", cleanupErr);
+        }
+        throw new Error(`Failed to save note metadata to database: ${firestoreErr?.message || firestoreErr}`);
+      }
 
       const newClsKey = newNote.classGrade;
       const newSubjKey = `${newNote.classGrade}_${newNote.subject}`;

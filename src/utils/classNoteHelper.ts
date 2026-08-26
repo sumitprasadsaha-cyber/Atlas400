@@ -241,30 +241,39 @@ export function isSubjectMatching(subA?: string, subB?: string): boolean {
 /**
  * Filter centralized ClassNote items for a given student.
  * Must match:
- * 1. Student's ClassGrade (Class 1–12, UPSC)
- * 2. Student's explicitly assigned/enrolled subjects
+ * 1. Active / Not deleted
+ * 2. Student's ClassGrade (Class 1–12, UPSC, or explicitly shared)
  * 3. Specific note access rules (if selected student access is configured)
+ * 4. Student's assigned/enrolled subjects, GS Paper, or broad enrollment
  */
 export function filterClassNotesForStudent(
   classNotes: ClassNote[],
   student: Student
 ): ClassNote[] {
   if (!student || !Array.isArray(classNotes)) return [];
-  
-  const enrolledSubjects = (student.enrolledSubjects || [])
-    .filter((s) => typeof s === "string" && s.trim())
-    .map((s) => s.trim().toLowerCase());
 
-  // If student has no assigned subjects, return empty list
-  if (enrolledSubjects.length === 0) {
-    return [];
-  }
+  const rawEnrolled = (student.enrolledSubjects || []).filter((s) => typeof s === "string" && s.trim());
+  const enrolledSubjects = rawEnrolled.map((s) => s.trim().toLowerCase());
+  const hasWildcardEnrollment = enrolledSubjects.length === 0 || enrolledSubjects.some((s) => s === "all" || s === "all subjects");
 
   const studentGrade = student.classGrade || "";
   const studentNormGrade = normalizeClassGrade(studentGrade).toLowerCase();
 
   return classNotes.filter((note) => {
-    if (!note || !note.subject || !note.subject.trim()) return false;
+    if (!note) return false;
+
+    // 0. Check deleted / inactive status
+    if (
+      (note as any).isDeleted === true ||
+      (note as any).status === "deleted" ||
+      (note as any).hidden === true ||
+      (note as any).visibility === "hidden" ||
+      (note as any).active === false
+    ) {
+      return false;
+    }
+
+    if (!note.subject || !note.subject.trim()) return false;
 
     // 1. Check class grade access
     let classMatches = false;
@@ -286,26 +295,69 @@ export function filterClassNotesForStudent(
       if (!note.allowedStudentIds.includes(student.id)) return false;
     }
 
-    // 3. Check subject match strictly against enrolled subjects
+    // 3. Check subject / GS Paper match
+    if (hasWildcardEnrollment) {
+      return true;
+    }
+
     const noteSubj = (note.subject || "").trim();
-    return enrolledSubjects.some((s) => isSubjectMatching(s, noteSubj));
+    const noteGS = (note.generalStudiesPaper || (note as any).gs_paper || "").trim();
+    const inferredGS = inferGSPaperFromSubject(noteSubj) || "";
+    const moduleName = (note.moduleName || (note as any).module_name || "").trim();
+    const chapterName = (note.chapterName || "").trim();
+
+    return enrolledSubjects.some((enrolled) => {
+      if (isSubjectMatching(enrolled, noteSubj)) return true;
+      if (noteGS && isSubjectMatching(enrolled, noteGS)) return true;
+      if (inferredGS && isSubjectMatching(enrolled, inferredGS)) return true;
+      if (moduleName && isSubjectMatching(enrolled, moduleName)) return true;
+      if (chapterName && isSubjectMatching(enrolled, chapterName)) return true;
+      return false;
+    });
   });
 }
 
 /**
- * Returns only the subjects assigned/enrolled to the student.
- * Never falls back to returning all class subjects, UPSC default subjects, or unassigned central notes.
+ * Returns subjects assigned/enrolled to the student, expanding GS papers and falling back to class subjects if unassigned.
  */
-export function getStudentSubjects(student: Student, _allClassNotes: ClassNote[] = []): string[] {
-  if (!student || !Array.isArray(student.enrolledSubjects)) return [];
+export function getStudentSubjects(student: Student, allClassNotes: ClassNote[] = []): string[] {
+  if (!student) return [];
 
   const subjectsSet = new Set<string>();
+  const rawEnrolled = (student.enrolledSubjects || []).filter((s) => typeof s === "string" && s.trim());
 
-  student.enrolledSubjects.forEach((sub) => {
-    if (typeof sub === "string" && sub.trim()) {
+  if (rawEnrolled.length > 0) {
+    rawEnrolled.forEach((sub) => {
       subjectsSet.add(sub.trim());
+      // If student is enrolled in a GS Paper, also add subjects that belong to that GS Paper
+      if (Array.isArray(allClassNotes) && (sub.toLowerCase().includes("paper") || sub.toLowerCase().includes("general studies") || sub.toLowerCase().includes("gs"))) {
+        allClassNotes.forEach((cn) => {
+          if (isClassGradeMatching(cn.classGrade, student.classGrade)) {
+            const cnGS = cn.generalStudiesPaper || (cn as any).gs_paper || inferGSPaperFromSubject(cn.subject);
+            if (cnGS && isSubjectMatching(cnGS, sub) && cn.subject) {
+              subjectsSet.add(cn.subject.trim());
+            }
+          }
+        });
+      }
+    });
+  } else {
+    // If student has no explicitly listed subjects, derive all matching subjects from classNotes repository and student notes
+    if (Array.isArray(allClassNotes)) {
+      allClassNotes.forEach((cn) => {
+        if (cn.subject && cn.subject.trim() && isClassGradeMatching(cn.classGrade, student.classGrade)) {
+          subjectsSet.add(cn.subject.trim());
+        }
+      });
     }
-  });
+    if (student.notes) {
+      Object.keys(student.notes).forEach((subj) => {
+        if (subj && subj.trim()) {
+          subjectsSet.add(subj.trim());
+        }
+      });
+    }
+  }
 
   return Array.from(subjectsSet).sort((a, b) => a.localeCompare(b));
 }

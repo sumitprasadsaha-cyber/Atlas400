@@ -90,7 +90,7 @@ import {
 import { ChapterProgressData, ClassNote } from "../types";
 import { FileCheck } from "lucide-react";
 import { filterNotesForStudent, filterSubjectsForStudent } from "../utils/noteAccessHelper";
-import { filterClassNotesForStudent, getStudentSubjects, isSubjectMatching } from "../utils/classNoteHelper";
+import { filterClassNotesForStudent, getStudentSubjects, isSubjectMatching, inferGSPaperFromSubject } from "../utils/classNoteHelper";
 import StudentPracticeTestModal from "./StudentPracticeTestModal";
 import { getTopicPracticeTest, getStudentTestAttempts, getAllTestAttempts, fetchAllPracticeTests } from "../utils/assessmentParser";
 import { getScoreButtonStyles } from "../lib/practiceTestService";
@@ -1772,7 +1772,12 @@ export function StudentMyTab({
     if (!selectedSubject) return [] as ChapterNote[];
 
     const fromClassNotes: ChapterNote[] = studentClassNotes
-      .filter((n) => isSubjectMatching(n.subject, selectedSubject))
+      .filter((n) => {
+        if (isSubjectMatching(n.subject, selectedSubject)) return true;
+        const gs = n.generalStudiesPaper || (n as any).gs_paper || inferGSPaperFromSubject(n.subject);
+        if (gs && isSubjectMatching(gs, selectedSubject)) return true;
+        return false;
+      })
       .map((cn) => ({
         id: cn.id,
         classGrade: cn.classGrade,

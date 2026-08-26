@@ -21,10 +21,19 @@ apiApp.use((req, res, next) => {
   next();
 });
 
-// Enable raw binary upload parsing for storage uploads and JSON for API requests
-apiApp.use(express.raw({ type: "application/octet-stream", limit: "100mb" }));
-apiApp.use(express.json({ limit: "25mb" }));
-apiApp.use(express.urlencoded({ extended: true, limit: "25mb" }));
+// Enable raw binary upload parsing for storage uploads (PDFs, Images, Octet-stream, Multipart) and JSON/urlencoded for API requests
+apiApp.use(express.json({ limit: "50mb" }));
+apiApp.use(express.urlencoded({ extended: true, limit: "50mb" }));
+apiApp.use(
+  express.raw({
+    type: (req) => {
+      const ct = (req.headers["content-type"] || "").toLowerCase();
+      // Parse raw buffer for non-JSON requests (such as pdf, images, octet-stream, multipart, etc.)
+      return !ct.includes("application/json") && !ct.includes("application/x-www-form-urlencoded");
+    },
+    limit: "100mb",
+  })
+);
 
 const router = express.Router();
 
