@@ -198,7 +198,7 @@ export async function generateAIReport(
 
   const payload = buildStructuredPayload(students, filterContext);
 
-  const res = await fetch("/api/ai/report", {
+  const res = await fetch("/api/ai?action=report", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -226,7 +226,7 @@ export async function generateAIReport(
 }
 
 /**
- * Admin interactive AI Chat (/api/ai/chat)
+ * Admin interactive AI Chat (/api/ai?action=chat)
  */
 export async function askAIChat(
   query: string,
@@ -240,7 +240,7 @@ export async function askAIChat(
 
   const contextPayload = buildStructuredPayload(students);
 
-  const res = await fetch("/api/ai/chat", {
+  const res = await fetch("/api/ai?action=chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -262,7 +262,7 @@ export async function askAIChat(
 }
 
 /**
- * Student interactive AI Study Tutor (/api/ai/chat with student profile)
+ * Student interactive AI Study Tutor (/api/ai?action=chat with student profile)
  */
 export async function askStudentAIChat(params: {
   query: string;
@@ -278,7 +278,7 @@ export async function askStudentAIChat(params: {
     throw new Error("AI Study Assistant requires an active internet connection.");
   }
 
-  const res = await fetch("/api/ai/chat", {
+  const res = await fetch("/api/ai?action=chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -300,7 +300,7 @@ export async function askStudentAIChat(params: {
 }
 
 /**
- * AI Note Analysis & Metadata Extraction
+ * AI Note Analysis & Metadata Extraction (/api/ai?action=notes)
  */
 export async function analyzeNoteWithAI(params: {
   textSnippet: string;
@@ -308,7 +308,7 @@ export async function analyzeNoteWithAI(params: {
   suggestedSubject?: string;
   suggestedGrade?: string;
 }) {
-  const res = await fetch("/api/ai/notes/analyze", {
+  const res = await fetch("/api/ai?action=notes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -324,7 +324,7 @@ export async function analyzeNoteWithAI(params: {
 }
 
 /**
- * AI Practice Test Generation
+ * AI Practice Test Generation (/api/ai?action=practice-test)
  */
 export async function generatePracticeTestWithAI(params: {
   classGrade: string;
@@ -344,7 +344,7 @@ export async function generatePracticeTestWithAI(params: {
   questions: ParsedAssessmentQuestion[];
   formattedRawText: string;
 }> {
-  const res = await fetch("/api/ai/practice-test/generate", {
+  const res = await fetch("/api/ai?action=practice-test", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -360,7 +360,7 @@ export async function generatePracticeTestWithAI(params: {
 }
 
 /**
- * AI Homework Generation
+ * AI Homework Generation (/api/ai?action=homework)
  */
 export async function generateHomeworkWithAI(params: {
   classGrade: string;
@@ -371,7 +371,7 @@ export async function generateHomeworkWithAI(params: {
   learningObjectives?: string[];
   estimatedDurationMinutes?: number;
 }) {
-  const res = await fetch("/api/ai/homework/generate", {
+  const res = await fetch("/api/ai?action=homework", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -387,14 +387,14 @@ export async function generateHomeworkWithAI(params: {
 }
 
 /**
- * AI Deep Analytics
+ * AI Deep Analytics (/api/ai?action=analytics)
  */
 export async function generateAnalyticsWithAI(params: {
   scope: "student" | "class" | "institution";
   dataPayload: any;
   targetId?: string;
 }) {
-  const res = await fetch("/api/ai/analytics/insights", {
+  const res = await fetch("/api/ai?action=analytics", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -410,7 +410,7 @@ export async function generateAnalyticsWithAI(params: {
 }
 
 /**
- * AI Semantic Search
+ * AI Semantic Search (/api/ai?action=search)
  */
 export async function semanticSearchAI(params: {
   query: string;
@@ -418,7 +418,7 @@ export async function semanticSearchAI(params: {
   classFilter?: string;
   subjectFilter?: string;
 }) {
-  const res = await fetch("/api/ai/search", {
+  const res = await fetch("/api/ai?action=search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -434,10 +434,10 @@ export async function semanticSearchAI(params: {
 }
 
 /**
- * AI Usage & Cost Metrics
+ * AI Usage & Cost Metrics (/api/ai?action=metrics)
  */
 export async function getAIMetrics() {
-  const res = await fetch("/api/ai/metrics");
+  const res = await fetch("/api/ai?action=metrics");
   if (!res.ok) {
     throw new Error("Failed to load AI metrics.");
   }
@@ -446,10 +446,10 @@ export async function getAIMetrics() {
 }
 
 /**
- * AI User Quota
+ * AI User Quota (/api/ai?action=limits)
  */
 export async function getAIUserLimits(userId: string, role: string = "student") {
-  const res = await fetch(`/api/ai/limits?userId=${encodeURIComponent(userId)}&role=${encodeURIComponent(role)}`);
+  const res = await fetch(`/api/ai?action=limits&userId=${encodeURIComponent(userId)}&role=${encodeURIComponent(role)}`);
   if (!res.ok) {
     throw new Error("Failed to load AI quota limits.");
   }

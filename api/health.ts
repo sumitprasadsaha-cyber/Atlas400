@@ -1,0 +1,65 @@
+import { handleOptions, sendSuccess, sendError } from "./_lib/responses";
+import { getR2ServerConfig, isR2Configured, verifyR2ReadWrite } from "./_lib/r2";
+import { checkFirestoreHealth } from "./_lib/firestore";
+import { HealthStatusReport } from "./_shared/types";
+
+export const runtime = "nodejs";
+
+export default async function handler(req: any, res: any) {
+  if (handleOptions(req, res)) return;
+
+  try {
+    const r2Config = getR2ServerConfig();
+    const r2Configured = isR2Configured();
+    const isDeepCheck = req.query.deep === "true" || req.query.verify === "true";
+
+    let r2ReadWrite = false;
+    let r2Error: string | undefined;
+
+    if (isDeepCheck && r2Configured) {
+      try {
+        const rwResult = await verifyR2ReadWrite();
+        r2ReadWrite = rwResult.canRead && rwResult.canWrite;
+      } catch (err: any) {
+        r2Error = err.message;
+      }
+    }
+
+    const firestoreStatus = await checkFirestoreHealth();
+    const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
+
+    const report: HealthStatusReport = {
+      status: "healthy",
+      timestamp: new Date().toISOString(),
+      environment: {
+        nodeEnv: process.env.NODE_ENV || "development",
+        runtime: "nodejs",
+        isVercel: Boolean(process.env.VERCEL),
+      },
+      services: {
+        cloudflareR2: {
+          status: r2Configured ? "connected" : "fallback_local",
+          configured: r2Configured,
+          bucket: r2Config.bucket,
+          hasEndpoint: Boolean(r2Config.endpoint),
+          hasCredentials: Boolean(r2Config.accessKeyId && r2Config.secretAccessKey),
+          readWriteVerified: isDeepCheck ? r2ReadWrite : undefined,
+          error: r2Error,
+        },
+        firestore: {
+          status: firestoreStatus.status,
+          configured: firestoreStatus.configured,
+          projectId: firestoreStatus.projectId,
+        },
+        geminiAI: {
+          status: hasGeminiKey ? "configured" : "missing_key",
+          hasApiKey: hasGeminiKey,
+        },
+      },
+    };
+
+    return sendSuccess(res, report);
+  } catch (err: any) {
+    return sendError(res, err, "Health check failed.");
+  }
+}

@@ -1,0 +1,348 @@
+import { handleOptions, sendSuccess, sendError, setCorsHeaders } from "./_lib/responses";
+import { validateAction } from "./_lib/validation";
+import { sanitizeKey, getMimeType } from "./_lib/utils";
+import {
+  uploadObjectToR2,
+  getObjectFromR2,
+  generateR2SignedUrl,
+  deleteObjectFromR2,
+  deleteObjectsFromR2,
+  listObjectsFromR2,
+  headObjectFromR2,
+  getR2ServerConfig,
+} from "./_lib/r2";
+import { StorageAction } from "./_shared/types";
+
+export const runtime = "nodejs";
+
+const ALLOWED_ACTIONS = [
+  "upload",
+  "download",
+  "signed-url",
+  "delete",
+  "delete-multiple",
+  "replace",
+  "list",
+  "exists",
+  "verify",
+  "head",
+] as const;
+
+export default async function handler(req: any, res: any) {
+  if (handleOptions(req, res)) return;
+
+  try {
+    // Determine action from query, body, or URL
+    const actionParam = req.query.action || req.body?.action || (req.method === "GET" && req.query.key ? "download" : "upload");
+    const action = validateAction<StorageAction>(actionParam, ALLOWED_ACTIONS, "download");
+
+    switch (action) {
+      // 1. GENERATE SIGNED URL
+      case "signed-url": {
+        const { bucket, key, expiresIn, operation, contentType } = req.body || req.query;
+        if (!key) {
+          return res.status(400).json({ error: "Missing required 'key' parameter." });
+        }
+
+        const config = getR2ServerConfig();
+        const actualBucket = (bucket || config.bucket || "academy-connect-files").trim();
+        const cleanKey = sanitizeKey(key, actualBucket);
+
+        let headStatus = 200;
+        let headContentType = contentType || getMimeType(cleanKey);
+        let headContentLength = 0;
+        let exists = true;
+        let effectiveKey = cleanKey;
+
+        try {
+          const headCheck = await headObjectFromR2({ bucket: actualBucket, key: cleanKey });
+          exists = headCheck.exists;
+          headStatus = headCheck.exists ? 200 : 404;
+          if (headCheck.contentType) headContentType = headCheck.contentType;
+          if (headCheck.contentLength) headContentLength = headCheck.contentLength;
+          if (headCheck.resolvedKey) effectiveKey = headCheck.resolvedKey;
+        } catch (headErr: any) {
+          console.warn("[Storage API] Head verification warning:", headErr?.message || headErr);
+        }
+
+        const signedUrl = await generateR2SignedUrl({
+          bucket: actualBucket,
+          key: effectiveKey,
+          expiresIn: Number(expiresIn) || 3600,
+          operation: operation === "putObject" ? "putObject" : "getObject",
+          contentType: headContentType,
+        });
+
+        return sendSuccess(res, {
+          signedUrl,
+          exists,
+          status: headStatus,
+          contentType: headContentType,
+          contentLength: headContentLength,
+          bucket: actualBucket,
+          key: effectiveKey,
+        });
+      }
+
+      // 2. UPLOAD FILE
+      case "upload": {
+        const bucket = (req.query.bucket as string) || req.body?.bucket;
+        const key = (req.query.key as string) || req.body?.key;
+        let contentType = (req.query.mimeType as string) || req.headers["content-type"] || "application/octet-stream";
+
+        if (!key) {
+          return res.status(400).json({ error: "Missing required 'key' query parameter or body property." });
+        }
+
+        const config = getR2ServerConfig();
+        const cleanKey = sanitizeKey(key, bucket);
+
+        let buffer: Buffer;
+        if (Buffer.isBuffer(req.body)) {
+          const reqContentType = req.headers["content-type"] || "";
+          if (reqContentType.includes("application/json")) {
+            try {
+              const parsed = JSON.parse(req.body.toString("utf8"));
+              if (parsed.base64) {
+                buffer = Buffer.from(parsed.base64, "base64");
+                if (parsed.mimeType) contentType = parsed.mimeType;
+              } else {
+                buffer = req.body;
+              }
+            } catch {
+              buffer = req.body;
+            }
+          } else {
+            buffer = req.body;
+          }
+        } else if (req.body && typeof req.body === "object" && req.body.base64) {
+          buffer = Buffer.from(req.body.base64, "base64");
+          if (req.body.mimeType) contentType = req.body.mimeType;
+        } else if (typeof req.body === "string") {
+          buffer = Buffer.from(req.body, "utf-8");
+        } else {
+          return res.status(400).json({ error: "No upload body data received." });
+        }
+
+        if (!buffer || buffer.length === 0) {
+          return res.status(400).json({ error: "Upload buffer is empty." });
+        }
+
+        const result = await uploadObjectToR2({
+          bucket,
+          key: cleanKey,
+          body: buffer,
+          contentType,
+        });
+
+        const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(result.bucket)}&key=${encodeURIComponent(cleanKey)}`;
+        const publicUrl = config.publicUrl
+          ? `${config.publicUrl}/${cleanKey}`
+          : downloadUrl;
+
+        return sendSuccess(res, {
+          bucket: result.bucket,
+          key: result.key,
+          etag: result.etag,
+          url: downloadUrl,
+          publicUrl: publicUrl,
+          size: buffer.length,
+          mimeType: contentType,
+        });
+      }
+
+      // 3. DOWNLOAD / STREAM FILE
+      case "download": {
+        const bucket = (req.query.bucket as string) || req.body?.bucket;
+        const key = (req.query.key as string) || req.body?.key;
+
+        if (!key) {
+          return res.status(400).send("Missing required 'key' parameter.");
+        }
+
+        const config = getR2ServerConfig();
+        const actualBucket = bucket || config.bucket || "academy-connect-files";
+        const cleanKey = sanitizeKey(key, actualBucket);
+
+        // If HEAD request
+        if (req.method === "HEAD") {
+          const head = await headObjectFromR2({ bucket: actualBucket, key: cleanKey });
+          if (!head.exists) return res.status(404).end();
+
+          const contentType = (req.query.mimeType as string) || head.contentType || getMimeType(cleanKey);
+          setCorsHeaders(res);
+          res.setHeader("Content-Type", contentType);
+          res.setHeader("Accept-Ranges", "bytes");
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          if (head.etag) res.setHeader("ETag", head.etag);
+          if (head.contentLength) res.setHeader("Content-Length", head.contentLength);
+          return res.status(200).end();
+        }
+
+        const range = req.headers.range;
+        const obj = await getObjectFromR2({ bucket: actualBucket, key: cleanKey, range });
+
+        if (!obj.body) {
+          return res.status(404).send("File not found in storage.");
+        }
+
+        const contentType = (req.query.mimeType as string) || obj.contentType || getMimeType(cleanKey);
+        setCorsHeaders(res);
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Accept-Ranges", "bytes");
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+
+        if (obj.etag) res.setHeader("ETag", obj.etag);
+        if (obj.contentRange) {
+          res.status(206);
+          res.setHeader("Content-Range", obj.contentRange);
+        }
+        if (obj.contentLength) res.setHeader("Content-Length", obj.contentLength);
+
+        if (req.query.download === "true" || req.query.filename) {
+          const downloadFilename = (req.query.filename as string) || cleanKey.split("/").pop() || "download";
+          res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadFilename)}"`);
+        }
+
+        return obj.body.pipe(res);
+      }
+
+      // 4. CHECK OBJECT EXISTENCE (EXISTS / VERIFY / HEAD)
+      case "exists":
+      case "verify":
+      case "head": {
+        const bucket = (req.query.bucket as string) || req.body?.bucket;
+        const key = (req.query.key as string) || req.body?.key || req.body?.storageKey || req.body?.storagePath;
+
+        if (!key) {
+          return res.status(400).json({ exists: false, error: "Missing required 'key' parameter." });
+        }
+
+        const config = getR2ServerConfig();
+        const actualBucket = bucket || config.bucket || "academy-connect-files";
+        const cleanKey = sanitizeKey(key, actualBucket);
+        const head = await headObjectFromR2({ bucket: actualBucket, key: cleanKey });
+
+        return sendSuccess(res, {
+          exists: head.exists,
+          bucket: actualBucket,
+          key: cleanKey,
+          contentLength: head.contentLength,
+          contentType: head.contentType || getMimeType(cleanKey),
+          etag: head.etag,
+          lastModified: head.lastModified,
+        });
+      }
+
+      // 5. DELETE SINGLE OBJECT
+      case "delete": {
+        const bucket = req.body?.bucket || (req.query.bucket as string);
+        const key =
+          req.body?.key ||
+          req.body?.storagePath ||
+          req.body?.path ||
+          (req.query.key as string) ||
+          (req.query.storagePath as string) ||
+          (req.query.path as string);
+
+        if (!key) {
+          return res.status(400).json({ error: "Missing required 'key' parameter." });
+        }
+
+        const cleanKey = sanitizeKey(String(key), bucket);
+        const result = await deleteObjectFromR2({ bucket, key: cleanKey });
+        return sendSuccess(res, result);
+      }
+
+      // 6. DELETE MULTIPLE OBJECTS
+      case "delete-multiple": {
+        const bucket = req.body?.bucket || (req.query.bucket as string);
+        let keys = req.body?.keys || req.query?.keys;
+        if (typeof keys === "string") {
+          try {
+            keys = JSON.parse(keys);
+          } catch {
+            keys = keys.split(",").map((k: string) => k.trim());
+          }
+        }
+
+        if (!keys || !Array.isArray(keys) || keys.length === 0) {
+          return res.status(400).json({ error: "Missing or invalid 'keys' array parameter." });
+        }
+
+        const cleanKeys = keys.map((k) => sanitizeKey(k, bucket)).filter(Boolean);
+        const result = await deleteObjectsFromR2({ bucket, keys: cleanKeys });
+        return sendSuccess(res, result);
+      }
+
+      // 7. ATOMIC REPLACE
+      case "replace": {
+        const bucket = (req.query.bucket as string) || req.body?.bucket;
+        const oldKey = req.body?.oldKey || req.body?.oldStoragePath || (req.query.oldKey as string);
+        const newKey = req.body?.newKey || req.body?.newStoragePath || req.body?.key || (req.query.key as string);
+        const base64 = req.body?.base64;
+        const mimeType = req.body?.mimeType || (req.query.mimeType as string) || "application/octet-stream";
+
+        if (oldKey) {
+          try {
+            const cleanOldKey = sanitizeKey(oldKey, bucket);
+            await deleteObjectFromR2({ bucket, key: cleanOldKey });
+          } catch (delErr) {
+            console.warn(`[Storage API] Old object was not found or already deleted: ${oldKey}`, delErr);
+          }
+        }
+
+        if (newKey && base64) {
+          const cleanNewKey = sanitizeKey(newKey, bucket);
+          const buffer = Buffer.from(base64, "base64");
+          const uploadRes = await uploadObjectToR2({
+            bucket,
+            key: cleanNewKey,
+            body: buffer,
+            contentType: mimeType,
+          });
+
+          const config = getR2ServerConfig();
+          const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(uploadRes.bucket)}&key=${encodeURIComponent(cleanNewKey)}`;
+          const publicUrl = config.publicUrl
+            ? `${config.publicUrl}/${cleanNewKey}`
+            : downloadUrl;
+
+          return sendSuccess(res, {
+            bucket: uploadRes.bucket,
+            key: uploadRes.key,
+            etag: uploadRes.etag,
+            url: downloadUrl,
+            publicUrl,
+            size: buffer.length,
+            mimeType,
+            replaced: true,
+          });
+        }
+
+        return sendSuccess(res, {
+          oldKeyDeleted: Boolean(oldKey),
+          message: "Replace processed successfully.",
+        });
+      }
+
+      // 8. LIST OBJECTS
+      case "list": {
+        const { bucket, prefix, limit, continuationToken } = req.body || req.query;
+        const cleanPrefix = prefix ? sanitizeKey(prefix, bucket) : "";
+        const result = await listObjectsFromR2({
+          bucket,
+          prefix: cleanPrefix,
+          maxKeys: Number(limit) || 1000,
+          continuationToken,
+        });
+        return sendSuccess(res, result);
+      }
+
+      default:
+        return res.status(400).json({ error: `Unsupported storage action: ${action}` });
+    }
+  } catch (err: any) {
+    return sendError(res, err, "Storage operation failed.");
+  }
+}

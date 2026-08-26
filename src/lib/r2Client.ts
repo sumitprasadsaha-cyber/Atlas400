@@ -80,8 +80,8 @@ export function getR2PublicUrl(bucket: string, key: string): string {
     return `${base}/${cleanKey}`;
   }
 
-  // Fallback to internal API streaming URL
-  return `/api/r2/download?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`;
+  // Fallback to internal API streaming URL via consolidated storage API
+  return `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`;
 }
 
 export interface R2SignedUrlDetails {
@@ -110,7 +110,7 @@ export async function getR2SignedUrlDetails(params: {
   const baseUrl = getApiBaseUrl();
 
   try {
-    const response = await fetch(`${baseUrl}/api/r2/signed-url`, {
+    const response = await fetch(`${baseUrl}/api/storage?action=signed-url`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -141,7 +141,7 @@ export async function getR2SignedUrlDetails(params: {
         const errJson = await response.json();
         errText = errJson.error || errText;
       } catch {}
-      console.warn(`[R2Client] /api/r2/signed-url returned status ${response.status} (${errText}), using public/direct URL fallback.`);
+      console.warn(`[R2Client] /api/storage?action=signed-url returned status ${response.status} (${errText}), using public/direct URL fallback.`);
       return {
         signedUrl: getR2PublicUrl(bucket, cleanKey),
         exists: true,
@@ -152,7 +152,7 @@ export async function getR2SignedUrlDetails(params: {
       };
     }
   } catch (err: any) {
-    console.warn("[R2Client] Failed to fetch presigned URL from /api/r2/signed-url:", err);
+    console.warn("[R2Client] Failed to fetch presigned URL from /api/storage?action=signed-url:", err);
     return {
       signedUrl: getR2PublicUrl(bucket, cleanKey),
       exists: true,
@@ -214,9 +214,9 @@ export async function uploadToR2(params: {
 
   const errors: string[] = [];
 
-  // Step 1: Upload directly via Same-Origin Backend API Proxy (/api/r2/upload)
+  // Step 1: Upload directly via Same-Origin Backend API Proxy (/api/storage?action=upload)
   try {
-    const uploadApiUrl = `${baseUrl}/api/r2/upload?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}&mimeType=${encodeURIComponent(mimeType)}`;
+    const uploadApiUrl = `${baseUrl}/api/storage?action=upload&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}&mimeType=${encodeURIComponent(mimeType)}`;
 
     if (typeof XMLHttpRequest !== "undefined") {
       const proxyResult = await new Promise<R2UploadResult>((resolve, reject) => {
@@ -330,7 +330,7 @@ export async function uploadToR2(params: {
     }
 
     if (base64Data) {
-      const res = await fetch(`${baseUrl}/api/r2/upload?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}&mimeType=${encodeURIComponent(mimeType)}`, {
+      const res = await fetch(`${baseUrl}/api/storage?action=upload&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}&mimeType=${encodeURIComponent(mimeType)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -365,7 +365,7 @@ export async function uploadToR2(params: {
   // Step 3: Presigned URL Fallback
   let presignedPutUrl: string | null = null;
   try {
-    const presignRes = await fetch(`${baseUrl}/api/r2/signed-url`, {
+    const presignRes = await fetch(`${baseUrl}/api/storage?action=signed-url`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -447,9 +447,9 @@ export async function downloadFromR2(params: {
   const bucket = getR2BucketName(params.bucket);
   const cleanKey = params.key.replace(/^\/+/, "");
 
-  // 1. Same-Origin /api/r2/download proxy endpoint (fast streaming, 0 CORS issues)
+  // 1. Same-Origin /api/storage?action=download proxy endpoint (fast streaming, 0 CORS issues)
   const baseUrl = getApiBaseUrl();
-  const proxyUrl = `${baseUrl}/api/r2/download?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`;
+  const proxyUrl = `${baseUrl}/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`;
   try {
     const proxyRes = await fetch(proxyUrl);
     if (proxyRes.ok) {
@@ -493,7 +493,7 @@ export async function deleteFromR2(params: {
   const cleanKey = params.key.replace(/^\/+/, "");
   const baseUrl = getApiBaseUrl();
 
-  const response = await fetch(`${baseUrl}/api/r2/delete`, {
+  const response = await fetch(`${baseUrl}/api/storage?action=delete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ bucket, key: cleanKey }),
@@ -528,7 +528,7 @@ export async function deleteMultipleFromR2(params: {
     return { success: true, deleted: [] };
   }
 
-  const response = await fetch(`${baseUrl}/api/r2/delete-multiple`, {
+  const response = await fetch(`${baseUrl}/api/storage?action=delete-multiple`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ bucket, keys: cleanKeys }),
@@ -568,7 +568,7 @@ export async function verifyR2ObjectExists(params: {
 
   try {
     const res = await fetch(
-      `${baseUrl}/api/r2/verify?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`
+      `${baseUrl}/api/storage?action=exists&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`
     );
     if (res.ok) {
       const data = await res.json();
@@ -599,7 +599,7 @@ export async function listFromR2(params: {
   const cleanPrefix = (params.prefix || "").replace(/^\/+/, "");
   const baseUrl = getApiBaseUrl();
 
-  const response = await fetch(`${baseUrl}/api/r2/list`, {
+  const response = await fetch(`${baseUrl}/api/storage?action=list`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
