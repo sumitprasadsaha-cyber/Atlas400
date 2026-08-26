@@ -273,24 +273,22 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
   console.log("signedUrl:", absoluteUrl);
   console.log("================================================");
 
-  // STEP 10: Accurate error handling based on backend validation response
+  // STEP 10: Accurate error handling and diagnostic logging
   if (urlDetails) {
     if (urlDetails.status === 404 && urlDetails.exists === false) {
-      console.error("=== [STEP 10: R2 OBJECT NOT FOUND (404)] ===");
-      console.error("Requested key:", storageKey || exactKey);
-      console.error("Bucket:", bucket);
-      console.error("Exact key sent to R2:", exactKey);
-      console.error("Firestore document ID:", noteId);
-      console.error("HTTP status:", 404);
-      console.error("============================================");
-
-      alert("This note file could not be found in Cloudflare Storage.\nPlease contact the administrator.");
-      throw new Error("This note file could not be found in Cloudflare Storage. Please contact the administrator.");
+      console.warn("=== [STEP 10: R2 OBJECT HEAD WARNING (404)] ===", {
+        requestedKey: storageKey || exactKey,
+        bucket,
+        exactKey,
+        noteId,
+        signedUrl: absoluteUrl,
+      });
+      // Do not block execution with an alert dialog.
+      // Hand off to browser so any public domain, signed URL, or proxy stream can open natively.
     }
 
     if (urlDetails.status === 403) {
-      alert("Access Forbidden (403): Unable to access note.");
-      throw new Error("Access Forbidden (403): Unable to access note.");
+      console.warn("[NotePipeline] Access Warning (403):", urlDetails.error);
     }
 
     if (urlDetails.error && urlDetails.status >= 500) {

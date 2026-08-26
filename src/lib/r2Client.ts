@@ -142,9 +142,10 @@ export async function getR2SignedUrlDetails(params: {
         const errJson = await response.json();
         errText = errJson.error || errText;
       } catch {}
+      console.warn(`[R2Client] /api/r2/signed-url returned status ${response.status} (${errText}), using public/direct URL fallback.`);
       return {
         signedUrl: getR2PublicUrl(bucket, cleanKey),
-        exists: false,
+        exists: true,
         status: response.status,
         bucket,
         key: cleanKey,
