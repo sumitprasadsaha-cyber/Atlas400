@@ -488,6 +488,44 @@ export async function deleteMultipleFromR2(params: {
 }
 
 /**
+ * Checks metadata / existence of an object in Cloudflare R2 bucket or server storage.
+ */
+export async function verifyR2ObjectExists(params: {
+  bucket?: string;
+  key: string;
+}): Promise<{
+  exists: boolean;
+  bucket: string;
+  key: string;
+  size?: number;
+  mimeType?: string;
+}> {
+  const bucket = getR2BucketName(params.bucket);
+  const cleanKey = params.key.replace(/^\/+/, "");
+  const baseUrl = getApiBaseUrl();
+
+  try {
+    const res = await fetch(
+      `${baseUrl}/api/r2/verify?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        exists: Boolean(data.exists),
+        bucket: data.bucket || bucket,
+        key: data.key || cleanKey,
+        size: data.contentLength,
+        mimeType: data.contentType,
+      };
+    }
+  } catch (err) {
+    console.warn("[R2Client] verifyR2ObjectExists probe failed:", err);
+  }
+
+  return { exists: false, bucket, key: cleanKey };
+}
+
+/**
  * Lists objects in Cloudflare R2 bucket matching a prefix.
  */
 export async function listFromR2(params: {

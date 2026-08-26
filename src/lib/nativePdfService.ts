@@ -243,6 +243,7 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
 
         // Required Debug logs on HTTP 404
         console.error("Saved storage key:", exactKey || storageKey);
+        console.error("Firestore document ID:", noteId);
         console.error("Requested URL:", absoluteUrl);
         console.error("Bucket:", bucket);
         console.error("HTTP Status:", 404);

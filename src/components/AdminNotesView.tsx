@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { ClassNote, Student } from "../types";
 import { uploadFileToR2, deleteFileFromStorage } from "../lib/storageService";
+import { verifyR2ObjectExists } from "../lib/r2Client";
 import { saveClassNoteDoc, deleteClassNoteDoc } from "../lib/firestoreService";
 import { groupClassNotesHierarchy, normalizeClassGrade, isClassGradeMatching, isSubjectMatching, generateUPSCStoragePath, inferGSPaperFromSubject } from "../utils/classNoteHelper";
 import { getFormattedTopicLabel, isFileNameRedundant } from "../utils/chapterNotesHelper";
@@ -511,26 +512,14 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       let uploadPath = "";
       let renamedFileName = pdfFile.name;
 
-      if (isUPSCClass) {
-        const upscPathInfo = generateUPSCStoragePath(
-          generalStudiesPaper.trim(),
-          finalSubject,
-          Number(chapterNo),
-          chapterTitle.trim(),
-          cleanTopicNo,
-          cleanTopicName,
-          pdfFile.name,
-          fileExtension
-        );
-        uploadPath = upscPathInfo.storagePath;
-        renamedFileName = upscPathInfo.fileName;
-      } else {
-        if (cleanPartLabel) {
-          const hasExtension = cleanPartLabel.toLowerCase().endsWith(`.${fileExtension.toLowerCase()}`);
-          renamedFileName = hasExtension ? cleanPartLabel : `${cleanPartLabel}.${fileExtension}`;
-        }
-        uploadPath = `class_notes/${normalizeClassGrade(finalClass).replace(/\s+/g, "_")}/${finalSubject.replace(/\s+/g, "_")}/${Date.now()}_${renamedFileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      if (cleanPartLabel) {
+        const hasExtension = cleanPartLabel.toLowerCase().endsWith(`.${fileExtension.toLowerCase()}`);
+        renamedFileName = hasExtension ? cleanPartLabel : `${cleanPartLabel}.${fileExtension}`;
       }
+
+      // Generate a clean, flat storage path avoiding brittle folder hierarchy nesting
+      const cleanSafeName = renamedFileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+      uploadPath = `notes/${Date.now()}_${cleanSafeName}`;
 
       console.log(`[UploadPipeline] [Step 1] Initiating upload to Cloudflare R2... Bucket: academy-connect-files, Path: ${uploadPath}`);
       const uploadRes = await uploadFileToR2(
@@ -546,12 +535,31 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       );
       console.log(`[UploadPipeline] [Step 2] Upload completed. Response received:`, uploadRes);
 
+      // Verify the object exists in Cloudflare Storage / R2
+      const exactKey = uploadRes.storageKey || uploadRes.storagePath;
+      const verifyCheck = await verifyR2ObjectExists({
+        bucket: uploadRes.bucket,
+        key: exactKey,
+      });
+
       const mime = pdfFile.type || (isImg ? "image/jpeg" : "application/pdf");
       const fType: "pdf" | "image" = isImg ? "image" : "pdf";
       const nowIso = new Date().toISOString();
+      const noteDocId = `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+      // Detailed Upload Audit Log as required:
+      console.log("=== [UPLOAD PIPELINE AUDIT] ===");
+      console.log("bucket name:", uploadRes.bucket);
+      console.log("object key:", exactKey);
+      console.log("filename:", renamedFileName);
+      console.log("MIME type:", mime);
+      console.log("public URL:", uploadRes.downloadUrl);
+      console.log("Firestore document ID:", noteDocId);
+      console.log("Verified in R2 / Storage:", verifyCheck.exists);
+      console.log("================================");
 
       const newNote: ClassNote = {
-        id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        id: noteDocId,
         classGrade: normalizeClassGrade(finalClass),
         subject: finalSubject,
         chapterNo: Number(chapterNo),
@@ -571,10 +579,10 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
         pdfFileName: renamedFileName,
         fileName: renamedFileName,
         filename: renamedFileName,
-        storagePath: uploadRes.storagePath,
-        storage_path: uploadRes.storagePath,
-        storageKey: uploadRes.storagePath,
-        objectKey: uploadRes.storagePath,
+        storagePath: exactKey,
+        storage_path: exactKey,
+        storageKey: exactKey,
+        objectKey: exactKey,
         bucket: uploadRes.bucket,
         fileType: fType,
         mimeType: mime,
@@ -840,45 +848,14 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       let uploadPath = "";
       let renamedFileName = replaceFile.name;
 
-      if (isUPSC) {
-        // UPSC HIERARCHY: GS Paper -> Subject -> Module -> Topic (NO Chapter / Chapter Number)
-        const gsPaper = replaceNote.generalStudiesPaper || (replaceNote as any).gs_paper || inferGSPaperFromSubject(replaceNote.subject) || "General Studies Paper I";
-        const subject = replaceNote.subject.trim();
-        const moduleNo = (replaceNote as any).module_number ?? (replaceNote as any).moduleNo ?? replaceNote.chapterNo ?? 1;
-        const moduleName = (replaceNote as any).module_name || (replaceNote as any).moduleName || replaceNote.chapterName || `Module ${moduleNo}`;
-        const topicNo = (replaceNote as any).topic_number ?? replaceNote.topicNo;
-        const topicName = (replaceNote as any).topic_name || replaceNote.topicName || replaceNote.partLabel;
-
-        console.log(`[ReplacePipeline] UPSC Hierarchy resolved:`, {
-          gsPaper,
-          subject,
-          moduleNo,
-          moduleName,
-          topicNo,
-          topicName,
-        });
-
-        const upscPathInfo = generateUPSCStoragePath(
-          gsPaper,
-          subject,
-          moduleNo,
-          moduleName,
-          topicNo,
-          topicName,
-          replaceFile.name,
-          fileExtension
-        );
-        uploadPath = upscPathInfo.storagePath;
-        renamedFileName = upscPathInfo.fileName;
-      } else {
-        // Standard class hierarchy: Class -> Subject -> Chapter -> Topic
-        const cleanPartLabel = (replaceNote.partLabel || "").trim();
-        if (cleanPartLabel) {
-          const hasExtension = cleanPartLabel.toLowerCase().endsWith(`.${fileExtension.toLowerCase()}`);
-          renamedFileName = hasExtension ? cleanPartLabel : `${cleanPartLabel}.${fileExtension}`;
-        }
-        uploadPath = `class_notes/${normalizeClassGrade(replaceNote.classGrade).replace(/\s+/g, "_")}/${replaceNote.subject.replace(/\s+/g, "_")}/${Date.now()}_${renamedFileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const cleanPartLabel = (replaceNote.partLabel || "").trim();
+      if (cleanPartLabel) {
+        const hasExtension = cleanPartLabel.toLowerCase().endsWith(`.${fileExtension.toLowerCase()}`);
+        renamedFileName = hasExtension ? cleanPartLabel : `${cleanPartLabel}.${fileExtension}`;
       }
+      
+      const cleanSafeName = renamedFileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+      uploadPath = `notes/${Date.now()}_${cleanSafeName}`;
 
       console.log(`[ReplacePipeline] Target storage upload path: "${uploadPath}" (filename: "${renamedFileName}")`);
 
@@ -896,7 +873,7 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
 
       // 8. Uploading new file
       console.log(`[ReplacePipeline] 8. Uploading new file to Cloudflare R2 Storage: "${uploadPath}"`);
-      let uploadRes: { storagePath: string; downloadUrl: string; bucket: string };
+      let uploadRes: { storagePath: string; downloadUrl: string; bucket: string; storageKey?: string };
       try {
         uploadRes = await uploadFileToR2(
           bucket,
@@ -907,13 +884,27 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
           (percent) => setUploadProgress(percent)
         );
       } catch (uploadErr: any) {
-        const uploadDetail = uploadErr?.message || "Supabase Storage upload error";
+        const uploadDetail = uploadErr?.message || "Storage upload error";
         console.error(`[ReplacePipeline] Storage upload failed:`, uploadErr);
         throw new Error(`Storage upload failed: ${uploadDetail}`);
       }
 
-      // 9. Upload complete
-      console.log(`[ReplacePipeline] 9. Upload complete:`, uploadRes);
+      // 9. Verify and Audit
+      const exactKey = uploadRes.storageKey || uploadRes.storagePath;
+      const verifyCheck = await verifyR2ObjectExists({
+        bucket: uploadRes.bucket,
+        key: exactKey,
+      });
+
+      console.log("=== [REPLACE PIPELINE AUDIT] ===");
+      console.log("bucket name:", uploadRes.bucket);
+      console.log("object key:", exactKey);
+      console.log("filename:", renamedFileName);
+      console.log("MIME type:", replaceFile.type || (isImg ? "image/jpeg" : "application/pdf"));
+      console.log("public URL:", uploadRes.downloadUrl);
+      console.log("Firestore document ID:", noteId);
+      console.log("Verified in R2 / Storage:", verifyCheck.exists);
+      console.log("================================");
 
       // 10. Updating database record
       console.log(`[ReplacePipeline] 10. Updating database record for note "${noteId}"`);
@@ -928,10 +919,10 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
         pdfFileName: renamedFileName,
         fileName: renamedFileName,
         filename: renamedFileName,
-        storagePath: uploadRes.storagePath,
-        storage_path: uploadRes.storagePath,
-        storageKey: uploadRes.storagePath,
-        objectKey: uploadRes.storagePath,
+        storagePath: exactKey,
+        storage_path: exactKey,
+        storageKey: exactKey,
+        objectKey: exactKey,
         bucket: uploadRes.bucket,
         fileType: fType,
         fileSize: replaceFile.size,

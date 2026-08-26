@@ -281,6 +281,45 @@ app.post("/api/r2/upload", async (req, res) => {
 });
 
 // 4. Download / Stream File from R2
+app.head("/api/r2/download", async (req, res) => {
+  try {
+    const bucket = req.query.bucket as string | undefined;
+    const key = req.query.key as string | undefined;
+
+    if (!key) {
+      return res.status(400).end();
+    }
+
+    const cleanKey = key.replace(/^\/+/, "");
+    const head = await headObjectFromR2({ bucket, key: cleanKey });
+
+    if (!head.exists) {
+      return res.status(404).end();
+    }
+
+    let contentType = (req.query.mimeType as string) || head.contentType || "application/octet-stream";
+    if (contentType === "application/octet-stream" || !contentType) {
+      if (cleanKey.toLowerCase().endsWith(".pdf")) contentType = "application/pdf";
+      else if (cleanKey.toLowerCase().endsWith(".png")) contentType = "image/png";
+      else if (cleanKey.toLowerCase().endsWith(".jpg") || cleanKey.toLowerCase().endsWith(".jpeg")) contentType = "image/jpeg";
+      else if (cleanKey.toLowerCase().endsWith(".webp")) contentType = "image/webp";
+      else if (cleanKey.toLowerCase().endsWith(".gif")) contentType = "image/gif";
+      else if (cleanKey.toLowerCase().endsWith(".svg")) contentType = "image/svg+xml";
+      else if (cleanKey.toLowerCase().endsWith(".json")) contentType = "application/json";
+    }
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    if (head.etag) res.setHeader("ETag", head.etag);
+    if (head.contentLength) res.setHeader("Content-Length", head.contentLength);
+
+    return res.status(200).end();
+  } catch (err: any) {
+    return res.status(404).end();
+  }
+});
+
 app.get("/api/r2/download", async (req, res) => {
   try {
     const bucket = req.query.bucket as string | undefined;
@@ -344,6 +383,36 @@ app.get("/api/r2/download", async (req, res) => {
       return res.status(404).send("File not found in Cloudflare R2.");
     }
     return res.status(500).send(`Cloudflare R2 Download Error: ${err.message || err}`);
+  }
+});
+
+// 4b. Verify Object Existence in R2 / Storage
+app.all("/api/r2/verify", async (req, res) => {
+  try {
+    const bucket = (req.query.bucket as string) || req.body?.bucket;
+    const key = (req.query.key as string) || req.body?.key || req.body?.storageKey || req.body?.storagePath;
+
+    if (!key) {
+      return res.status(400).json({ exists: false, error: "Missing required 'key' parameter." });
+    }
+
+    const cleanKey = key.replace(/^\/+/, "");
+    const head = await headObjectFromR2({ bucket, key: cleanKey });
+
+    return res.json({
+      exists: head.exists,
+      bucket: bucket || getR2ServerConfig().bucket,
+      key: cleanKey,
+      contentLength: head.contentLength,
+      contentType: head.contentType,
+      etag: head.etag,
+      lastModified: head.lastModified,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      exists: false,
+      error: err.message || "Verification failed",
+    });
   }
 });
 
