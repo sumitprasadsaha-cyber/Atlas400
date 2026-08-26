@@ -199,9 +199,6 @@ export async function fetchStudentTestAttempts(
   return cleanRemote;
 }
 
-// Alias for backward compatibility
-export const fetchStudentTestAttemptsFromSupabase = fetchStudentTestAttempts;
-
 /**
  * Saves or updates a practice test attempt in Cloudflare R2 and Firestore.
  * Prevents duplicates and ensures score synchronization across all devices.
@@ -300,9 +297,6 @@ export async function savePracticeTestAttempt(
 
   return attempt;
 }
-
-// Alias for backward compatibility
-export const savePracticeTestAttemptToSupabase = savePracticeTestAttempt;
 
 /**
  * Merges new attempts into in-memory array and local storage cache
@@ -747,9 +741,7 @@ export function subscribeToStudentTestScores(
 
 export default {
   fetchStudentTestAttempts,
-  fetchStudentTestAttemptsFromSupabase,
   savePracticeTestAttempt,
-  savePracticeTestAttemptToSupabase,
   getCachedAttemptsFromMemory,
   deduplicateAttempts,
   loadStudentTestScores,

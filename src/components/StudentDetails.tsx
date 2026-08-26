@@ -678,10 +678,10 @@ export default function StudentDetails({
       }
     }
 
-    // Automatically upload the generated report to Supabase Storage and store metadata in Firestore
+    // Automatically upload the generated report to Storage and store metadata in Firestore
     try {
       const blob = doc.output("blob");
-      console.log(`[StudentDetails] Uploading generated progress report to Supabase Storage: ${fileName}`);
+      console.log(`[StudentDetails] Uploading generated progress report to Storage: ${fileName}`);
       
       (async () => {
         try {
@@ -708,7 +708,7 @@ export default function StudentDetails({
           await saveStudentDoc(updatedStudent);
           console.log("[StudentDetails] Successfully uploaded report and saved metadata to Firestore.");
         } catch (uploadError) {
-          console.error("[StudentDetails] Failed to upload report to Supabase in the background:", uploadError);
+          console.error("[StudentDetails] Failed to upload report to Storage in the background:", uploadError);
         }
       })();
     } catch (blobError) {

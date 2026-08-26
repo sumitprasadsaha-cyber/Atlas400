@@ -132,7 +132,7 @@ export default function StudentPracticeTestModal({
     }
   }, [testStage, currentQuestionIdx]);
 
-  // Fetch fresh questions and student score directly from Supabase when modal opens
+  // Fetch fresh questions and student score when modal opens
   useEffect(() => {
     if (!isOpen) return;
 
@@ -141,7 +141,7 @@ export default function StudentPracticeTestModal({
     setFetchError(null);
     setQuestions([]);
 
-    // Run simultaneous parallel fetch directly from Supabase
+    // Run simultaneous parallel fetch
     const loadSimultaneously = async () => {
       try {
         const qListPromise = fetchQuestions(classGrade, subject, chapterNo, topicName, testType, { publishedOnly: true });

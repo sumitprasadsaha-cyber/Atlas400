@@ -59,7 +59,6 @@ export function getR2BucketName(customBucket?: string): string {
   const envBucket =
     getRuntimeEnv("R2_BUCKET") ||
     getRuntimeEnv("VITE_R2_BUCKET") ||
-    getRuntimeEnv("VITE_SUPABASE_BUCKET") ||
     "academy-connect-files";
 
   return envBucket.trim().replace(/^\/+|\/+$/g, "");

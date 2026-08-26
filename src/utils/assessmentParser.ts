@@ -618,7 +618,7 @@ import {
   saveTopicPracticeTest as saveServiceTopicTest,
   deleteTopicPracticeTest as deleteServiceTopicTest,
   getFullChapterQuestionsSync as getFullChapterQuestions,
-  fetchAllPracticeTestsFromSupabase
+  fetchAllPracticeTests
 } from "../lib/practiceTestService";
 
 export { 
@@ -627,7 +627,7 @@ export {
   getTopicPracticeTestSync,
   getTopicPracticeTestAsync,
   getFullChapterQuestions, 
-  fetchAllPracticeTestsFromSupabase 
+  fetchAllPracticeTests
 };
 
 export function saveTopicPracticeTest(test: TopicPracticeTest): void {
@@ -672,8 +672,7 @@ import {
   saveLocalTestAttemptsCache
 } from "../lib/firestoreService";
 import {
-  savePracticeTestAttemptToSupabase,
-  fetchStudentTestAttemptsFromSupabase,
+  savePracticeTestAttempt,
   fetchStudentTestAttempts,
   getCachedAttemptsFromMemory,
   mergeAttemptsIntoMemoryAndCache,
@@ -682,7 +681,7 @@ import {
   fetchTestAttemptsFromR2Storage
 } from "../lib/testScorePersistence";
 
-export { subscribeToTestAttempts, fetchStudentTestAttemptsFromSupabase, fetchStudentTestAttempts };
+export { subscribeToTestAttempts, fetchStudentTestAttempts };
 
 if (typeof window !== "undefined") {
   (async () => {
@@ -721,7 +720,7 @@ export function saveTestAttempt(attempt: TestAttemptRecord): void {
   }
 
   // Continue asynchronous backend sync in the background
-  savePracticeTestAttemptToSupabase(attempt).catch((err) => {
+  savePracticeTestAttempt(attempt).catch((err) => {
     console.warn("[AssessmentParser] saveTestAttempt error:", err);
   });
 }
@@ -741,7 +740,7 @@ export function getStudentTestAttempts(
   const normTopic = (topicName || "").toLowerCase().trim().replace(/[^a-z0-9]/g, "");
 
   if (studentIdentifier && all.length === 0) {
-    fetchStudentTestAttemptsFromSupabase(studentIdentifier).catch(() => {});
+    fetchStudentTestAttempts(studentIdentifier).catch(() => {});
   }
 
   return all.filter((a) => {

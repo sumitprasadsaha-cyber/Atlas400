@@ -1,15 +1,17 @@
 import { downloadFileFromStorage, getResolvedViewUrl, getBucketName } from "./storageService";
 
 /**
- * Downloads a file from Supabase Storage directly to the user's device.
+ * Downloads a file from storage directly to the user's device.
  */
-export async function downloadFileFromSupabase(
+export async function downloadFile(
   bucket: string,
   storagePath: string,
   fileName: string
 ): Promise<void> {
   return downloadFileFromStorage(bucket, storagePath, fileName);
 }
+
+export { downloadFileFromStorage };
 
 /**
  * Obtains a fresh signed URL for a given storage path.

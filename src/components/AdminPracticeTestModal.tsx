@@ -38,7 +38,7 @@ import {
   deleteTopicPracticeTest,
   deleteTopicPracticeTestDirect,
   deleteAllPracticeTestsFromDatabase,
-  fetchAllPracticeTestsFromSupabase,
+  fetchAllPracticeTests,
   buildTopicTestId
 } from "../lib/practiceTestService";
 import { uploadQuestionImageToStorage } from "../lib/storageService";
@@ -201,7 +201,7 @@ export default function AdminPracticeTestModal({
     onPracticeTestChanged,
   });
 
-  // Load existing saved test from Supabase on open
+  // Load existing saved test on open
   useEffect(() => {
     if (!isOpen) return;
 
@@ -222,7 +222,7 @@ export default function AdminPracticeTestModal({
         }
       } catch (err: any) {
         if (isMounted) {
-          console.warn("[AdminPracticeTestModal] Error loading test from Supabase:", err);
+          console.warn("[AdminPracticeTestModal] Error loading test:", err);
         }
       } finally {
         if (isMounted) setIsLoading(false);
@@ -425,7 +425,7 @@ export default function AdminPracticeTestModal({
       );
 
       if (res.success) {
-        // Fetch fresh questions directly from Supabase for this Practice Test (Part C - Refresh)
+        // Fetch fresh questions for this Practice Test (Part C - Refresh)
         const fetched = await getTopicPracticeTest(classGrade, subject, chapterNo, topicName, { forceFresh: true });
         const freshTest = fetched || {
           id: buildTopicTestId(classGrade, subject, chapterNo, topicName),
@@ -1088,7 +1088,7 @@ export default function AdminPracticeTestModal({
                           <label className="text-xs font-bold text-blue-600 dark:text-blue-400 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/80 hover:dark:bg-blue-900 px-3 py-1.5 rounded-lg border border-blue-200 dark:border-blue-800 cursor-pointer flex items-center gap-1.5 transition-all shadow-2xs">
                             {uploadingImageQId === q.id ? (
                               <>
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading to Supabase...
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading...
                               </>
                             ) : (
                               <>

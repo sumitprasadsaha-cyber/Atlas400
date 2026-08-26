@@ -961,7 +961,7 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
         await saveClassNoteDoc(updatedNote);
         console.log(`[ReplacePipeline] Database record updated successfully for note "${noteId}"`);
       } catch (dbErr: any) {
-        const dbDetail = dbErr?.message || "Supabase DB update error";
+        const dbDetail = dbErr?.message || "Database update error";
         console.error(`[ReplacePipeline] Database update failed:`, dbErr);
         throw new Error(`Database update failed: ${dbDetail}`);
       }
@@ -1011,7 +1011,7 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       const bucket = deletingNote.bucket || "academy-connect-files";
       const rawStoragePath = deletingNote.storagePath || deletingNote.pdfUrl || "";
 
-      // 1. Delete actual uploaded file from Supabase Storage using its stored storage path/key
+      // 1. Delete actual uploaded file from Storage using its stored storage path/key
       if (rawStoragePath) {
         try {
           await deleteFileFromStorage(rawStoragePath, bucket);

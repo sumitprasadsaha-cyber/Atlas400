@@ -1,8 +1,8 @@
 /**
  * Unified Cloudflare R2 Storage Service
  * 
- * Production-ready storage service replacing Supabase Storage with Cloudflare R2.
- * Preserves all existing method signatures, path conventions, UPSC hierarchy structures,
+ * Production-ready storage service with Cloudflare R2.
+ * Preserves all method signatures, path conventions, UPSC hierarchy structures,
  * progress callbacks, and viewer resolution logic.
  */
 
@@ -92,9 +92,6 @@ export interface R2UploadMetadata {
   downloadUrl: string;
 }
 
-// Backward compatibility alias
-export type SupabaseUploadMetadata = R2UploadMetadata;
-
 /**
  * Returns the configured Cloudflare R2 bucket name.
  */
@@ -170,7 +167,7 @@ export function sanitizeStoragePath(rawPath: string | null | undefined, bucketNa
     }
   }
 
-  // 4. Extract path from full HTTPS URLs (e.g. public R2 domain or Supabase legacy URL)
+  // 4. Extract path from full HTTPS URLs (e.g. public R2 domain or proxy URL)
   if (cleaned.startsWith("http://") || cleaned.startsWith("https://")) {
     try {
       const urlObj = new URL(cleaned);
@@ -180,14 +177,14 @@ export function sanitizeStoragePath(rawPath: string | null | undefined, bucketNa
         return sanitizeStoragePath(urlObj.searchParams.get("key")!, bucketName);
       }
 
-      const supabaseMatch = pathname.match(
+      const storageObjMatch = pathname.match(
         /\/storage\/v1\/object\/(?:public|sign|authenticated)\/[^\/]+\/(.+)/
       );
-      if (supabaseMatch && supabaseMatch[1]) {
+      if (storageObjMatch && storageObjMatch[1]) {
         try {
-          cleaned = decodeURIComponent(supabaseMatch[1]);
+          cleaned = decodeURIComponent(storageObjMatch[1]);
         } catch {
-          cleaned = supabaseMatch[1];
+          cleaned = storageObjMatch[1];
         }
       } else {
         const pathSegments = pathname.replace(/^\/+/, "").split("/");
@@ -365,9 +362,6 @@ export async function uploadFileToR2(
   console.log(`[StorageService] Cloudflare R2 upload complete. Metadata:`, metadata);
   return metadata;
 }
-
-// Backward compatible alias
-export const uploadFileToSupabase = uploadFileToR2;
 
 /**
  * Uploads a PDF note to Cloudflare R2.

@@ -201,7 +201,7 @@ export function initPracticeTestsRealtimeSync(): void {
       const bc = new BroadcastChannel("tuition_practice_tests_channel");
       bc.onmessage = async (event) => {
         if (event.data?.type === "PRACTICE_TESTS_UPDATED") {
-          await fetchAllPracticeTestsFromSupabase();
+          await fetchAllPracticeTests();
           if (typeof window !== "undefined") {
             window.dispatchEvent(new CustomEvent("practice-tests-updated"));
           }
@@ -225,7 +225,7 @@ export function initPracticeTestsRealtimeSync(): void {
             const ts = Number(data?.timestamp) || 0;
             if (ts && ts > lastProcessedTs) {
               lastProcessedTs = ts;
-              await fetchAllPracticeTestsFromSupabase();
+              await fetchAllPracticeTests();
               if (typeof window !== "undefined") {
                 window.dispatchEvent(new CustomEvent("practice-tests-updated"));
               }
@@ -391,7 +391,7 @@ export function getScoreButtonStyles(isAttempted: boolean, percentage?: number |
   }
 }
 
-export async function syncTestBankToSupabaseStorage(bank: Record<string, TopicPracticeTest>): Promise<boolean> {
+export async function syncTestBankToStorage(bank: Record<string, TopicPracticeTest>): Promise<boolean> {
   try {
     const jsonString = JSON.stringify(bank, null, 2);
     const blob = new Blob([jsonString], { type: "application/json" });
@@ -408,7 +408,7 @@ export async function syncTestBankToSupabaseStorage(bank: Record<string, TopicPr
   }
 }
 
-export async function fetchTestBankFromSupabaseStorage(): Promise<Record<string, TopicPracticeTest> | null> {
+export async function fetchTestBankFromStorage(): Promise<Record<string, TopicPracticeTest> | null> {
   try {
     const { blob } = await downloadFromR2({
       bucket: PRACTICE_TESTS_BUCKET,
@@ -492,7 +492,7 @@ export function saveLocalTestBank(bank: Record<string, TopicPracticeTest>, optio
 export function updateLocalTopicCache(test: TopicPracticeTest): void {
   memoryTestBank[test.id] = test;
   saveLocalTestBank(memoryTestBank);
-  syncTestBankToSupabaseStorage(memoryTestBank).catch(() => {});
+  syncTestBankToStorage(memoryTestBank).catch(() => {});
 }
 
 export function removeLocalTopicCache(testId: string): void {
@@ -554,14 +554,14 @@ export async function resolveQuestionImageUrls(
  */
 let activeFetchPromise: Promise<Record<string, TopicPracticeTest>> | null = null;
 
-export async function fetchAllPracticeTestsFromSupabase(): Promise<Record<string, TopicPracticeTest>> {
+export async function fetchAllPracticeTests(): Promise<Record<string, TopicPracticeTest>> {
   if (activeFetchPromise) {
     return activeFetchPromise;
   }
 
   activeFetchPromise = (async () => {
     try {
-      const storageBank = await fetchTestBankFromSupabaseStorage();
+      const storageBank = await fetchTestBankFromStorage();
       if (storageBank && typeof storageBank === "object") {
         memoryTestBank = storageBank;
         saveLocalTestBank(storageBank, { silent: true });
@@ -590,7 +590,7 @@ export async function getTopicPracticeTest(
   let test = memoryTestBank[testId] || null;
 
   if (!test) {
-    const bank = await fetchAllPracticeTestsFromSupabase();
+    const bank = await fetchAllPracticeTests();
     test = bank[testId] || null;
 
     if (!test) {
@@ -656,7 +656,7 @@ export async function getFullChapterQuestions(
   chapterNo: number,
   options: { publishedOnly?: boolean } = { publishedOnly: true }
 ): Promise<ParsedAssessmentQuestion[]> {
-  const bank = Object.keys(memoryTestBank).length > 0 ? memoryTestBank : await fetchAllPracticeTestsFromSupabase();
+  const bank = Object.keys(memoryTestBank).length > 0 ? memoryTestBank : await fetchAllPracticeTests();
   const aggregated: ParsedAssessmentQuestion[] = [];
   const normClass = (classGrade || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   const cleanNormClass = normClass.replace(/class/g, "");
@@ -858,7 +858,7 @@ export async function saveTopicPracticeTest(
 
   updateLocalTopicCache(topicTest);
   clearAllQuestionCaches();
-  await syncTestBankToSupabaseStorage(getLocalTestBank()).catch(() => false);
+  await syncTestBankToStorage(getLocalTestBank()).catch(() => false);
   await notifyPracticeTestRealtimeSync({ testId: topicTestId, action: "save_topic" });
 
   return {
@@ -905,7 +905,7 @@ export async function deleteTopicPracticeTest(
   clearAllQuestionCaches();
 
   await deleteTopicAttemptsFromPersistence(classGrade, subject, chapterNo, topicName).catch(() => {});
-  await syncTestBankToSupabaseStorage(bank).catch(() => {});
+  await syncTestBankToStorage(bank).catch(() => {});
   await notifyPracticeTestRealtimeSync({ testId, action: "delete_topic" });
 
   return { success: true, message: "Practice Test deleted successfully." };
@@ -944,7 +944,7 @@ export async function deleteAllPracticeTestsFromDatabase(): Promise<{
   } catch (e) {}
 
   await deleteAllAttemptsAndScoresFromPersistence().catch(() => {});
-  await syncTestBankToSupabaseStorage({}).catch(() => {});
+  await syncTestBankToStorage({}).catch(() => {});
   await notifyPracticeTestRealtimeSync({ action: "delete_all" });
 
   if (typeof window !== "undefined") {
@@ -1000,7 +1000,7 @@ export async function updateAssessmentQuestion(
     };
     updateLocalTopicCache(foundTest);
     saveLocalTestBank(bank, { silent: true });
-    await syncTestBankToSupabaseStorage(bank).catch(() => {});
+    await syncTestBankToStorage(bank).catch(() => {});
     await notifyPracticeTestRealtimeSync({ questionId, action: "update_question" });
     return { success: true, message: "Question updated successfully." };
   }
@@ -1033,7 +1033,7 @@ export async function deleteAssessmentQuestion(
 
   if (modified) {
     saveLocalTestBank(bank);
-    await syncTestBankToSupabaseStorage(bank).catch(() => {});
+    await syncTestBankToStorage(bank).catch(() => {});
     await notifyPracticeTestRealtimeSync({ questionId, action: "delete_question" });
     return { success: true, message: "Question deleted successfully." };
   }
@@ -1058,7 +1058,7 @@ export async function reorderAssessmentQuestions(
       orderIndex: idx + 1,
     }));
     updateLocalTopicCache(test);
-    await syncTestBankToSupabaseStorage(bank).catch(() => {});
+    await syncTestBankToStorage(bank).catch(() => {});
     await notifyPracticeTestRealtimeSync({ testId, action: "reorder_questions" });
   }
 

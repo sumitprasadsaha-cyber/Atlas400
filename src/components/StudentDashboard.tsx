@@ -92,9 +92,9 @@ import { FileCheck } from "lucide-react";
 import { filterNotesForStudent, filterSubjectsForStudent } from "../utils/noteAccessHelper";
 import { filterClassNotesForStudent, getStudentSubjects, isSubjectMatching } from "../utils/classNoteHelper";
 import StudentPracticeTestModal from "./StudentPracticeTestModal";
-import { getTopicPracticeTest, getStudentTestAttempts, getAllTestAttempts, fetchAllPracticeTestsFromSupabase } from "../utils/assessmentParser";
+import { getTopicPracticeTest, getStudentTestAttempts, getAllTestAttempts, fetchAllPracticeTests } from "../utils/assessmentParser";
 import { getScoreButtonStyles } from "../lib/practiceTestService";
-import { fetchStudentTestAttemptsFromSupabase } from "../lib/testScorePersistence";
+import { fetchStudentTestAttempts } from "../lib/testScorePersistence";
 
 interface StudentDashboardProps {
   student: Student;
@@ -319,10 +319,10 @@ export async function generateSubjectPdfReport(student: Student, subject: string
     }
   }
 
-  // Automatically upload the generated report to Supabase Storage and store metadata in Firestore
+  // Automatically upload the generated report to Storage and store metadata in Firestore
   try {
     const blob = doc.output("blob");
-    console.log(`[StudentDashboard] Uploading subject progress report to Supabase Storage: ${fileName}`);
+    console.log(`[StudentDashboard] Uploading subject progress report to Storage: ${fileName}`);
     
     (async () => {
       try {
@@ -349,7 +349,7 @@ export async function generateSubjectPdfReport(student: Student, subject: string
         await saveStudentDoc(updatedStudent);
         console.log("[StudentDashboard] Successfully uploaded subject report and saved metadata to Firestore.");
       } catch (uploadError) {
-        console.error("[StudentDashboard] Failed to upload subject report to Supabase in background:", uploadError);
+        console.error("[StudentDashboard] Failed to upload subject report to Storage in background:", uploadError);
       }
     })();
   } catch (blobError) {
@@ -1639,16 +1639,16 @@ export function StudentMyTab({
   const [, setTestBankVersion] = useState(0);
 
   useEffect(() => {
-    fetchAllPracticeTestsFromSupabase();
+    fetchAllPracticeTests();
     if (student?.id) {
-      fetchStudentTestAttemptsFromSupabase(student.id, student.name);
+      fetchStudentTestAttempts(student.id, student.name);
     }
 
     const handlePracticeTestsUpdate = () => {
-      // Refresh the test bank from Supabase to ensure deleted tests are removed
-      fetchAllPracticeTestsFromSupabase();
+      // Refresh the test bank to ensure deleted tests are removed
+      fetchAllPracticeTests();
       if (student?.id) {
-        fetchStudentTestAttemptsFromSupabase(student.id, student.name);
+        fetchStudentTestAttempts(student.id, student.name);
       }
       setTestBankVersion((v) => v + 1);
     };
@@ -2506,9 +2506,9 @@ export default function StudentDashboard({
   }, []);
 
   useEffect(() => {
-    fetchAllPracticeTestsFromSupabase();
+    fetchAllPracticeTests();
     if (student?.id) {
-      fetchStudentTestAttemptsFromSupabase(student.id, student.name);
+      fetchStudentTestAttempts(student.id, student.name);
     }
 
     const handleUpdate = () => {
@@ -2727,7 +2727,7 @@ export default function StudentDashboard({
 
   useEffect(() => {
     setWeeklyAttendance(getWeeklyAttendanceDays(student));
-    fetchAllPracticeTestsFromSupabase();
+    fetchAllPracticeTests();
 
     const handleUpdate = () => {
       // Trigger re-render when practice tests or attempts are updated

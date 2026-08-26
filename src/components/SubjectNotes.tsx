@@ -39,9 +39,9 @@ import { groupUPSCNotesHierarchy } from "../utils/upscHierarchyHelper";
 import { normalizeClassGrade, inferGSPaperFromSubject } from "../utils/classNoteHelper";
 import StudentPracticeTestModal from "./StudentPracticeTestModal";
 import AdminPracticeTestModal from "./AdminPracticeTestModal";
-import { getFullChapterQuestions, getTopicPracticeTestSync, deleteTopicPracticeTest, fetchAllPracticeTestsFromSupabase, getScoreButtonStyles } from "../lib/practiceTestService";
+import { getFullChapterQuestions, getTopicPracticeTestSync, deleteTopicPracticeTest, fetchAllPracticeTests, getScoreButtonStyles } from "../lib/practiceTestService";
 import { getAllTestAttempts } from "../utils/assessmentParser";
-import { fetchStudentTestAttemptsFromSupabase } from "../lib/testScorePersistence";
+import { fetchStudentTestAttempts } from "../lib/testScorePersistence";
 import { recordNoteOpenedOrDownloaded } from "../utils/chapterProgressHelper";
 
 export interface TopicTestStats {
@@ -252,14 +252,14 @@ export default function SubjectNotes({
   } | null>(null);
 
   useEffect(() => {
-    fetchAllPracticeTestsFromSupabase();
+    fetchAllPracticeTests();
     if (studentId) {
-      fetchStudentTestAttemptsFromSupabase(studentId, studentName);
+      fetchStudentTestAttempts(studentId, studentName);
     }
 
     const handleUpdate = () => {
       if (studentId) {
-        fetchStudentTestAttemptsFromSupabase(studentId, studentName);
+        fetchStudentTestAttempts(studentId, studentName);
       }
       setAttemptsVersion((prev) => prev + 1);
     };

@@ -284,7 +284,7 @@ export default function App() {
     }
   }, [auth.isAuthenticated, auth.role, auth.loggedInStudentId]);
 
-  // Immediately fetch student's service status directly from Supabase after login (never use cached values)
+  // Immediately fetch student's service status directly from database after login (never use cached values)
   useEffect(() => {
     if (auth.isAuthenticated && auth.role === "student" && auth.loggedInStudentId) {
       const studentId = auth.loggedInStudentId;
