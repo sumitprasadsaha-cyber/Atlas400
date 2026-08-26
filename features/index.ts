@@ -1,0 +1,10 @@
+export * as notesFeature from "./notes";
+export * as practiceTestsFeature from "./practice-tests";
+export * as homeworkFeature from "./homework";
+export * as attendanceFeature from "./attendance";
+export * as feesFeature from "./fees";
+export * as dashboardFeature from "./dashboard";
+export * as studentsFeature from "./students";
+export * as teachersFeature from "./teachers";
+export * as notificationsFeature from "./notifications";
+export * as settingsFeature from "./settings";

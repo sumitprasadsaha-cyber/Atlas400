@@ -1,6 +1,6 @@
 {
-  "name": "Sumit Tuition App",
-  "description": "A clean and aesthetic tuition center management application to track students, attendance, subjects progress, fees, and notes.",
+  "name": "Atlas 2.0",
+  "description": "Enterprise-grade tuition and academy management system built with Firebase, Cloudflare R2, and Gemini AI.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -1,11 +1,12 @@
 {
-  "name": "Academy Connect",
-  "short_name": "Academy",
-  "version": "4.3.0",
-  "description": "Academy Connect Tuition Management v4.3.0",
+  "name": "Atlas 2.0",
+  "short_name": "Atlas",
+  "version": "5.0.0",
+  "description": "Atlas 2.0 Academy Management Platform",
   "theme_color": "#2563eb",
   "background_color": "#ffffff",
   "display": "standalone",
+  "orientation": "portrait",
   "start_url": "/",
   "icons": [
     {

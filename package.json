@@ -1,7 +1,7 @@
 {
-  "name": "tuition-ledger-management",
+  "name": "atlas",
   "private": true,
-  "version": "4.3.0",
+  "version": "5.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -9,8 +9,7 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit",
-    "test:pdf-storage-flow": "tsx scripts/testPdfStorageFlow.ts"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1116.0",
@@ -25,7 +24,6 @@
     "@capacitor/haptics": "^8.0.2",
     "@capacitor/local-notifications": "^8.2.1",
     "@google/genai": "^2.4.0",
-    "@supabase/supabase-js": "^2.110.7",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
