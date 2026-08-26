@@ -1,4 +1,4 @@
-import { apiApp } from "../src/apiApp";
+import { apiApp } from "../../src/apiApp";
 
 export const runtime = "nodejs";
 
