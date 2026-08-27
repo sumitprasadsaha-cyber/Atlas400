@@ -27,6 +27,47 @@ export interface R2Config {
 
 let s3ClientInstance: S3Client | null = null;
 let lastS3Endpoint: string = "";
+let r2AuthFailed: boolean = false;
+let lastR2AuthErrorTime: number = 0;
+const R2_AUTH_RETRY_INTERVAL_MS = 120000; // Retry checking R2 after 2 minutes
+
+/**
+ * Marks R2 credentials as having an authentication/signature issue, switching to local disk fallback.
+ */
+export function markR2AuthFailed(reason?: string): void {
+  if (!r2AuthFailed) {
+    console.info(
+      `[R2Server] Cloudflare R2 credentials authentication notice${
+        reason ? ` (${reason})` : ""
+      }. Routing storage operations to persistent local disk storage fallback.`
+    );
+  }
+  r2AuthFailed = true;
+  lastR2AuthErrorTime = Date.now();
+}
+
+/**
+ * Checks whether an error is related to authentication, signature, or invalid credentials.
+ */
+function isAuthError(err: any): boolean {
+  if (!err) return false;
+  const msg = String(err.message || "").toLowerCase();
+  const name = String(err.name || "").toLowerCase();
+  const code = String(err.Code || err.code || "").toLowerCase();
+  return (
+    msg.includes("signature") ||
+    msg.includes("secret access key") ||
+    msg.includes("credential") ||
+    msg.includes("accessdenied") ||
+    msg.includes("invalidaccesskeyid") ||
+    msg.includes("forbidden") ||
+    name.includes("signature") ||
+    name.includes("auth") ||
+    code.includes("signature") ||
+    code.includes("accessdenied") ||
+    code.includes("invalidaccesskeyid")
+  );
+}
 
 /**
  * Dynamically resolves a writable local storage directory, respecting serverless /tmp boundaries.
@@ -89,19 +130,55 @@ export function getMimeTypeFromKey(key: string): string {
 }
 
 /**
+ * Cleans an environment variable string, stripping whitespace, quotes, and carriage returns.
+ */
+function cleanEnvString(val?: string): string {
+  if (!val) return "";
+  let clean = String(val).trim().replace(/\r/g, "");
+  // Strip surrounding quotes
+  if (
+    (clean.startsWith('"') && clean.endsWith('"')) ||
+    (clean.startsWith("'") && clean.endsWith("'"))
+  ) {
+    clean = clean.slice(1, -1).trim().replace(/\r/g, "");
+  }
+  return clean;
+}
+
+/**
+ * Checks whether a credential value is an obvious placeholder or dummy string.
+ */
+function isPlaceholder(val: string): boolean {
+  if (!val) return true;
+  const lower = val.toLowerCase();
+  return (
+    lower.includes("placeholder") ||
+    lower.includes("your_") ||
+    lower.includes("example") ||
+    lower.includes("dummy") ||
+    lower.includes("my_access") ||
+    lower.includes("my_secret") ||
+    lower === "none" ||
+    lower === "null" ||
+    lower === "undefined" ||
+    lower === "xxx"
+  );
+}
+
+/**
  * Resolves Cloudflare R2 configuration from environment variables supporting all standard aliases.
  */
 export function getR2ServerConfig(): R2Config {
-  const accountId = (
+  const accountId = cleanEnvString(
     process.env.R2_ACCOUNT_ID ||
     process.env.CLOUDFLARE_R2_ACCOUNT_ID ||
     process.env.CLOUDFLARE_ACCOUNT_ID ||
     process.env.CF_ACCOUNT_ID ||
     process.env.VITE_R2_ACCOUNT_ID ||
     ""
-  ).trim();
+  );
 
-  const accessKeyId = (
+  const accessKeyId = cleanEnvString(
     process.env.R2_ACCESS_KEY_ID ||
     process.env.CLOUDFLARE_R2_ACCESS_KEY_ID ||
     process.env.CLOUDFLARE_ACCESS_KEY_ID ||
@@ -109,9 +186,9 @@ export function getR2ServerConfig(): R2Config {
     process.env.R2_ACCESS_KEY ||
     process.env.VITE_R2_ACCESS_KEY_ID ||
     ""
-  ).trim();
+  );
 
-  const secretAccessKey = (
+  const secretAccessKey = cleanEnvString(
     process.env.R2_SECRET_ACCESS_KEY ||
     process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY ||
     process.env.CLOUDFLARE_SECRET_ACCESS_KEY ||
@@ -119,35 +196,46 @@ export function getR2ServerConfig(): R2Config {
     process.env.R2_SECRET_KEY ||
     process.env.VITE_R2_SECRET_ACCESS_KEY ||
     ""
-  ).trim();
+  );
 
-  const bucket = (
+  const bucket = cleanEnvString(
     process.env.R2_BUCKET ||
     process.env.CLOUDFLARE_R2_BUCKET ||
     process.env.R2_BUCKET_NAME ||
     process.env.BUCKET_NAME ||
     process.env.VITE_R2_BUCKET ||
     "academy-connect-files"
-  ).trim();
+  );
 
-  const explicitEndpoint = (
+  const explicitEndpoint = cleanEnvString(
     process.env.R2_ENDPOINT ||
     process.env.CLOUDFLARE_R2_ENDPOINT ||
     process.env.R2_ENDPOINT_URL ||
     process.env.VITE_R2_ENDPOINT ||
     ""
-  ).trim();
+  );
 
-  const publicUrl = (
+  const publicUrl = cleanEnvString(
     process.env.R2_PUBLIC_URL ||
     process.env.CLOUDFLARE_R2_PUBLIC_URL ||
     process.env.R2_CUSTOM_DOMAIN ||
     process.env.VITE_R2_PUBLIC_URL ||
     process.env.VITE_R2_CUSTOM_DOMAIN ||
     ""
-  ).trim().replace(/\/+$/, "");
+  ).replace(/\/+$/, "");
 
-  const endpoint = explicitEndpoint || (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : "");
+  let endpoint = explicitEndpoint || (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : "");
+  if (endpoint) {
+    if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
+      endpoint = `https://${endpoint}`;
+    }
+    try {
+      const parsedUrl = new URL(endpoint);
+      endpoint = `${parsedUrl.protocol}//${parsedUrl.host}`;
+    } catch {
+      endpoint = endpoint.replace(/\/+$/, "");
+    }
+  }
 
   return {
     accountId,
@@ -164,12 +252,27 @@ export function getR2ServerConfig(): R2Config {
  */
 export function isR2Configured(): boolean {
   const config = getR2ServerConfig();
-  return Boolean(
+  const hasCreds = Boolean(
     config.accessKeyId &&
+    !isPlaceholder(config.accessKeyId) &&
     config.secretAccessKey &&
+    !isPlaceholder(config.secretAccessKey) &&
     config.endpoint &&
     config.endpoint.startsWith("http")
   );
+
+  if (!hasCreds) return false;
+
+  // If previous authentication failed, route to local storage fallback until retry interval expires
+  if (r2AuthFailed) {
+    if (Date.now() - lastR2AuthErrorTime > R2_AUTH_RETRY_INTERVAL_MS) {
+      r2AuthFailed = false;
+    } else {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -197,6 +300,8 @@ export function getR2S3Client(): S3Client {
         secretAccessKey: config.secretAccessKey,
       },
       forcePathStyle: true, // Cloudflare R2 requires path-style routing
+      requestChecksumCalculation: "WHEN_REQUIRED",
+      responseChecksumValidation: "WHEN_REQUIRED",
     });
     lastS3Endpoint = config.endpoint;
   }
@@ -290,7 +395,11 @@ export async function uploadObjectToR2(params: {
         etag: response.ETag,
       };
     } catch (err: any) {
-      console.warn(`[R2Server] Cloudflare R2 upload error (${err.message}). Falling back to local disk storage for key="${cleanKey}"`);
+      if (isAuthError(err)) {
+        markR2AuthFailed(err?.message);
+      } else {
+        console.warn(`[R2Server] Cloudflare R2 upload fallback for "${cleanKey}":`, err?.message || err);
+      }
       const etag = await saveToLocalStorage(bucketName, cleanKey, params.body);
       return {
         bucket: bucketName,
@@ -300,8 +409,7 @@ export async function uploadObjectToR2(params: {
     }
   }
 
-  // Cloudflare R2 credentials not configured: Use seamless local disk storage
-  console.log(`[R2Server] Storing object to local storage fallback: bucket="${bucketName}", key="${cleanKey}"`);
+  // Cloudflare R2 credentials not active: Use seamless local disk storage
   const etag = await saveToLocalStorage(bucketName, cleanKey, params.body);
   return {
     bucket: bucketName,
@@ -367,7 +475,9 @@ export async function getObjectFromR2(params: {
         ) {
           continue;
         } else {
-          console.warn(`[R2Server] Cloudflare R2 GetObject issue for ${cand} (${err.message})`);
+          if (isAuthError(err)) {
+            markR2AuthFailed(err?.message);
+          }
         }
       }
     }
@@ -458,7 +568,9 @@ export async function generateR2SignedUrl(params: {
       });
       return await getSignedUrl(client, command, { expiresIn });
     } catch (err: any) {
-      console.warn(`[R2Server] generateR2SignedUrl error for ${cleanKey}:`, err?.message || err);
+      if (isAuthError(err)) {
+        markR2AuthFailed(err?.message);
+      }
     }
   }
 

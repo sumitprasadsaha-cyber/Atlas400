@@ -113,6 +113,8 @@ export default async function handler(req: any, res: any) {
 
         // 4. Build canonical NoteMetadata (School or UPSC)
         const canonicalMeta = buildCanonicalNoteMetadata({
+          noteType: (fields.noteType || fields.type || parsedBody.noteType || parsedBody.type || query.noteType || query.type) as any,
+          type: (fields.noteType || fields.type || parsedBody.noteType || parsedBody.type || query.noteType || query.type) as any,
           className: fields.className || fields.classGrade || fields.class || parsedBody.className || parsedBody.classGrade || parsedBody.class || query.className || query.classGrade,
           subject: fields.subject || fields.subjectName || parsedBody.subject || parsedBody.subjectName || query.subject,
           gsPaper: fields.gsPaper || fields.generalStudiesPaper || fields.paper || parsedBody.gsPaper || parsedBody.generalStudiesPaper || parsedBody.paper,

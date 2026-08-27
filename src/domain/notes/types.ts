@@ -35,6 +35,7 @@ export const UPSC_GS_PAPER_CONFIG: Record<string, { displayName: string; folderN
  */
 export interface SchoolNote {
   type: "school";
+  noteType: "school";
   id: string;
   className: string; // e.g. "Class 10"
   classFolder: string; // e.g. "Class_10"
@@ -79,6 +80,7 @@ export interface SchoolNote {
  */
 export interface UPSCNote {
   type: "upsc";
+  noteType: "upsc";
   id: string;
   className: "UPSC";
   classFolder: "upsc";
@@ -130,6 +132,8 @@ export type NoteMetadata = SchoolNote | UPSCNote;
  * Input fields received from Upload Forms, Add Topic forms, or API payloads.
  */
 export interface NoteFormInput {
+  noteType?: NoteType;
+  type?: NoteType;
   className?: string;
   classGrade?: string;
   class?: string;
@@ -326,13 +330,71 @@ export function formatTopicFolder(topicNumber?: number, topicName?: string): str
 }
 
 /**
+ * Generates Cloudflare R2 folder paths and object keys for School notes.
+ * School Path: class_notes/Class_10/Subject/Chapter_01_Name/Topic_01_Name/note.pdf
+ */
+export function generateSchoolStoragePaths(
+  meta: {
+    classFolder: string;
+    subject: string;
+    chapterFolder: string;
+    topicFolder?: string;
+  },
+  fileName = "note.pdf"
+): { folderPath: string; storagePath: string; practiceTestPath: string } {
+  const cleanSubjectFolder = sanitizeFolderName(meta.subject);
+  const classFolder = meta.classFolder || "Class_10";
+  const chapterFolder = meta.chapterFolder || "Chapter_01_General";
+  
+  const folderPath = meta.topicFolder
+    ? `${STORAGE_ROOTS.SCHOOL}/${classFolder}/${cleanSubjectFolder}/${chapterFolder}/${meta.topicFolder}`
+    : `${STORAGE_ROOTS.SCHOOL}/${classFolder}/${cleanSubjectFolder}/${chapterFolder}`;
+
+  return {
+    folderPath,
+    storagePath: `${folderPath}/${fileName}`,
+    practiceTestPath: `${folderPath}/practice_tests`,
+  };
+}
+
+/**
+ * Generates Cloudflare R2 folder paths and object keys for UPSC notes.
+ * UPSC Path: upsc/GS1/Subject/Module_01_Name/Topic_01_Name/note.pdf
+ */
+export function generateUPSCStoragePaths(
+  meta: {
+    gsPaperFolder: string;
+    subject: string;
+    moduleFolder: string;
+    topicFolder?: string;
+  },
+  fileName = "note.pdf"
+): { folderPath: string; storagePath: string; practiceTestPath: string } {
+  const cleanSubjectFolder = sanitizeFolderName(meta.subject);
+  const gsPaperFolder = meta.gsPaperFolder || "GS1";
+  const moduleFolder = meta.moduleFolder || "Module_01_General";
+
+  const folderPath = meta.topicFolder
+    ? `${STORAGE_ROOTS.UPSC}/${gsPaperFolder}/${cleanSubjectFolder}/${moduleFolder}/${meta.topicFolder}`
+    : `${STORAGE_ROOTS.UPSC}/${gsPaperFolder}/${cleanSubjectFolder}/${moduleFolder}`;
+
+  return {
+    folderPath,
+    storagePath: `${folderPath}/${fileName}`,
+    practiceTestPath: `${folderPath}/practice_tests`,
+  };
+}
+
+/**
  * Single source of truth: Storage Path Generator
  * Generates deterministic Cloudflare R2 folder paths and object keys.
+ * Routes strictly by noteType.
  */
 export function generateStoragePaths(
   meta: {
-    type: NoteType;
-    classFolder: string;
+    type?: NoteType;
+    noteType?: NoteType;
+    classFolder?: string;
     gsPaperFolder?: string;
     subject: string;
     chapterFolder?: string;
@@ -341,35 +403,22 @@ export function generateStoragePaths(
   },
   fileName = "note.pdf"
 ): { folderPath: string; storagePath: string; practiceTestPath: string } {
-  const cleanSubjectFolder = sanitizeFolderName(meta.subject);
-
-  let folderPath = "";
-  if (meta.type === "upsc") {
-    const gsPaperFolder = meta.gsPaperFolder || "GS1";
-    const moduleFolder = meta.moduleFolder || "Module_01_General";
-    if (meta.topicFolder) {
-      folderPath = `${STORAGE_ROOTS.UPSC}/${gsPaperFolder}/${cleanSubjectFolder}/${moduleFolder}/${meta.topicFolder}`;
-    } else {
-      folderPath = `${STORAGE_ROOTS.UPSC}/${gsPaperFolder}/${cleanSubjectFolder}/${moduleFolder}`;
-    }
+  const isUPSC = meta.noteType === "upsc" || meta.type === "upsc";
+  if (isUPSC) {
+    return generateUPSCStoragePaths({
+      gsPaperFolder: meta.gsPaperFolder || "GS1",
+      subject: meta.subject,
+      moduleFolder: meta.moduleFolder || "Module_01_General",
+      topicFolder: meta.topicFolder,
+    }, fileName);
   } else {
-    const classFolder = meta.classFolder || "Class_10";
-    const chapterFolder = meta.chapterFolder || "Chapter_01_General";
-    if (meta.topicFolder) {
-      folderPath = `${STORAGE_ROOTS.SCHOOL}/${classFolder}/${cleanSubjectFolder}/${chapterFolder}/${meta.topicFolder}`;
-    } else {
-      folderPath = `${STORAGE_ROOTS.SCHOOL}/${classFolder}/${cleanSubjectFolder}/${chapterFolder}`;
-    }
+    return generateSchoolStoragePaths({
+      classFolder: meta.classFolder || "Class_10",
+      subject: meta.subject,
+      chapterFolder: meta.chapterFolder || "Chapter_01_General",
+      topicFolder: meta.topicFolder,
+    }, fileName);
   }
-
-  const storagePath = `${folderPath}/${fileName}`;
-  const practiceTestPath = `${folderPath}/practice_tests`;
-
-  return {
-    folderPath,
-    storagePath,
-    practiceTestPath,
-  };
 }
 
 /**
@@ -377,9 +426,11 @@ export function generateStoragePaths(
  * Builds the complete, deterministic NoteMetadata object.
  */
 export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
-  const rawClass = input.className || input.classGrade || input.class || "Class 10";
+  const explicitType = input.noteType || input.type;
+  const rawClass = input.className || input.classGrade || input.class || (explicitType === "upsc" ? "UPSC" : "Class 10");
   const classInfo = formatClassFolder(rawClass);
-  const isUPSC = classInfo.isUPSC;
+  const isUPSC = explicitType === "upsc" || classInfo.isUPSC || Boolean(input.gsPaper || input.generalStudiesPaper || input.paper || input.moduleNumber || input.moduleName);
+  const noteType: NoteType = isUPSC ? "upsc" : "school";
 
   const rawSubject = (input.subject || input.subjectName || "General").trim().replace(/\s+/g, " ");
   const subject = rawSubject || "General";
@@ -418,7 +469,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
   const visibility = (input.visibility === "selected" || input.visibility === "hidden" ? input.visibility : "all") as "all" | "selected" | "hidden";
   const uploadedBy = input.uploadedBy || "Admin";
 
-  if (isUPSC) {
+  if (noteType === "upsc") {
     const gsInfo = formatGSPaperFolder(input.gsPaper || input.generalStudiesPaper || input.paper);
     const rawModNo = input.moduleNumber ?? input.moduleNo ?? input.module_number ?? input.chapterNumber ?? input.chapterNo ?? 1;
     const moduleNumber = typeof rawModNo === "number" ? rawModNo : parseInt(String(rawModNo).replace(/\D/g, ""), 10) || 1;
@@ -426,9 +477,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
     rawModName = rawModName.replace(/^(?:module|mod)\s*\.?\s*\d+\s*(?:[:–\-]|–|-)?\s*/i, "").trim() || rawModName;
 
     const moduleFolder = formatModuleFolder(moduleNumber, rawModName);
-    const paths = generateStoragePaths({
-      type: "upsc",
-      classFolder: "upsc",
+    const paths = generateUPSCStoragePaths({
       gsPaperFolder: gsInfo.gsPaperFolder,
       subject,
       moduleFolder,
@@ -441,6 +490,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
 
     return {
       type: "upsc",
+      noteType: "upsc",
       id,
       className: "UPSC",
       classFolder: "upsc",
@@ -492,8 +542,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
     rawChName = rawChName.replace(/^(?:chapter|ch)\s*\.?\s*\d+\s*(?:[:–\-]|–|-)?\s*/i, "").trim() || rawChName;
 
     const chapterFolder = formatChapterFolder(chapterNumber, rawChName);
-    const paths = generateStoragePaths({
-      type: "school",
+    const paths = generateSchoolStoragePaths({
       classFolder: classInfo.classFolder,
       subject,
       chapterFolder,
@@ -506,6 +555,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
 
     return {
       type: "school",
+      noteType: "school",
       id,
       className: classInfo.className,
       classFolder: classInfo.classFolder,

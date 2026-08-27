@@ -113,13 +113,18 @@ export function extractUPSCDetails(note: any): {
   const subject = subInfo.displaySubject || "General Studies";
 
   // 1. GS Paper
-  let rawGsPaper = note.generalStudiesPaper || note.gs_paper || "";
+  let rawGsPaper = note.gsPaper || note.generalStudiesPaper || note.gs_paper || note.paper || "";
   if (!rawGsPaper && note.storagePath) {
-    const gsMatch = note.storagePath.match(/GS_Paper_([IVXivx\d]+)/i);
+    const gsMatch = note.storagePath.match(/(?:GS_Paper_|GS|Paper_)?([1-4]|I{1,4})/i);
     if (gsMatch) {
       const rMap: Record<string, string> = { "1": "I", "2": "II", "3": "III", "4": "IV" };
-      const roman = rMap[gsMatch[1].toUpperCase()] || gsMatch[1].toUpperCase();
+      const val = gsMatch[1].toUpperCase();
+      const roman = rMap[val] || val;
       rawGsPaper = `General Studies Paper ${roman}`;
+    } else if (/essay/i.test(note.storagePath)) {
+      rawGsPaper = "Essay";
+    } else if (/csat/i.test(note.storagePath)) {
+      rawGsPaper = "CSAT";
     }
   }
   const gsPaper = canonicalGSPaperName(rawGsPaper, subject);

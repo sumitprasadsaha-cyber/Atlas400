@@ -138,6 +138,8 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
     // 4. Send upload request to /api/notes/upload
     const formData = new FormData();
     formData.append("file", file, file.name);
+    formData.append("noteType", canonicalMetadata.noteType || canonicalMetadata.type);
+    formData.append("type", canonicalMetadata.noteType || canonicalMetadata.type);
     formData.append("className", canonicalMetadata.className);
     formData.append("classGrade", canonicalMetadata.className);
     formData.append("subject", canonicalMetadata.subject);
