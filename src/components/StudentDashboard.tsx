@@ -91,6 +91,9 @@ import { ChapterProgressData, ClassNote } from "../types";
 import { FileCheck } from "lucide-react";
 import { filterNotesForStudent, filterSubjectsForStudent } from "../utils/noteAccessHelper";
 import { filterClassNotesForStudent, getStudentSubjects, isSubjectMatching, inferGSPaperFromSubject } from "../utils/classNoteHelper";
+import { isUPSCClass } from "../utils/upscHierarchyHelper";
+import { buildStudentUPSCHierarchy, StudentUPSCGSPaper } from "../utils/studentUPSCHierarchyHelper";
+import StudentUPSCTree from "./StudentUPSCTree";
 import StudentPracticeTestModal from "./StudentPracticeTestModal";
 import { getTopicPracticeTest, getStudentTestAttempts, getAllTestAttempts, fetchAllPracticeTests } from "../utils/assessmentParser";
 import { getScoreButtonStyles } from "../lib/practiceTestService";
@@ -1373,6 +1376,66 @@ function SubjectProgressCard({ subject, index, onSelectSubject, student }: Subje
   );
 }
 
+interface GSPaperProgressCardProps {
+  paper: StudentUPSCGSPaper;
+  index: number;
+  onSelectPaper: (paperName: string) => void;
+}
+
+function GSPaperProgressCard({ paper, index, onSelectPaper }: GSPaperProgressCardProps) {
+  const palette = getSubjectCardPalette(paper.gsPaper, index);
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
+      className="col-span-1"
+    >
+      <button
+        type="button"
+        onClick={() => onSelectPaper(paper.gsPaper)}
+        className={`group relative flex flex-col justify-between overflow-hidden rounded-[22px] border border-white/15 bg-gradient-to-br ${palette.shell} p-4 text-white transition-all hover:-translate-y-1 shadow-xs cursor-pointer text-left w-full`}
+      >
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.18),transparent_35%)]" />
+
+        {/* Top Header: Paper Name + Progress Circular Chart */}
+        <div className="relative flex items-start justify-between gap-3 w-full">
+          <div className="min-w-0 flex-1">
+            <span className="inline-block text-[9px] font-black uppercase tracking-[0.2em] text-white/80 bg-white/15 px-2.5 py-0.5 rounded-full mb-1.5 backdrop-blur-xs">
+              UPSC
+            </span>
+            <h4 className="text-sm sm:text-base font-black text-white truncate drop-shadow-xs">
+              {paper.gsPaper}
+            </h4>
+            <p className="text-xs font-bold text-white/90 mt-0.5">
+              {paper.progressPercent}% Complete
+            </p>
+          </div>
+
+          <div className="relative shrink-0 pt-0.5">
+            <SubjectPieChart rate={paper.progressPercent} size={38} />
+          </div>
+        </div>
+
+        {/* Bottom Metadata: Subjects, Modules, Topic Notes */}
+        <div className="relative mt-3.5 pt-3 border-t border-white/15 w-full">
+          <div className="flex items-center justify-between text-[11px] font-bold text-white/85 mb-1.5">
+            <span>Subjects: {paper.totalSubjects}</span>
+            <span>Modules: {paper.totalModules}</span>
+            <span>Topic Notes: {paper.totalTopics}</span>
+          </div>
+
+          <div className="flex items-center justify-between text-[11px] font-bold text-white/95 bg-black/15 px-2.5 py-1 rounded-xl">
+            <span>{paper.completedTopics} / {paper.totalTopics} Topic Notes Completed</span>
+            <ChevronRight className="w-3.5 h-3.5 text-white/70 group-hover:translate-x-0.5 transition-transform" />
+          </div>
+        </div>
+      </button>
+    </motion.div>
+  );
+}
+
 export function getSubjectColor(subject: string): SubjectColorPalette {
   const norm = subject.trim().toLowerCase();
   
@@ -1636,7 +1699,7 @@ export function StudentMyTab({
     testType: "topic" | "full_chapter";
   } | null>(null);
 
-  const [, setTestBankVersion] = useState(0);
+  const [testBankVersion, setTestBankVersion] = useState(0);
 
   useEffect(() => {
     fetchAllPracticeTests();
@@ -1936,6 +1999,85 @@ export function StudentMyTab({
     return `${mockedKb} KB`;
   };
 
+  const isUPSC = isUPSCClass(localStudent.classGrade);
+
+  const upscHierarchy = useMemo(() => {
+    if (!isUPSC) return [];
+    return buildStudentUPSCHierarchy(localStudent, allClassNotes);
+  }, [isUPSC, localStudent, allClassNotes, testBankVersion]);
+
+  const enrolledPapers = useMemo(() => {
+    return upscHierarchy.map((p) => p.gsPaper);
+  }, [upscHierarchy]);
+
+  const activePaper = useMemo(() => {
+    if (!isUPSC || upscHierarchy.length === 0) return null;
+    if (!selectedSubject) return upscHierarchy[0];
+    const exact = upscHierarchy.find((p) => p.gsPaper.toLowerCase() === selectedSubject.toLowerCase());
+    if (exact) return exact;
+    const parent = upscHierarchy.find((p) =>
+      p.subjects.some((s) => s.subject.toLowerCase() === selectedSubject.toLowerCase())
+    );
+    if (parent) return parent;
+    return upscHierarchy[0];
+  }, [isUPSC, upscHierarchy, selectedSubject]);
+
+  const handleToggleTopicCompletion = async (note: ClassNote | ChapterNote, subject: string, isCompleted: boolean) => {
+    const subjClean = (subject || note.subject || "").trim();
+    const keyWithSubject = `${subjClean}_${note.id}`;
+    const keyRawSubject = `${note.subject || subject}_${note.id}`;
+    const keyNoteOnly = note.id;
+    const newStatus = isCompleted ? "Fully Prepared" : "Not Started";
+    const newPercent = isCompleted ? 100 : 0;
+
+    const newRecord: ChapterProgressData = {
+      studentId: localStudent.id,
+      subjectId: subjClean,
+      chapterId: note.id,
+      selectedStatus: newStatus,
+      calculatedProgress: newPercent,
+      remarks: "",
+      updatedAt: new Date().toISOString()
+    };
+
+    const updatedChapterProgress = {
+      ...(localStudent.chapterProgress || {}),
+      [keyWithSubject]: newRecord,
+      [keyRawSubject]: newRecord,
+      [keyNoteOnly]: newRecord
+    };
+
+    const currentNotes = (localStudent.notes?.[subjClean] || localStudent.notes?.[note.subject] || []) as ChapterNote[];
+    const updatedNotes = currentNotes.map((n) => {
+      if (n.id === note.id) {
+        return { ...n, isCompleted };
+      }
+      return n;
+    });
+
+    const updatedStudent: Student = {
+      ...localStudent,
+      notes: {
+        ...(localStudent.notes || {}),
+        [subjClean]: updatedNotes
+      },
+      chapterProgress: updatedChapterProgress
+    };
+
+    setLocalStudent(updatedStudent);
+
+    try {
+      if (onUpdateStudent) {
+        await onUpdateStudent(updatedStudent);
+      } else {
+        await saveStudentDoc(updatedStudent);
+      }
+      window.dispatchEvent(new CustomEvent("notes-progress-updated"));
+    } catch (err) {
+      console.error("Failed to persist topic completion:", err);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4 animate-fadeIn" id="student-my-tab">
       <div className="rounded-2xl border border-slate-100 bg-white/80 p-4 shadow-none dark:border-slate-800 dark:bg-slate-900/70" id="student-my-tab-header">
@@ -1944,7 +2086,7 @@ export function StudentMyTab({
             <p className="text-[10px] font-black uppercase tracking-[0.25em] text-indigo-600 dark:text-indigo-400">My Study Space</p>
           </div>
           <div className="rounded-full bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500 dark:bg-slate-950 dark:text-slate-400">
-            {sortedSubjects.length} Enrolled Subjects
+            {isUPSC ? `${enrolledPapers.length} Enrolled Papers` : `${sortedSubjects.length} Enrolled Subjects`}
           </div>
         </div>
       </div>
@@ -1952,14 +2094,65 @@ export function StudentMyTab({
       {/* File Explorer Layout Grid */}
       <div className="grid grid-cols-1 min-[520px]:grid-cols-12 gap-4 min-h-[420px]" id="my-study-space-split-container">
         
-        {/* LEFT PANEL (32% width on sm+ or 4/12 columns) */}
+        {/* LEFT PANEL */}
         <div className="col-span-12 min-[520px]:col-span-4 flex flex-col h-full overflow-hidden bg-slate-50/50 dark:bg-slate-900/30 rounded-2xl border border-slate-100 dark:border-slate-800/80 p-4" id="split-left-panel">
           <div className="mb-4 shrink-0" id="study-left-header">
-            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-indigo-600 dark:text-indigo-400">Enrolled Subjects</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-indigo-600 dark:text-indigo-400">
+              {isUPSC ? "Enrolled Papers" : "Enrolled Subjects"}
+            </p>
           </div>
 
           <div className="flex-1 overflow-y-auto flex flex-col gap-2 pr-1 scrollbar-thin" id="study-left-subjects">
-            {sortedSubjects.length === 0 ? (
+            {isUPSC ? (
+              enrolledPapers.length === 0 ? (
+                <div className="text-center py-8 px-3">
+                  <BookOpen className="w-8 h-8 text-slate-300 dark:text-slate-700 mx-auto mb-2 stroke-[1.2]" />
+                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400">No Enrolled Papers</p>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">No General Studies Papers assigned yet.</p>
+                </div>
+              ) : (
+                upscHierarchy.map((paper, idx) => {
+                  const isActive = activePaper?.gsPaper === paper.gsPaper;
+                  const palette = getSubjectColor(paper.gsPaper);
+                  const IconComponent = getSubjectIcon(paper.gsPaper, idx);
+                  return (
+                    <button
+                      key={`${paper.gsPaper}_${idx}`}
+                      onClick={() => handleSelectSubject(paper.gsPaper)}
+                      className={`group rounded-xl border px-3 py-2.5 text-left text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                        isActive 
+                          ? `${palette.bg} border-blue-500 text-blue-700 dark:text-blue-400 shadow-sm` 
+                          : "border-slate-100 dark:border-slate-800/60 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-950 hover:border-slate-200"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate min-w-0 flex-1">
+                        <div className={`p-1.5 rounded-lg shrink-0 ${isActive ? palette.badge : "bg-slate-50 dark:bg-slate-950 group-hover:bg-slate-100"}`}>
+                          <IconComponent className={`h-3.5 w-3.5 ${isActive ? palette.text : "text-slate-400"}`} />
+                        </div>
+                        <div className="min-w-0 truncate">
+                          <span className="truncate block font-bold text-slate-800 dark:text-slate-200">{paper.gsPaper}</span>
+                          <span className="text-[10px] text-slate-400 font-medium block">
+                            {paper.totalSubjects} Subjects • {paper.totalTopics} Topics
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md ${
+                          paper.progressPercent === 100
+                            ? "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300"
+                            : paper.progressPercent > 0
+                            ? "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-500"
+                        }`}>
+                          {paper.progressPercent}%
+                        </span>
+                        <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${isActive ? "text-blue-500 translate-x-0.5" : "text-slate-350 opacity-0 group-hover:opacity-100"}`} />
+                      </div>
+                    </button>
+                  );
+                })
+              )
+            ) : sortedSubjects.length === 0 ? (
               <div className="text-center py-8 px-3">
                 <BookOpen className="w-8 h-8 text-slate-300 dark:text-slate-700 mx-auto mb-2 stroke-[1.2]" />
                 <p className="text-xs font-bold text-slate-500 dark:text-slate-400">No Enrolled Subjects</p>
@@ -1994,9 +2187,56 @@ export function StudentMyTab({
           </div>
         </div>
 
-        {/* RIGHT PANEL (68% width on sm+ or 8/12 columns) */}
+        {/* RIGHT PANEL */}
         <div className="col-span-12 min-[520px]:col-span-8 flex flex-col h-full overflow-hidden bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-4 shadow-xs" id="split-right-panel">
-          {selectedSubject ? (
+          {isUPSC ? (
+            activePaper ? (
+              <div className="flex flex-col h-full min-h-0">
+                {/* Header for UPSC Selected Paper */}
+                <div className="border-b border-slate-100 dark:border-slate-800 pb-3 mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shrink-0" id="study-right-header">
+                  <div className="truncate">
+                    <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400">Selected Paper</p>
+                    <h3 className="text-lg font-black text-slate-800 dark:text-slate-100 truncate pr-2">{activePaper.gsPaper}</h3>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                      {activePaper.totalSubjects} Subjects
+                    </span>
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                      {activePaper.totalModules} Modules
+                    </span>
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                      {activePaper.totalTopics} Topic Notes
+                    </span>
+                    <span className={`text-[11px] font-black px-2.5 py-1 rounded-lg ${
+                      activePaper.progressPercent === 100
+                        ? "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300"
+                        : "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300"
+                    }`}>
+                      {activePaper.progressPercent}% Complete
+                    </span>
+                  </div>
+                </div>
+
+                {/* UPSC Collapsible Tree */}
+                <div className="flex-1 overflow-y-auto pr-1">
+                  <StudentUPSCTree
+                    paper={activePaper}
+                    student={localStudent}
+                    onPreviewNote={handlePreviewPdf as any}
+                    onToggleTopicCompletion={handleToggleTopicCompletion}
+                    onOpenPracticeTest={(target) => setStudentTestTarget(target)}
+                    openingNoteId={openingNoteId}
+                    isAdmin={isAdmin}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-sm text-slate-500 dark:text-slate-400">
+                {enrolledPapers.length === 0 ? "No General Studies Papers have been assigned yet." : "Choose a General Studies Paper to view subjects and modules."}
+              </div>
+            )
+          ) : selectedSubject ? (
             <>
               <div className="border-b border-slate-100 dark:border-slate-800 pb-3 mb-4 flex items-center justify-between shrink-0" id="study-right-header">
                 <div className="truncate">
@@ -2652,6 +2892,13 @@ export default function StudentDashboard({
     return getStudentSubjects(student, allClassNotes);
   }, [student, allClassNotes]);
 
+  const isUPSC = isUPSCClass(student.classGrade);
+
+  const upscPapers = useMemo(() => {
+    if (!isUPSC) return [];
+    return buildStudentUPSCHierarchy(student, allClassNotes);
+  }, [isUPSC, student, allClassNotes, testBankVersion]);
+
   const subjectProgress = useMemo(() => {
     const allStudentAttempts = getAllTestAttempts();
     return studentSubjects
@@ -2872,7 +3119,26 @@ export default function StudentDashboard({
       </div>
 
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
-        {subjectProgress.length === 0 ? (
+        {isUPSC ? (
+          upscPapers.length === 0 ? (
+            <div className="col-span-full py-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-6 shadow-xs">
+              <BookOpen className="w-10 h-10 text-slate-300 dark:text-slate-700 mx-auto mb-2 stroke-[1.2]" />
+              <p className="text-sm font-bold text-slate-700 dark:text-slate-300">No General Studies Papers</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">No General Studies Papers have been assigned yet.</p>
+            </div>
+          ) : (
+            upscPapers.map((paper, index) => (
+              <GSPaperProgressCard
+                key={`upsc-paper-${paper.gsPaper}_${index}`}
+                paper={paper}
+                index={index}
+                onSelectPaper={(paperName) => {
+                  onSelectSubject(paperName);
+                }}
+              />
+            ))
+          )
+        ) : subjectProgress.length === 0 ? (
           <div className="col-span-full py-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-6 shadow-xs">
             <BookOpen className="w-10 h-10 text-slate-300 dark:text-slate-700 mx-auto mb-2 stroke-[1.2]" />
             <p className="text-sm font-bold text-slate-700 dark:text-slate-300">No Enrolled Subjects</p>
