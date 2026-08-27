@@ -1667,7 +1667,7 @@ export default function App() {
         <main className="flex-1 min-h-0 flex flex-col overflow-hidden relative" id="main-content-viewport">
           <ErrorBoundary fallbackTitle="View Error">
             {activeTab === "Notes" && auth.role === "admin" ? (
-              <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-2 sm:p-4">
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-0 sm:p-2 md:p-4">
                 <AdminNotesView
                   notes={classNotes}
                   students={students}

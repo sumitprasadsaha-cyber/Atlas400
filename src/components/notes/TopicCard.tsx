@@ -96,7 +96,7 @@ export default function TopicCard({
 
   return (
     <div
-      className={`group relative rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-slate-900 p-3.5 sm:p-4 transition-all duration-200 hover:shadow-md hover:border-blue-400/60 dark:hover:border-blue-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 sm:gap-4 ${
+      className={`group relative rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-slate-900 p-3.5 sm:p-4 transition-all duration-200 hover:shadow-md hover:border-blue-400/60 dark:hover:border-blue-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 w-full min-w-0 ${
         isOpening ? "ring-2 ring-blue-500/50 pointer-events-none opacity-90" : ""
       } ${className}`}
       id={`topic-card-${note.id}`}
@@ -104,12 +104,12 @@ export default function TopicCard({
       {/* Left Section: Topic Number badge, Icon, Title, and File info */}
       <div 
         onClick={() => onPreview(note)}
-        className="flex items-start sm:items-center gap-3 min-w-0 flex-1 cursor-pointer select-none"
+        className="flex items-start sm:items-center gap-2.5 sm:gap-3 min-w-0 flex-1 cursor-pointer select-none"
         title="Click to view document preview"
       >
         {/* Topic Number Pill with document icon */}
         <div className="shrink-0 flex items-center">
-          <span className="inline-flex items-center gap-1 min-w-[4.25rem] px-2.5 py-1 rounded-xl text-xs font-black uppercase tracking-wider bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800/70 shadow-2xs">
+          <span className="inline-flex items-center gap-1 min-w-[4rem] sm:min-w-[4.25rem] px-2 sm:px-2.5 py-1 rounded-xl text-xs font-black uppercase tracking-wider bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800/70 shadow-2xs">
             <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
             <span>Topic {paddedNo || "01"}</span>
           </span>
@@ -123,15 +123,15 @@ export default function TopicCard({
             </h4>
 
             {hasPracticeTest && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/70">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/70 shrink-0">
                 <FileCheck className="w-3 h-3" /> Test Ready
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-2.5 mt-1 text-xs text-slate-500 dark:text-slate-400 flex-wrap">
+          <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 dark:text-slate-400 flex-wrap">
             {/* File format chip */}
-            <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
+            <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider shrink-0 ${
               isImg
                 ? "bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300"
                 : "bg-red-50 dark:bg-red-950/80 text-red-700 dark:text-red-300 border border-red-200/60 dark:border-red-900/60"
@@ -140,13 +140,13 @@ export default function TopicCard({
             </span>
 
             {/* Original filename */}
-            <span className="truncate max-w-[180px] sm:max-w-[240px] font-medium text-slate-600 dark:text-slate-300" title={rawFilename}>
+            <span className="truncate max-w-[130px] sm:max-w-[220px] md:max-w-[260px] font-medium text-slate-600 dark:text-slate-300" title={rawFilename}>
               {rawFilename}
             </span>
 
             {/* Size */}
             {fileSizeStr !== "--" && (
-              <span className="flex items-center gap-1 text-[11px] text-slate-400 font-mono">
+              <span className="flex items-center gap-1 text-[11px] text-slate-400 font-mono shrink-0">
                 <HardDrive className="w-3 h-3" />
                 {fileSizeStr}
               </span>
@@ -154,7 +154,7 @@ export default function TopicCard({
 
             {/* Uploaded date */}
             {dateStr && (
-              <span className="flex items-center gap-1 text-[11px] text-slate-400">
+              <span className="flex items-center gap-1 text-[11px] text-slate-400 shrink-0">
                 <Calendar className="w-3 h-3" />
                 Uploaded {dateStr}
               </span>
@@ -165,20 +165,20 @@ export default function TopicCard({
 
       {/* Right Section: Topic Card Action Buttons */}
       <div 
-        className="flex items-center gap-1 sm:gap-1.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-800 justify-end flex-wrap"
+        className="flex items-center gap-1.5 shrink-0 pt-2.5 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-800 justify-end w-full sm:w-auto flex-wrap"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 1. 👁 View */}
         <button
           type="button"
           onClick={() => onPreview(note)}
-          className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/60 transition-all border border-slate-200/70 dark:border-slate-800/80 flex items-center gap-1 cursor-pointer"
+          className="min-h-[36px] px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/60 transition-all border border-slate-200/70 dark:border-slate-800/80 flex items-center gap-1 cursor-pointer"
           title="View document"
           aria-label="View document"
           id={`view-btn-${note.id}`}
         >
           <Eye className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">View</span>
+          <span>View</span>
         </button>
 
         {/* 2. 🧪 / ➕ Practice Test */}
@@ -186,7 +186,7 @@ export default function TopicCard({
           <button
             type="button"
             onClick={() => onOpenPracticeTest(note)}
-            className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all border cursor-pointer ${
+            className={`min-h-[36px] px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all border cursor-pointer ${
               hasPracticeTest
                 ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-300/80 dark:border-emerald-800/80 hover:bg-emerald-100 dark:hover:bg-emerald-900/70"
                 : "bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 border-slate-200/80 dark:border-slate-700/80 hover:bg-slate-100 dark:hover:bg-slate-700"
@@ -214,13 +214,13 @@ export default function TopicCard({
           <button
             type="button"
             onClick={() => onDelete(note)}
-            className="p-1.5 sm:px-2 rounded-xl text-xs font-bold text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 transition-all border border-transparent hover:border-rose-200/60 dark:hover:border-rose-900/60 flex items-center gap-1 cursor-pointer"
+            className="min-h-[36px] p-2 sm:px-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 transition-all border border-transparent hover:border-rose-200/60 dark:hover:border-rose-900/60 flex items-center gap-1 cursor-pointer"
             title="Delete topic note"
             aria-label="Delete topic note"
             id={`delete-btn-${note.id}`}
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Delete</span>
+            <span className="inline">Delete</span>
           </button>
         )}
 
@@ -230,7 +230,7 @@ export default function TopicCard({
             <button
               type="button"
               onClick={() => setMenuOpen(!menuOpen)}
-              className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-transparent"
+              className="min-h-[36px] p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-transparent flex items-center justify-center cursor-pointer"
               title="More actions"
               aria-label="More actions"
               id={`more-btn-${note.id}`}

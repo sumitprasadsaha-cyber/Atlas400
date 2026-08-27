@@ -44,8 +44,7 @@ import CreateHierarchyNodeModal, {
 } from "./CreateHierarchyNodeModal";
 import NotesPreviewModal from "./NotesPreviewModal";
 import AdminPracticeTestModal from "../AdminPracticeTestModal";
-import NotesMiddlePanel from "./NotesMiddlePanel";
-import NotesRightPanel from "./NotesRightPanel";
+import NotesMainPanel from "./NotesMainPanel";
 import {
   getSchoolHierarchy,
   getUpscHierarchy,
@@ -1178,24 +1177,29 @@ export default function AdminNotesDashboard({
       )}
 
       {/* =========================================================================
-          3-COLUMN RESPONSIVE LAYOUT
-          Column 1: Left Hierarchy Sidebar (School/UPSC Switch, Classes/Papers, Subjects)
-          Column 2: Middle Panel (Expandable Accordion of Chapters/Modules & Topics)
-          Column 3: Right Panel (Topic Notes Viewer / Detailed Workspace)
+          RESPONSIVE 2-PANEL LAYOUT
+          Mobile (<768px): Single vertical stacked scrollable flow (Sidebar Cards -> Main Panel)
+          Desktop (>=768px): Left Navigation Sidebar (w-72/80) + Right Main Panel (flex-1)
           ========================================================================= */}
-      <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
+      <div 
+        className="flex-1 min-h-0 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden p-3.5 sm:p-4 md:p-0 space-y-4 md:space-y-0 w-full max-w-full overflow-x-hidden" 
+        id="notes-dashboard-container"
+      >
         
         {/* =========================================================================
-            COLUMN 1: LEFT SIDEBAR (Classes / Papers & Subjects)
+            LEFT SIDEBAR (School/UPSC Switcher, Classes / Papers & Subjects)
             ========================================================================= */}
-        <aside className="w-full lg:w-72 xl:w-80 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col min-h-0 shrink-0 overflow-hidden max-h-72 lg:max-h-none" id="notes-left-sidebar">
+        <aside 
+          className="w-full md:w-72 xl:w-80 md:border-r border-slate-200 dark:border-slate-800 md:bg-white md:dark:bg-slate-900 flex flex-col shrink-0 md:min-h-0 md:overflow-hidden space-y-3.5 md:space-y-0" 
+          id="notes-left-sidebar"
+        >
           {/* Top Switcher: School vs UPSC */}
-          <div className="p-3.5 sm:p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 shrink-0">
-            <div className="flex rounded-xl bg-slate-200/70 dark:bg-slate-800/70 p-1">
+          <div className="rounded-2xl md:rounded-none border md:border-0 md:border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 md:bg-slate-50/70 md:dark:bg-slate-950/60 p-2.5 sm:p-3 md:p-4 shrink-0 shadow-xs md:shadow-none">
+            <div className="flex rounded-xl bg-slate-100 dark:bg-slate-800 p-1">
               <button
                 type="button"
                 onClick={() => setActiveTab("school")}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 md:py-2 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[40px] md:min-h-0 ${
                   activeTab === "school"
                     ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
                     : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
@@ -1209,7 +1213,7 @@ export default function AdminNotesDashboard({
               <button
                 type="button"
                 onClick={() => setActiveTab("upsc")}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 md:py-2 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[40px] md:min-h-0 ${
                   activeTab === "upsc"
                     ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm"
                     : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
@@ -1223,16 +1227,19 @@ export default function AdminNotesDashboard({
           </div>
 
           {/* Classes & Subjects List */}
-          <div className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-4 space-y-6 scrollbar-thin overscroll-contain" id="notes-sidebar-scroll">
+          <div 
+            className="space-y-3.5 md:space-y-6 md:flex-1 md:min-h-0 md:overflow-y-auto md:p-3.5 md:scrollbar-thin md:overscroll-contain" 
+            id="notes-sidebar-scroll"
+          >
             {activeTab === "school" ? (
               <>
-                {/* 1. Classes List */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                {/* 1. Classes List Card */}
+                <div className="rounded-2xl md:rounded-none border md:border-0 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-4 md:p-0 shadow-xs md:shadow-none">
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                       Classes
                     </span>
-                    <span className="text-[10px] font-bold text-slate-400">
+                    <span className="text-[11px] font-bold text-slate-400">
                       {schoolClasses.length} Available
                     </span>
                   </div>
@@ -1242,7 +1249,7 @@ export default function AdminNotesDashboard({
                       <p className="text-xs text-slate-400 font-medium">No classes created yet</p>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 gap-1.5" id="school-classes-list">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 gap-1.5" id="school-classes-list">
                       {schoolClasses.map((cls) => {
                         const isSelected = selectedSchoolClass.toLowerCase() === cls.toLowerCase();
                         const classNotesCount = schoolNotes.filter((n) => {
@@ -1254,7 +1261,7 @@ export default function AdminNotesDashboard({
                           <div
                             key={cls}
                             onClick={() => setSelectedSchoolClass(cls)}
-                            className={`group px-3 py-2 rounded-xl text-left text-xs font-bold transition-all flex items-center justify-between gap-1 border cursor-pointer ${
+                            className={`group min-h-[38px] px-3 py-2 rounded-xl text-left text-xs font-bold transition-all flex items-center justify-between gap-1 border cursor-pointer ${
                               isSelected
                                 ? "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-300/80 dark:border-blue-700/80 shadow-2xs"
                                 : "bg-slate-50/70 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 border-slate-200/70 dark:border-slate-800/70 hover:bg-slate-100 dark:hover:bg-slate-800"
@@ -1293,7 +1300,7 @@ export default function AdminNotesDashboard({
                   <button
                     type="button"
                     onClick={() => setCreateNodeContext({ nodeType: "new_class", type: "school" })}
-                    className="w-full mt-2.5 py-2 px-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 bg-transparent text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    className="w-full mt-2.5 py-2.5 px-3 min-h-[38px] rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 bg-transparent text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                     id="add-new-class-btn"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -1301,10 +1308,10 @@ export default function AdminNotesDashboard({
                   </button>
                 </div>
 
-                {/* 2. Subjects List */}
-                <div className="pt-4 border-t border-slate-200/80 dark:border-slate-800">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500 truncate">
+                {/* 2. Subjects List Card */}
+                <div className="rounded-2xl md:rounded-none border md:border-0 md:pt-4 md:border-t border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-4 md:p-0 shadow-xs md:shadow-none">
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 truncate">
                       {selectedSchoolClass ? `Subjects • ${selectedSchoolClass}` : "Subjects"}
                     </span>
                   </div>
@@ -1316,7 +1323,7 @@ export default function AdminNotesDashboard({
                       <p className="text-xs text-slate-400 font-medium">No subjects in {selectedSchoolClass}</p>
                     </div>
                   ) : (
-                    <div className="space-y-1" id="school-subjects-list">
+                    <div className="space-y-1.5" id="school-subjects-list">
                       {schoolSubjectsForSelectedClass.map((subj) => {
                         const isSelected = selectedSchoolSubject.toLowerCase() === subj.toLowerCase();
                         const subjNotesCount = schoolNotes.filter((n) => {
@@ -1329,7 +1336,7 @@ export default function AdminNotesDashboard({
                         return (
                           <div
                             key={subj}
-                            className={`group/subj w-full px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-1.5 border ${
+                            className={`group/subj w-full min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-1.5 border ${
                               isSelected
                                 ? "bg-blue-600 text-white border-blue-600 shadow-sm"
                                 : "bg-slate-50/70 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 border-slate-200/70 dark:border-slate-800/70 hover:bg-slate-100 dark:hover:bg-slate-800"
@@ -1365,7 +1372,7 @@ export default function AdminNotesDashboard({
                                     subject: subj,
                                   });
                                 }}
-                                className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                                   isSelected 
                                     ? "hover:bg-blue-700 text-blue-100 hover:text-rose-200" 
                                     : "text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-200 dark:hover:bg-slate-700"
@@ -1384,7 +1391,7 @@ export default function AdminNotesDashboard({
                                     e.stopPropagation();
                                     setActiveSubjectKebab(activeSubjectKebab === subjectKebabKey ? null : subjectKebabKey);
                                   }}
-                                  className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                                  className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                                     isSelected 
                                       ? "hover:bg-blue-700 text-blue-100" 
                                       : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
@@ -1425,7 +1432,7 @@ export default function AdminNotesDashboard({
                         type: "school", 
                         className: selectedSchoolClass 
                       })}
-                      className="w-full mt-2.5 py-2 px-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 bg-transparent text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                      className="w-full mt-2.5 py-2.5 px-3 min-h-[38px] rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 bg-transparent text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                       id="add-school-subject-btn"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -1436,13 +1443,13 @@ export default function AdminNotesDashboard({
               </>
             ) : (
               <>
-                {/* UPSC 1. GS Papers List */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                {/* UPSC 1. GS Papers List Card */}
+                <div className="rounded-2xl md:rounded-none border md:border-0 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-4 md:p-0 shadow-xs md:shadow-none">
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                       GS Papers
                     </span>
-                    <span className="text-[10px] font-bold text-slate-400">
+                    <span className="text-[11px] font-bold text-slate-400">
                       {upscPapers.length} Available
                     </span>
                   </div>
@@ -1452,7 +1459,7 @@ export default function AdminNotesDashboard({
                       <p className="text-xs text-slate-400 font-medium">No GS papers created yet</p>
                     </div>
                   ) : (
-                    <div className="space-y-1" id="upsc-papers-list">
+                    <div className="space-y-1.5" id="upsc-papers-list">
                       {upscPapers.map((paper) => {
                         const isSelected = selectedUpscPaper.toLowerCase() === paper.toLowerCase();
                         const paperNotesCount = upscNotes.filter((n) => {
@@ -1464,7 +1471,7 @@ export default function AdminNotesDashboard({
                           <div
                             key={paper}
                             onClick={() => setSelectedUpscPaper(paper)}
-                            className={`w-full px-3 py-2 rounded-xl text-left text-xs font-bold transition-all flex items-center justify-between gap-1.5 border cursor-pointer ${
+                            className={`w-full min-h-[38px] px-3 py-2 rounded-xl text-left text-xs font-bold transition-all flex items-center justify-between gap-1.5 border cursor-pointer ${
                               isSelected
                                 ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-300/80 dark:border-indigo-700/80 shadow-2xs"
                                 : "bg-slate-50/70 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 border-slate-200/70 dark:border-slate-800/70 hover:bg-slate-100 dark:hover:bg-slate-800"
@@ -1502,7 +1509,7 @@ export default function AdminNotesDashboard({
                   <button
                     type="button"
                     onClick={() => setCreateNodeContext({ nodeType: "new_gs_paper", type: "upsc" })}
-                    className="w-full mt-2.5 py-2 px-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-500 dark:hover:border-indigo-500 bg-transparent text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    className="w-full mt-2.5 py-2.5 px-3 min-h-[38px] rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-500 dark:hover:border-indigo-500 bg-transparent text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                     id="add-new-gs-paper-btn"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -1510,10 +1517,10 @@ export default function AdminNotesDashboard({
                   </button>
                 </div>
 
-                {/* UPSC 2. Subjects List */}
-                <div className="pt-4 border-t border-slate-200/80 dark:border-slate-800">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500 truncate">
+                {/* UPSC 2. Subjects List Card */}
+                <div className="rounded-2xl md:rounded-none border md:border-0 md:pt-4 md:border-t border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-4 md:p-0 shadow-xs md:shadow-none">
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 truncate">
                       {selectedUpscPaper ? `Subjects • ${selectedUpscPaper}` : "Subjects"}
                     </span>
                   </div>
@@ -1525,7 +1532,7 @@ export default function AdminNotesDashboard({
                       <p className="text-xs text-slate-400 font-medium">No subjects in {selectedUpscPaper}</p>
                     </div>
                   ) : (
-                    <div className="space-y-1" id="upsc-subjects-list">
+                    <div className="space-y-1.5" id="upsc-subjects-list">
                       {upscSubjectsForSelectedPaper.map((subj) => {
                         const isSelected = selectedUpscSubject.toLowerCase() === subj.toLowerCase();
                         const subjNotesCount = upscNotes.filter((n) => {
@@ -1538,7 +1545,7 @@ export default function AdminNotesDashboard({
                         return (
                           <div
                             key={subj}
-                            className={`group/subj w-full px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-1.5 border ${
+                            className={`group/subj w-full min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-1.5 border ${
                               isSelected
                                 ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
                                 : "bg-slate-50/70 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 border-slate-200/70 dark:border-slate-800/70 hover:bg-slate-100 dark:hover:bg-slate-800"
@@ -1573,7 +1580,7 @@ export default function AdminNotesDashboard({
                                     subject: subj,
                                   });
                                 }}
-                                className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                                   isSelected 
                                     ? "hover:bg-indigo-700 text-indigo-100 hover:text-rose-200" 
                                     : "text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-200 dark:hover:bg-slate-700"
@@ -1592,7 +1599,7 @@ export default function AdminNotesDashboard({
                                     e.stopPropagation();
                                     setActiveSubjectKebab(activeSubjectKebab === subjectKebabKey ? null : subjectKebabKey);
                                   }}
-                                  className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                                  className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                                     isSelected 
                                       ? "hover:bg-indigo-700 text-indigo-100" 
                                       : "text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-700"
@@ -1633,7 +1640,7 @@ export default function AdminNotesDashboard({
                         type: "upsc", 
                         gsPaper: selectedUpscPaper 
                       })}
-                      className="w-full mt-2.5 py-2 px-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-500 dark:hover:border-indigo-500 bg-transparent text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                      className="w-full mt-2.5 py-2.5 px-3 min-h-[38px] rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-500 dark:hover:border-indigo-500 bg-transparent text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                       id="add-upsc-subject-btn"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -1647,9 +1654,9 @@ export default function AdminNotesDashboard({
         </aside>
 
         {/* =========================================================================
-            COLUMN 2: MIDDLE PANEL (Chapters / Modules Accordion with Nested Topics)
+            MAIN/RIGHT PANEL: Chapters / Modules with Collapsible Topics (CMS Full Width)
             ========================================================================= */}
-        <NotesMiddlePanel
+        <NotesMainPanel
           type={activeTab}
           selectedSubject={activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject}
           selectedParentName={activeTab === "school" ? selectedSchoolClass : selectedUpscPaper}
@@ -1696,26 +1703,9 @@ export default function AdminNotesDashboard({
           }}
           onRenameTopic={handleOpenRename}
           onDeleteTopic={(note) => setDeletingNote(note)}
-          checkIfTopicHasPracticeTest={checkIfTopicHasPracticeTest}
-        />
-
-        {/* =========================================================================
-            COLUMN 3: RIGHT PANEL (Topic Notes Viewer / Full Document Workspace)
-            ========================================================================= */}
-        <NotesRightPanel
-          type={activeTab}
-          selectedClassName={activeTab === "school" ? selectedSchoolClass : selectedUpscPaper}
-          selectedSubject={activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject}
-          selectedChapterNo={activeTab === "school" ? selectedSchoolChapterNo : selectedUpscModuleNo}
-          selectedChapterName={activeTab === "school" ? selectedSchoolChapterName : selectedUpscModuleName}
-          selectedTopicNote={selectedTopicNote}
-          chapterTopics={activeChapterTopics}
-          onOpenPreview={(n) => setPreviewNote(n)}
-          onOpenReplace={handleOpenReplace}
-          onOpenRename={handleOpenRename}
-          onOpenDelete={(n) => setDeletingNote(n)}
+          onPreviewTopic={(note) => setPreviewNote(note)}
+          onReplaceTopic={handleOpenReplace}
           onOpenPracticeTest={handleOpenPracticeTest}
-          onUploadNewTopic={() => setQuickAddOpen(true)}
           checkIfTopicHasPracticeTest={checkIfTopicHasPracticeTest}
         />
       </div>
