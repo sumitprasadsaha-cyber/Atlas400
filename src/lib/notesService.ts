@@ -84,7 +84,7 @@ export function validateNoteFile(file: File): string | null {
 const activeUploads = new Set<string>();
 
 /**
- * Atlas400 v5.0.5 Unified Upload Pipeline
+ * Atlas400 v5.0.6 Unified Upload Pipeline
  * Form Input -> buildCanonicalNoteMetadata() -> validateCanonicalNoteMetadata() -> Cloudflare R2 Upload -> Firestore Document -> Return
  */
 export async function uploadNotePipeline(params: NoteUploadParams): Promise<ClassNote> {
@@ -215,7 +215,7 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
 }
 
 /**
- * Atlas400 v5.0.5 In-Place Note Replacement Pipeline
+ * Atlas400 v5.0.6 In-Place Note Replacement Pipeline
  */
 export async function replaceNotePipeline(params: NoteReplaceParams): Promise<ClassNote> {
   const { noteId, currentNote, newFile, onProgress } = params;
@@ -294,7 +294,7 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
 }
 
 /**
- * Atlas400 v5.0.5 Note Delete Pipeline
+ * Atlas400 v5.0.6 Note Delete Pipeline
  * Delete R2 folder contents + Delete Firestore document
  */
 export async function deleteNotePipeline(noteId: string, note?: ClassNote): Promise<void> {

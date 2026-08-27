@@ -82,6 +82,12 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // UPSC NOTES - Admin can CRUD, Students can read
+    match /upsc_notes/{noteId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
     // PRACTICE TESTS (from Supabase, synced to Firestore)
     match /practice_tests/{testId} {
       allow read: if isSignedIn();

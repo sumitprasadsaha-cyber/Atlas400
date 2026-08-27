@@ -39,6 +39,56 @@
         "name": { "type": "string" }
       },
       "required": ["uid", "phone", "role", "status"]
+    },
+    "classNote": {
+      "title": "Class Note",
+      "description": "School note document storing topic metadata and Cloudflare R2 reference",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "className": { "type": "string" },
+        "subject": { "type": "string" },
+        "chapterNumber": { "type": "number" },
+        "chapterName": { "type": "string" },
+        "topicNumber": { "type": "number" },
+        "topicName": { "type": "string" },
+        "storagePath": { "type": "string" },
+        "pdfUrl": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileType": { "type": "string" },
+        "fileSize": { "type": "number" },
+        "mimeType": { "type": "string" },
+        "uploadedBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "className", "subject", "chapterNumber", "chapterName", "storagePath"]
+    },
+    "upscNote": {
+      "title": "UPSC Note",
+      "description": "UPSC note document storing GS Paper, Module and topic metadata and Cloudflare R2 reference",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "gsPaper": { "type": "string" },
+        "subject": { "type": "string" },
+        "moduleNumber": { "type": "number" },
+        "moduleName": { "type": "string" },
+        "topicNumber": { "type": "number" },
+        "topicName": { "type": "string" },
+        "storagePath": { "type": "string" },
+        "pdfUrl": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileType": { "type": "string" },
+        "fileSize": { "type": "number" },
+        "mimeType": { "type": "string" },
+        "uploadedBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "gsPaper", "subject", "moduleNumber", "moduleName", "storagePath"]
     }
   },
   "firestore": {
@@ -49,6 +99,14 @@
     "/users/{userId}": {
       "schema": "user",
       "description": "Role-based user records mapping auth identity to admin/student permissions"
+    },
+    "/class_notes/{noteId}": {
+      "schema": "classNote",
+      "description": "School notes metadata catalog indexed by class, subject, chapter, and topic"
+    },
+    "/upsc_notes/{noteId}": {
+      "schema": "upscNote",
+      "description": "UPSC notes metadata catalog indexed by GS Paper, subject, module, and topic"
     }
   }
 }

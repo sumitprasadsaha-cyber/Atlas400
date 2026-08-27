@@ -1270,6 +1270,7 @@ const classNotesListeners = new Set<ClassNotesListener>();
 
 let inMemoryClassNotesCache: ClassNote[] | null = null;
 let activeFirestoreClassNotesUnsub: (() => void) | null = null;
+let activeFirestoreUpscNotesUnsub: (() => void) | null = null;
 let isFirestoreClassNotesSubscribed = false;
 let isClassNotesFetchInProgress = false;
 
@@ -1367,37 +1368,71 @@ function ensureSingleFirestoreNotesSubscription() {
         return;
       }
 
-      const colRef = collection(db, "class_notes");
+      let classNotesRemote: ClassNote[] = [];
+      let upscNotesRemote: ClassNote[] = [];
+
+      const mergeAndSave = () => {
+        const mergedMap = new Map<string, ClassNote>();
+        // Add class notes
+        for (const n of classNotesRemote) {
+          if (n && n.id) mergedMap.set(n.id, n);
+        }
+        // Add upsc notes
+        for (const n of upscNotesRemote) {
+          if (n && n.id) mergedMap.set(n.id, n);
+        }
+        const mergedList = Array.from(mergedMap.values());
+        const currentLocal = inMemoryClassNotesCache || getLocalClassNotes();
+        if (mergedList.length > 0) {
+          saveLocalClassNotes(mergedList);
+        } else if (currentLocal.length === 0) {
+          saveLocalClassNotes([]);
+        }
+      };
+
+      const classColRef = collection(db, "class_notes");
       activeFirestoreClassNotesUnsub = onSnapshot(
-        colRef,
+        classColRef,
         (snap) => {
           isClassNotesFetchInProgress = false;
           isFirestoreClassNotesSubscribed = true;
-          const remoteList: ClassNote[] = [];
+          classNotesRemote = [];
           snap.forEach((docSnap) => {
             const data = docSnap.data() as ClassNote;
             if (data && data.id) {
-              remoteList.push(data);
+              classNotesRemote.push(data);
             }
           });
-
-          // NEVER clear existing notes on empty snapshot if we already have valid notes cached
-          const currentLocal = inMemoryClassNotesCache || getLocalClassNotes();
-          if (remoteList.length > 0) {
-            saveLocalClassNotes(remoteList);
-          } else if (currentLocal.length === 0 && !snap.metadata.hasPendingWrites) {
-            saveLocalClassNotes([]);
-          }
+          mergeAndSave();
         },
         (err) => {
           isClassNotesFetchInProgress = false;
-          console.warn("[Firestore] class_notes subscription notice (retaining existing notes):", err);
+          console.warn("[Firestore] class_notes subscription notice:", err);
         }
       );
+
+      const upscColRef = collection(db, "upsc_notes");
+      activeFirestoreUpscNotesUnsub = onSnapshot(
+        upscColRef,
+        (snap) => {
+          upscNotesRemote = [];
+          snap.forEach((docSnap) => {
+            const data = docSnap.data() as ClassNote;
+            if (data && data.id) {
+              upscNotesRemote.push(data);
+            }
+          });
+          mergeAndSave();
+        },
+        (err) => {
+          console.warn("[Firestore] upsc_notes subscription notice:", err);
+        }
+      );
+
       isFirestoreClassNotesSubscribed = true;
     } catch (err) {
       isClassNotesFetchInProgress = false;
-      console.warn("[Firestore] Failed setting up class_notes subscription:", err);
+      console.warn("[Firestore] Failed setting up notes subscription:", err);
     } finally {
       isClassNotesFetchInProgress = false;
     }
@@ -1423,11 +1458,19 @@ export function subscribeToClassNotes(
   return () => {
     classNotesListeners.delete(onUpdate);
     // If no more listeners remain, keep in-memory cache but detach remote listener
-    if (classNotesListeners.size === 0 && activeFirestoreClassNotesUnsub) {
-      try {
-        activeFirestoreClassNotesUnsub();
-      } catch {}
-      activeFirestoreClassNotesUnsub = null;
+    if (classNotesListeners.size === 0) {
+      if (activeFirestoreClassNotesUnsub) {
+        try {
+          activeFirestoreClassNotesUnsub();
+        } catch {}
+        activeFirestoreClassNotesUnsub = null;
+      }
+      if (activeFirestoreUpscNotesUnsub) {
+        try {
+          activeFirestoreUpscNotesUnsub();
+        } catch {}
+        activeFirestoreUpscNotesUnsub = null;
+      }
       isFirestoreClassNotesSubscribed = false;
     }
   };
@@ -1445,11 +1488,19 @@ export async function saveClassNoteDoc(note: ClassNote): Promise<void> {
   if (!db) return;
 
   try {
-    const docRef = doc(db, "class_notes", note.id);
+    const isUpsc = note.isUPSC || (note as any).type === "upsc" || (note as any).noteType === "upsc" || note.classGrade === "UPSC" || (note as any).className === "UPSC";
+    const targetCollection = isUpsc ? "upsc_notes" : "class_notes";
+    const docRef = doc(db, targetCollection, note.id);
     await setDoc(docRef, cleanObjectForFirestore(note), { merge: true });
-    console.log(`[Firestore] Successfully persisted class note: class_notes/${note.id}`);
+    
+    // Also mirror to class_notes for legacy/unified lookups if upsc
+    if (isUpsc) {
+      const mirrorRef = doc(db, "class_notes", note.id);
+      await setDoc(mirrorRef, cleanObjectForFirestore(note), { merge: true }).catch(() => {});
+    }
+    console.log(`[Firestore] Successfully persisted note: ${targetCollection}/${note.id}`);
   } catch (err: any) {
-    console.warn(`[Firestore] saveClassNoteDoc warning for class_notes/${note.id}:`, err);
+    console.warn(`[Firestore] saveClassNoteDoc warning for note ${note.id}:`, err);
   }
 }
 
@@ -1512,8 +1563,10 @@ export async function deleteClassNoteDoc(noteId: string): Promise<void> {
   if (!db) return;
 
   try {
-    const docRef = doc(db, "class_notes", noteId);
-    await deleteDoc(docRef);
+    const classDocRef = doc(db, "class_notes", noteId);
+    await deleteDoc(classDocRef).catch(() => {});
+    const upscDocRef = doc(db, "upsc_notes", noteId);
+    await deleteDoc(upscDocRef).catch(() => {});
 
     // Clean up student.notes across all student records in Firestore
     try {
