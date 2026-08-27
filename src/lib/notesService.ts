@@ -15,7 +15,7 @@ import {
   saveClassNoteDoc,
   deleteClassNoteDoc,
 } from "./firestoreService";
-import { deleteTopicPracticeTest } from "./practiceTestService";
+import { deleteTopicPracticeTest, deleteClassPracticeTests } from "./practiceTestService";
 import { notesLogger } from "./notesLogger";
 import { notesCacheService } from "./notesCacheService";
 import { validateNoteInput } from "../utils/notesValidation";
@@ -731,6 +731,53 @@ export async function deleteChapterPipeline(params: {
   }
 
   await notesCacheService.invalidateMetadataCache();
+  return { deletedCount: matchingNotes.length };
+}
+
+/**
+ * Atlas v5.0.8 Class Delete Pipeline
+ * Recursively deletes:
+ * 1. All topic notes belonging to the class
+ * 2. Cloudflare R2 storage assets for each note (PDFs, images, metadata.json)
+ * 3. Firestore documents in class_notes & upsc_notes
+ * 4. Topic practice tests and attempts for the class
+ * 5. Purges metadata and blob caches
+ */
+export async function deleteClassPipeline(params: {
+  className: string;
+  notes: ClassNote[];
+}): Promise<{ deletedCount: number }> {
+  const { className, notes } = params;
+  const cleanClassName = className.trim().toLowerCase();
+
+  // 1. Find all notes belonging to this class
+  const matchingNotes = notes.filter((n) => {
+    const cls = ((n as any).className || n.classGrade || (n as any).class || "").trim().toLowerCase();
+    return cls === cleanClassName;
+  });
+
+  notesLogger.info("DELETE_CLASS_START", { className, extra: { notesCount: matchingNotes.length } });
+
+  // 2. Cascade delete all topic notes (Cloudflare R2 + Firestore + Topic Practice Tests)
+  for (const n of matchingNotes) {
+    try {
+      await deleteNotePipeline(n.id, n);
+    } catch (err: any) {
+      console.warn(`[DeleteClassPipeline] Error deleting note ${n.id} in class "${className}":`, err);
+    }
+  }
+
+  // 3. Purge all class-level practice tests and test attempts
+  try {
+    await deleteClassPracticeTests(className);
+  } catch (err: any) {
+    console.warn(`[DeleteClassPipeline] Error deleting class practice tests for "${className}":`, err);
+  }
+
+  // 4. Purge cache
+  await notesCacheService.invalidateMetadataCache();
+
+  notesLogger.info("DELETE_CLASS_SUCCESS", { className, extra: { deletedCount: matchingNotes.length } });
   return { deletedCount: matchingNotes.length };
 }
 

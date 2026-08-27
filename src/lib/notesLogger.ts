@@ -17,6 +17,9 @@ export type NotesLogEvent =
   | "DELETE_START"
   | "DELETE_SUCCESS"
   | "DELETE_ERROR"
+  | "DELETE_CLASS_START"
+  | "DELETE_CLASS_SUCCESS"
+  | "DELETE_CLASS_ERROR"
   | "RENAME_START"
   | "RENAME_SUCCESS"
   | "RENAME_ERROR"
@@ -41,6 +44,7 @@ export interface NotesLogPayload {
   noteId?: string;
   noteType?: "school" | "upsc" | string;
   classGrade?: string;
+  className?: string;
   subject?: string;
   chapterNumber?: number;
   moduleNumber?: number;

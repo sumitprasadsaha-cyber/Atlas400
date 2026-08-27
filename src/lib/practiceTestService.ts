@@ -913,6 +913,30 @@ export async function deleteTopicPracticeTest(
 
 export const deleteTopicPracticeTestDirect = deleteTopicPracticeTest;
 
+export async function deleteClassPracticeTests(classGrade: string): Promise<void> {
+  const normClass = String(classGrade || "").toLowerCase().trim();
+  if (!normClass) return;
+
+  const bank = getLocalTestBank();
+  let changed = false;
+
+  Object.keys(bank).forEach((k) => {
+    const t = bank[k];
+    if (t && String(t.classGrade || "").toLowerCase().trim() === normClass) {
+      delete bank[k];
+      removeLocalTopicCache(k);
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    saveLocalTestBank(bank);
+    clearAllQuestionCaches();
+    await syncTestBankToStorage(bank).catch(() => {});
+    await notifyPracticeTestRealtimeSync({ classGrade, action: "delete_class" });
+  }
+}
+
 export async function deleteAllPracticeTestsFromDatabase(): Promise<{
   success: boolean;
   message?: string;
