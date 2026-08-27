@@ -32,7 +32,7 @@ interface TopicCardProps {
 }
 
 function formatBytes(bytes?: number): string {
-  if (!bytes || isNaN(bytes) || bytes <= 0) return "--";
+  if (!bytes || isNaN(bytes) || bytes <= 0) return "";
   const k = 1024;
   const sizes = ["B", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -85,53 +85,56 @@ export default function TopicCard({
   // Topic display calculation
   const rawTopicNo = topicNumber ?? (note as any).topicNumber ?? (note as any).topicNo;
   const paddedNo = rawTopicNo !== undefined && rawTopicNo !== null && String(rawTopicNo).trim() !== ""
-    ? String(rawTopicNo).padStart(2, "0")
-    : null;
+    ? String(rawTopicNo)
+    : "1";
 
   const rawTopicName = topicTitle ?? (note as any).topicTitle ?? (note as any).topicName ?? note.partLabel ?? "";
-  const displayTitle = rawTopicName || (paddedNo ? `Topic ${paddedNo}` : "Topic Note");
+  const displayTitle = rawTopicName || `Topic ${paddedNo}`;
   const fileSizeStr = formatBytes((note as any).fileSize || (note as any).file_size);
   const dateStr = formatDate((note as any).createdAt || (note as any).uploadedAt);
-  const fileExt = (rawFilename.split(".").pop() || "PDF").toUpperCase();
+  const fileExt = (rawFilename.split(".").pop() || (isImg ? "IMG" : "PDF")).toUpperCase();
 
   return (
     <div
-      className={`group relative rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-slate-900 p-3.5 sm:p-4 transition-all duration-200 hover:shadow-md hover:border-blue-400/60 dark:hover:border-blue-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 w-full min-w-0 ${
+      className={`group relative rounded-xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-slate-900 px-2.5 py-2 sm:px-3 sm:py-2 transition-all duration-150 hover:shadow-xs hover:border-blue-400/70 dark:hover:border-blue-700/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 w-full min-w-0 ${
         isOpening ? "ring-2 ring-blue-500/50 pointer-events-none opacity-90" : ""
       } ${className}`}
       id={`topic-card-${note.id}`}
     >
-      {/* Left Section: Topic Number badge, Icon, Title, and File info */}
+      {/* Left Section: Topic badge, Title, and Metadata Line */}
       <div 
         onClick={() => onPreview(note)}
-        className="flex items-start sm:items-center gap-2.5 sm:gap-3 min-w-0 flex-1 cursor-pointer select-none"
-        title="Click to view document preview"
+        className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1 cursor-pointer select-none"
+        title="Click to view preview"
       >
-        {/* Topic Number Pill with document icon */}
-        <div className="shrink-0 flex items-center">
-          <span className="inline-flex items-center gap-1 min-w-[4rem] sm:min-w-[4.25rem] px-2 sm:px-2.5 py-1 rounded-xl text-xs font-black uppercase tracking-wider bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800/70 shadow-2xs">
-            <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-            <span>Topic {paddedNo || "01"}</span>
-          </span>
-        </div>
+        {/* Compact Topic Pill */}
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-extrabold uppercase tracking-tight bg-blue-50 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 border border-blue-200/80 dark:border-blue-800/70 shrink-0">
+          <FileText className="w-3 h-3 text-blue-500 shrink-0" />
+          <span>T{paddedNo}</span>
+        </span>
 
-        {/* Title & Metadata */}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors break-words leading-tight">
+        {/* Title + Metadata (horizontal on desktop, compact 2-line on small mobile) */}
+        <div className="min-w-0 flex-1 flex flex-col md:flex-row md:items-center md:gap-2.5">
+          {/* Title */}
+          <div className="flex items-center gap-1.5 min-w-0">
+            <h4 className="text-xs sm:text-[13px] font-bold text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate leading-tight">
               {displayTitle}
             </h4>
 
             {hasPracticeTest && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/70 shrink-0">
-                <FileCheck className="w-3 h-3" /> Test Ready
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/70 shrink-0">
+                <FileCheck className="w-2.5 h-2.5 text-emerald-600" />
+                <span>Test Ready</span>
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 dark:text-slate-400 flex-wrap">
-            {/* File format chip */}
-            <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider shrink-0 ${
+          {/* Metadata Row: Format, Filename, Size, Upload Date */}
+          <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] text-slate-400 dark:text-slate-500 font-medium truncate mt-0.5 md:mt-0">
+            <span className="hidden md:inline text-slate-300 dark:text-slate-700">•</span>
+            
+            {/* File format badge */}
+            <span className={`px-1 py-0.2 rounded text-[9px] font-black uppercase tracking-wider shrink-0 ${
               isImg
                 ? "bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300"
                 : "bg-red-50 dark:bg-red-950/80 text-red-700 dark:text-red-300 border border-red-200/60 dark:border-red-900/60"
@@ -139,54 +142,67 @@ export default function TopicCard({
               {fileExt}
             </span>
 
-            {/* Original filename */}
-            <span className="truncate max-w-[130px] sm:max-w-[220px] md:max-w-[260px] font-medium text-slate-600 dark:text-slate-300" title={rawFilename}>
+            {/* Filename */}
+            <span className="truncate max-w-[120px] sm:max-w-[160px] md:max-w-[200px] text-slate-500 dark:text-slate-400" title={rawFilename}>
               {rawFilename}
             </span>
 
-            {/* Size */}
-            {fileSizeStr !== "--" && (
-              <span className="flex items-center gap-1 text-[11px] text-slate-400 font-mono shrink-0">
-                <HardDrive className="w-3 h-3" />
-                {fileSizeStr}
-              </span>
+            {fileSizeStr && (
+              <>
+                <span className="text-slate-300 dark:text-slate-700">•</span>
+                <span className="font-mono text-slate-400 shrink-0">{fileSizeStr}</span>
+              </>
             )}
 
-            {/* Uploaded date */}
             {dateStr && (
-              <span className="flex items-center gap-1 text-[11px] text-slate-400 shrink-0">
-                <Calendar className="w-3 h-3" />
-                Uploaded {dateStr}
-              </span>
+              <>
+                <span className="hidden lg:inline text-slate-300 dark:text-slate-700">•</span>
+                <span className="hidden lg:inline text-slate-400 shrink-0">{dateStr}</span>
+              </>
             )}
           </div>
         </div>
       </div>
 
-      {/* Right Section: Topic Card Action Buttons */}
+      {/* Right Section: Compact Action Buttons (Always fits in single row) */}
       <div 
-        className="flex items-center gap-1.5 shrink-0 pt-2.5 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-800 justify-end w-full sm:w-auto flex-wrap"
+        className="flex items-center gap-1 sm:gap-1.5 shrink-0 justify-end flex-nowrap"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* 1. 👁 View */}
+        {/* 1. 👁 View Button */}
         <button
           type="button"
           onClick={() => onPreview(note)}
-          className="min-h-[36px] px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/60 transition-all border border-slate-200/70 dark:border-slate-800/80 flex items-center gap-1 cursor-pointer"
+          className="px-2 py-1 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/60 transition-colors border border-slate-200/80 dark:border-slate-800 flex items-center gap-1 cursor-pointer shrink-0"
           title="View document"
           aria-label="View document"
           id={`view-btn-${note.id}`}
         >
-          <Eye className="w-3.5 h-3.5" />
+          <Eye className="w-3.5 h-3.5 text-blue-500" />
           <span>View</span>
         </button>
 
-        {/* 2. 🧪 / ➕ Practice Test */}
+        {/* 2. 🔄 Replace Button */}
+        {isAdmin && onReplace && (
+          <button
+            type="button"
+            onClick={() => onReplace(note)}
+            className="px-2 py-1 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/60 transition-colors border border-slate-200/80 dark:border-slate-800 flex items-center gap-1 cursor-pointer shrink-0"
+            title="Replace document file"
+            aria-label="Replace document file"
+            id={`replace-btn-${note.id}`}
+          >
+            <RefreshCw className="w-3 h-3 text-slate-500" />
+            <span className="hidden sm:inline">Replace</span>
+          </button>
+        )}
+
+        {/* 3. 🧪 Practice Test Button */}
         {onOpenPracticeTest && (
           <button
             type="button"
             onClick={() => onOpenPracticeTest(note)}
-            className={`min-h-[36px] px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all border cursor-pointer ${
+            className={`px-2 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors border cursor-pointer shrink-0 ${
               hasPracticeTest
                 ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-300/80 dark:border-emerald-800/80 hover:bg-emerald-100 dark:hover:bg-emerald-900/70"
                 : "bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 border-slate-200/80 dark:border-slate-700/80 hover:bg-slate-100 dark:hover:bg-slate-700"
@@ -197,78 +213,50 @@ export default function TopicCard({
           >
             {hasPracticeTest ? (
               <>
-                <FlaskConical className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                <span>Edit Test</span>
+                <FlaskConical className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                <span>Test</span>
               </>
             ) : (
               <>
-                <PlusCircle className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+                <PlusCircle className="w-3 h-3 text-slate-400" />
                 <span>+ Test</span>
               </>
             )}
           </button>
         )}
 
-        {/* 3. 🗑 Delete */}
+        {/* 4. 🗑 Delete Button */}
         {isAdmin && onDelete && (
           <button
             type="button"
             onClick={() => onDelete(note)}
-            className="min-h-[36px] p-2 sm:px-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 transition-all border border-transparent hover:border-rose-200/60 dark:hover:border-rose-900/60 flex items-center gap-1 cursor-pointer"
+            className="px-2 py-1 rounded-lg text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 transition-colors border border-slate-200/80 dark:border-slate-800 flex items-center gap-1 cursor-pointer shrink-0"
             title="Delete topic note"
             aria-label="Delete topic note"
             id={`delete-btn-${note.id}`}
           >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span className="inline">Delete</span>
+            <Trash2 className="w-3 h-3" />
+            <span className="hidden sm:inline">Delete</span>
           </button>
         )}
 
-        {/* 4. More actions (Kebab Context Menu for Rename & Replace) */}
-        {isAdmin && (onRename || onReplace) && (
+        {/* 5. ✏️ Rename in Kebab Menu / Quick Action */}
+        {isAdmin && onRename && (
           <div className="relative" ref={menuRef}>
             <button
               type="button"
-              onClick={() => setMenuOpen(!menuOpen)}
-              className="min-h-[36px] p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-transparent flex items-center justify-center cursor-pointer"
-              title="More actions"
-              aria-label="More actions"
-              id={`more-btn-${note.id}`}
+              onClick={() => onRename(note)}
+              className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border border-transparent flex items-center justify-center cursor-pointer shrink-0"
+              title="Rename topic title"
+              aria-label="Rename topic title"
+              id={`rename-btn-${note.id}`}
             >
-              <MoreVertical className="w-4 h-4" />
+              <Edit3 className="w-3.5 h-3.5" />
             </button>
-
-            {menuOpen && (
-              <div className="absolute right-0 top-full mt-1 w-36 bg-white dark:bg-slate-850 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 py-1 z-30 animate-fadeIn">
-                {onRename && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onRename(note);
-                    }}
-                    className="w-full text-left px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
-                  >
-                    Rename
-                  </button>
-                )}
-                {onReplace && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onReplace(note);
-                    }}
-                    className="w-full text-left px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
-                  >
-                    Replace File
-                  </button>
-                )}
-              </div>
-            )}
           </div>
         )}
       </div>
     </div>
   );
 }
+
