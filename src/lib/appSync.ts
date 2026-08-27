@@ -19,6 +19,8 @@ import {
 } from "./firestoreService";
 import { initPracticeTestsRealtimeSync } from "./practiceTestService";
 import { cleanupAllListeners } from "./realtimeSync";
+import { subscribeToCurriculumHierarchy } from "./curriculumService";
+import { runDatabaseMigrationsIfNeeded } from "./schemaMigrationService";
 
 type UnsubscribeFn = () => void;
 
@@ -95,7 +97,16 @@ export function initializeAdminSync(): void {
     // 5. Initialize practice tests real-time sync
     initPracticeTestsRealtimeSync();
 
-    // 6. Set up network connectivity monitoring
+    // 6. Subscribe to curriculum hierarchy (Classes, GS Papers, Subjects, Chapters, Modules)
+    const unsubCurriculum = subscribeToCurriculumHierarchy();
+    appState.unsubscribers.add(unsubCurriculum);
+
+    // 7. Run safe non-destructive migrations if needed
+    runDatabaseMigrationsIfNeeded().catch((err) => {
+      console.warn("[AppSync] Migration check warning:", err);
+    });
+
+    // 8. Set up network connectivity monitoring
     setupNetworkMonitoring();
 
     appState.initialized = true;
@@ -166,7 +177,11 @@ export function initializeStudentSync(studentId: string): void {
     // 5. Initialize practice tests real-time sync
     initPracticeTestsRealtimeSync();
 
-    // 6. Set up network connectivity monitoring
+    // 6. Subscribe to curriculum hierarchy
+    const unsubCurriculum = subscribeToCurriculumHierarchy();
+    appState.unsubscribers.add(unsubCurriculum);
+
+    // 7. Set up network connectivity monitoring
     setupNetworkMonitoring();
 
     appState.initialized = true;

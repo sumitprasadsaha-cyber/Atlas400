@@ -465,7 +465,7 @@ export default function App() {
   // Subscribe to central class notes real-time updates
   useEffect(() => {
     const unsub = subscribeToClassNotes((updatedNotes) => {
-      if (!updatedNotes || updatedNotes.length === 0) return;
+      if (!updatedNotes) return;
       setClassNotes((prev) => (areClassNotesEqual(prev, updatedNotes) ? prev : updatedNotes));
     });
     return () => {

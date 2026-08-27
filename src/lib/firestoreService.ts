@@ -1389,16 +1389,29 @@ function ensureSingleFirestoreNotesSubscription() {
 
       const mergeAndSave = () => {
         const mergedMap = new Map<string, ClassNote>();
-        // Add class notes
+        // Add class notes from remote
         for (const n of classNotesRemote) {
           if (n && n.id) mergedMap.set(n.id, n);
         }
-        // Add upsc notes
+        // Add upsc notes from remote
         for (const n of upscNotesRemote) {
           if (n && n.id) mergedMap.set(n.id, n);
         }
-        const mergedList = Array.from(mergedMap.values());
+
+        // Preserve recently created/updated optimistic local notes that might still be in-flight
         const currentLocal = inMemoryClassNotesCache || getLocalClassNotes();
+        const now = Date.now();
+        for (const localNote of currentLocal) {
+          if (localNote && localNote.id && !mergedMap.has(localNote.id)) {
+            const updatedAtMs = new Date(localNote.updatedAt || localNote.createdAt || 0).getTime();
+            // Preserve optimistic writes within the last 30 seconds
+            if (now - updatedAtMs < 30000) {
+              mergedMap.set(localNote.id, localNote);
+            }
+          }
+        }
+
+        const mergedList = Array.from(mergedMap.values());
         if (mergedList.length > 0) {
           saveLocalClassNotes(mergedList);
         } else if (currentLocal.length === 0) {

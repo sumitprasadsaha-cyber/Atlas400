@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { ClassNote } from "../../types";
 import { uploadNotePipeline } from "../../lib/notesService";
-import { UploadProgressState } from "./NotesUploadProgressModal";
+import NotesUploadProgressModal, { UploadProgressState } from "./NotesUploadProgressModal";
 
 export interface ParentContext {
   type: "school" | "upsc";
@@ -472,6 +472,20 @@ export default function QuickAddTopicModal({
           </button>
         </div>
       </div>
+
+      {/* Real-time Upload Progress Modal */}
+      <NotesUploadProgressModal
+        state={uploadState}
+        onCancel={() => {
+          setUploadState((prev) => ({ ...prev, isOpen: false, isUploading: false }));
+        }}
+        onRetry={() => {
+          handleSaveTopic(true);
+        }}
+        onClose={() => {
+          setUploadState((prev) => ({ ...prev, isOpen: false }));
+        }}
+      />
     </div>
   );
 }

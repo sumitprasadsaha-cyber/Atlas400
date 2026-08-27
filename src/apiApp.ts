@@ -26,10 +26,23 @@ apiApp.use((req, res, next) => {
   next();
 });
 
-// Enable raw binary upload parsing for R2 uploads and JSON for API requests
-apiApp.use(express.raw({ type: "application/octet-stream", limit: "100mb" }));
-apiApp.use(express.json({ limit: "25mb" }));
-apiApp.use(express.urlencoded({ extended: true, limit: "25mb" }));
+// Enable raw binary and multipart upload parsing for R2 uploads and JSON for API requests
+apiApp.use(
+  express.raw({
+    type: (req) => {
+      const ct = (req.headers["content-type"] || "").toLowerCase();
+      return (
+        ct.startsWith("application/octet-stream") ||
+        ct.startsWith("multipart/form-data") ||
+        ct.startsWith("image/") ||
+        ct.startsWith("application/pdf")
+      );
+    },
+    limit: "100mb",
+  })
+);
+apiApp.use(express.json({ limit: "50mb" }));
+apiApp.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 import {
   handleStudentChat,

@@ -1,17 +1,17 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { 
   FileText, 
   Image as ImageIcon, 
   Eye, 
   RefreshCw, 
-  Pencil, 
   Trash2, 
   FlaskConical,
   PlusCircle,
   HardDrive,
   Calendar,
-  Loader2,
-  FileCheck
+  MoreVertical,
+  FileCheck,
+  Edit3
 } from "lucide-react";
 import { ClassNote, ChapterNote } from "../../types";
 import { isImageFile } from "../../lib/nativePdfService";
@@ -64,6 +64,21 @@ export default function TopicCard({
   isOpening = false,
   className = "",
 }: TopicCardProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    if (menuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuOpen]);
+
   const rawFilename = note.fileName || note.pdfFileName || (note as any).originalFilename || "note.pdf";
   const isImg = isImageFile(rawFilename);
 
@@ -166,37 +181,7 @@ export default function TopicCard({
           <span className="hidden sm:inline">View</span>
         </button>
 
-        {/* 2. ✏ Replace */}
-        {isAdmin && onReplace && (
-          <button
-            type="button"
-            onClick={() => onReplace(note)}
-            className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 transition-all border border-slate-200/70 dark:border-slate-800/80 flex items-center gap-1 cursor-pointer"
-            title="Replace file"
-            aria-label="Replace file"
-            id={`replace-btn-${note.id}`}
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Replace</span>
-          </button>
-        )}
-
-        {/* 3. 📝 Rename */}
-        {isAdmin && onRename && (
-          <button
-            type="button"
-            onClick={() => onRename(note)}
-            className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/60 transition-all border border-slate-200/70 dark:border-slate-800/80 flex items-center gap-1 cursor-pointer"
-            title="Rename topic"
-            aria-label="Rename topic"
-            id={`rename-btn-${note.id}`}
-          >
-            <Pencil className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Rename</span>
-          </button>
-        )}
-
-        {/* 4. 🧪 / ➕ Practice Test */}
+        {/* 2. 🧪 / ➕ Practice Test */}
         {onOpenPracticeTest && (
           <button
             type="button"
@@ -224,7 +209,7 @@ export default function TopicCard({
           </button>
         )}
 
-        {/* 5. 🗑 Delete */}
+        {/* 3. 🗑 Delete */}
         {isAdmin && onDelete && (
           <button
             type="button"
@@ -237,6 +222,51 @@ export default function TopicCard({
             <Trash2 className="w-3.5 h-3.5" />
             <span className="hidden md:inline">Delete</span>
           </button>
+        )}
+
+        {/* 4. More actions (Kebab Context Menu for Rename & Replace) */}
+        {isAdmin && (onRename || onReplace) && (
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-transparent"
+              title="More actions"
+              aria-label="More actions"
+              id={`more-btn-${note.id}`}
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
+
+            {menuOpen && (
+              <div className="absolute right-0 top-full mt-1 w-36 bg-white dark:bg-slate-850 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 py-1 z-30 animate-fadeIn">
+                {onRename && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onRename(note);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                  >
+                    Rename
+                  </button>
+                )}
+                {onReplace && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onReplace(note);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                  >
+                    Replace File
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>

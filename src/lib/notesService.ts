@@ -19,6 +19,12 @@ import { deleteTopicPracticeTest, deleteClassPracticeTests } from "./practiceTes
 import { notesLogger } from "./notesLogger";
 import { notesCacheService } from "./notesCacheService";
 import { validateNoteInput } from "../utils/notesValidation";
+import {
+  uploadToR2,
+  deleteFromR2,
+  getR2BucketName,
+  getR2PublicUrl,
+} from "./r2Client";
 
 export const MAX_NOTE_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 
@@ -160,12 +166,13 @@ const activeUploads = new Set<string>();
 
 /**
  * Atlas v5.0.8 Production-Hardened Upload Pipeline
- * Form Input -> validate -> buildCanonicalNoteMetadata() -> R2 Upload -> Storage Verify -> Firestore Doc -> Cache Invalidate -> Return
+ * Form Input -> validate -> buildCanonicalNoteMetadata() -> R2 Upload (Real Progress) -> Storage Verify -> Firestore Doc -> Rollback on error -> Return
  */
 export async function uploadNotePipeline(params: NoteUploadParams): Promise<ClassNote> {
   const { file, onProgress, uploadedBy = "Admin" } = params;
 
-  // 1. Validate file presence and format
+  // 1. Stage 1: Validate file presence and format
+  console.log(`[Upload Pipeline] Stage 1: Validating file "${file?.name}" (${file?.size} bytes)...`);
   const fileValidationError = validateNoteFile(file);
   if (fileValidationError) {
     notesLogger.warn("VALIDATION_FAILED", { error: fileValidationError, fileName: file?.name });
@@ -173,6 +180,7 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
   }
 
   // 2. Validate metadata fields
+  console.log(`[Upload Pipeline] Stage 1.1: Validating curriculum metadata fields...`);
   const metaValidation = validateNoteInput({
     className: params.classGrade,
     classGrade: params.classGrade,
@@ -230,6 +238,7 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
   }
   activeUploads.add(uploadLockKey);
 
+  console.log(`[Upload Pipeline] Stage 2: Validation complete for note ${canonicalMetadata.id}. Storage Path: "${canonicalMetadata.storagePath}"`);
   notesLogger.info("UPLOAD_START", {
     noteId: canonicalMetadata.id,
     noteType: canonicalMetadata.type,
@@ -238,82 +247,88 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
     storageKey: canonicalMetadata.storagePath,
   });
 
+  let r2Uploaded = false;
   try {
-    if (onProgress) onProgress(15);
+    // 5. Stage 3: Upload file to Cloudflare R2 with REAL progress tracking (0%..99%)
+    console.log(`[Upload Pipeline] Stage 3: Uploading file to Cloudflare R2 (${canonicalMetadata.storagePath})...`);
+    const mimeType = canonicalMetadata.mimeType || file.type || "application/pdf";
+    const bucket = getR2BucketName();
 
-    // 5. Send upload request to /api/notes/upload
-    const formData = new FormData();
-    formData.append("file", file, file.name);
-    formData.append("noteType", canonicalMetadata.noteType || canonicalMetadata.type);
-    formData.append("type", canonicalMetadata.noteType || canonicalMetadata.type);
-    formData.append("className", canonicalMetadata.className);
-    formData.append("classGrade", canonicalMetadata.className);
-    formData.append("subject", canonicalMetadata.subject);
-
-    if (canonicalMetadata.type === "upsc") {
-      formData.append("gsPaper", canonicalMetadata.gsPaper);
-      formData.append("generalStudiesPaper", canonicalMetadata.gsPaper);
-      formData.append("paper", canonicalMetadata.gsPaper);
-      formData.append("moduleNumber", String(canonicalMetadata.moduleNumber));
-      formData.append("moduleName", canonicalMetadata.moduleName);
-      formData.append("moduleNo", String(canonicalMetadata.moduleNumber));
-    } else {
-      formData.append("chapterNumber", String(canonicalMetadata.chapterNumber));
-      formData.append("chapterName", canonicalMetadata.chapterName);
-      formData.append("chapterNo", String(canonicalMetadata.chapterNumber));
-    }
-
-    if (canonicalMetadata.topicNumber !== undefined) {
-      formData.append("topicNumber", String(canonicalMetadata.topicNumber));
-      formData.append("topicNo", String(canonicalMetadata.topicNumber));
-    }
-    if (canonicalMetadata.topicName) {
-      formData.append("topicName", canonicalMetadata.topicName);
-    }
-
-    formData.append("visibility", canonicalMetadata.visibility);
-    formData.append("uploadedBy", uploadedBy);
-    formData.append("fileName", file.name);
-
-    if (onProgress) onProgress(40);
-
-    const res = await fetchWithRetry("/api/notes/upload", {
-      method: "POST",
-      body: formData,
+    const uploadRes = await uploadToR2({
+      bucket,
+      key: canonicalMetadata.storagePath,
+      file,
+      mimeType,
+      onProgress: (realPercent) => {
+        // Report actual progress from XHR byte upload events
+        if (onProgress) {
+          // Cap at 95% while uploading bytes so 100% only represents complete DB persistence
+          const displayPct = Math.min(95, Math.max(1, realPercent));
+          onProgress(displayPct);
+        }
+      },
     });
 
-    if (onProgress) onProgress(75);
+    r2Uploaded = true;
+    console.log(`[Upload Pipeline] Stage 4: Cloudflare R2 upload confirmed. ETag/Result:`, uploadRes);
 
-    if (!res.ok) {
-      let errMsg = "Upload failed. Please check your connection and try again.";
-      try {
-        const errorJson = await res.json();
-        if (errorJson?.error) errMsg = errorJson.error;
-      } catch {}
-      throw new Error(errMsg);
-    }
+    const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(canonicalMetadata.storagePath)}`;
+    const publicUrl = uploadRes.url || getR2PublicUrl(bucket, canonicalMetadata.storagePath);
 
-    const data = await res.json();
-    if (!data.success || !data.note) {
-      throw new Error(data.error || "Upload failed. Storage server did not return confirmed note metadata.");
-    }
+    const isUPSC = canonicalMetadata.type === "upsc";
+    const chapterNo = isUPSC ? canonicalMetadata.moduleNumber : canonicalMetadata.chapterNumber;
+    const chapterName = isUPSC ? canonicalMetadata.moduleName : canonicalMetadata.chapterName;
 
     const createdNote: ClassNote = {
-      ...(data.note as any),
-      classGrade: data.note.className,
-      subject: data.note.subject,
-      chapterNo: data.note.chapterNumber || data.note.moduleNumber || 1,
-      chapterName: data.note.chapterName || data.note.moduleName || "Chapter 1",
+      ...(canonicalMetadata as any),
+      id: canonicalMetadata.id,
+      classGrade: canonicalMetadata.className,
+      subject: canonicalMetadata.subject,
+      chapterNo: chapterNo || 1,
+      chapterName: chapterName || "Chapter 1",
+      topicNo: canonicalMetadata.topicNumber,
+      topicName: canonicalMetadata.topicName || "Topic Note",
+      fileName: file.name,
+      originalFilename: file.name,
+      pdfFileName: file.name,
+      r2Key: canonicalMetadata.storagePath,
+      storageKey: canonicalMetadata.storagePath,
+      storagePath: canonicalMetadata.storagePath,
+      pdfUrl: downloadUrl,
+      publicUrl: publicUrl,
+      downloadUrl: downloadUrl,
+      fileSize: file.size,
+      mimeType: mimeType,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      uploadedBy,
     };
 
-    if (onProgress) onProgress(85);
+    // 6. Stage 5: Persist to Firestore database
+    console.log(`[Upload Pipeline] Stage 5: Saving note document to Firestore database (id: ${createdNote.id})...`);
+    try {
+      await saveClassNoteDoc(createdNote);
+      console.log(`[Upload Pipeline] Stage 5.1: Firestore document write confirmed.`);
+    } catch (dbErr: any) {
+      console.error(`[Upload Pipeline] Stage 5 ERROR: Firestore save failed, initiating R2 rollback for key "${canonicalMetadata.storagePath}"...`, dbErr);
+      // Rollback orphaned file in R2
+      try {
+        await deleteFromR2({ bucket, key: canonicalMetadata.storagePath });
+        console.log(`[Upload Pipeline] Rollback complete: deleted orphaned file from R2.`);
+      } catch (rollbackErr) {
+        console.warn(`[Upload Pipeline] Warning during R2 rollback:`, rollbackErr);
+      }
+      throw new Error(`Database save failed: ${dbErr?.message || "Failed to index note record."}. File upload rolled back.`);
+    }
 
-    // 6. Persist to Firestore database
-    await saveClassNoteDoc(createdNote);
-
-    // 7. Invalidate caches for instant fresh state
+    // 7. Stage 6: Invalidate caches for instant UI synchronization
+    console.log(`[Upload Pipeline] Stage 6: Invalidating caches for UI refresh...`);
     await notesCacheService.invalidateMetadataCache();
     await notesCacheService.invalidateBlobCache(createdNote.storagePath || createdNote.r2Key || "");
+
+    // 8. Stage 7: Signal 100% completion ONLY after all steps succeeded
+    console.log(`[Upload Pipeline] Stage 7: Upload and indexing complete.`);
+    if (onProgress) onProgress(100);
 
     notesLogger.info("UPLOAD_SUCCESS", {
       noteId: createdNote.id,
@@ -321,14 +336,13 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
       fileSize: createdNote.fileSize,
     });
 
-    if (onProgress) onProgress(100);
-
     return createdNote;
   } catch (err: any) {
     notesLogger.error("UPLOAD_ERROR", {
       noteId: canonicalMetadata.id,
       error: err?.message || "Upload pipeline failure",
     });
+    console.error(`[Upload Pipeline] Failed to complete upload for note ${canonicalMetadata.id}:`, err);
     throw new Error(err?.message || "Upload failed. Please check your internet connection.");
   } finally {
     activeUploads.delete(uploadLockKey);
@@ -337,18 +351,17 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
 
 /**
  * Atlas v5.0.8 Production-Hardened Note Replacement Pipeline
- * Safe in-place replacement: upload new asset -> update Firestore -> purge stale cache -> return updated record
+ * Safe in-place replacement: upload new asset with real progress -> update Firestore -> purge stale cache -> return updated record
  */
 export async function replaceNotePipeline(params: NoteReplaceParams): Promise<ClassNote> {
   const { noteId, currentNote, newFile, onProgress } = params;
 
   // 1. Validate replacement file
+  console.log(`[Replace Pipeline] Stage 1: Validating replacement file "${newFile?.name}"...`);
   const fileValidationError = validateNoteFile(newFile);
   if (fileValidationError) {
     throw new Error(fileValidationError);
   }
-
-  if (onProgress) onProgress(15);
 
   const targetStorageKey =
     (currentNote as any).storagePath ||
@@ -356,6 +369,7 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
     (currentNote as any).storageKey ||
     "";
 
+  console.log(`[Replace Pipeline] Stage 2: Target storage key is "${targetStorageKey}"`);
   notesLogger.info("REPLACE_START", {
     noteId,
     storageKey: targetStorageKey,
@@ -364,35 +378,28 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
   });
 
   try {
-    // 2. Upload replacement file to /api/notes/:id/replace
-    const formData = new FormData();
-    formData.append("file", newFile, newFile.name);
-    formData.append("id", noteId);
-    formData.append("oldStorageKey", targetStorageKey);
-    formData.append("newFileName", newFile.name);
+    const bucket = getR2BucketName();
+    const mimeType = newFile.type || (newFile.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
 
-    if (onProgress) onProgress(50);
-
-    const res = await fetchWithRetry(`/api/notes/${encodeURIComponent(noteId)}/replace`, {
-      method: "PUT",
-      body: formData,
+    // 2. Upload replacement file to Cloudflare R2 with REAL progress tracking
+    console.log(`[Replace Pipeline] Stage 3: Uploading replacement file to Cloudflare R2...`);
+    const uploadRes = await uploadToR2({
+      bucket,
+      key: targetStorageKey,
+      file: newFile,
+      mimeType,
+      onProgress: (realPercent) => {
+        if (onProgress) {
+          const displayPct = Math.min(95, Math.max(1, realPercent));
+          onProgress(displayPct);
+        }
+      },
     });
 
-    if (onProgress) onProgress(80);
+    console.log(`[Replace Pipeline] Stage 4: Cloudflare R2 file updated. Result:`, uploadRes);
 
-    if (!res.ok) {
-      let errMsg = "Replacement failed. Please try again.";
-      try {
-        const errJson = await res.json();
-        if (errJson?.error) errMsg = errJson.error;
-      } catch {}
-      throw new Error(errMsg);
-    }
-
-    const data = await res.json();
-    if (!data.success) {
-      throw new Error(data.error || "Replacement failed. Storage could not update file.");
-    }
+    const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(targetStorageKey)}`;
+    const publicUrl = uploadRes.url || getR2PublicUrl(bucket, targetStorageKey);
 
     // 3. Update database record with new file metadata
     const updatedNote: ClassNote = {
@@ -402,27 +409,31 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
       chapterNo: (currentNote as any).chapterNo || (currentNote as any).chapterNumber || 1,
       chapterName: (currentNote as any).chapterName || (currentNote as any).chapterTitle || "Chapter 1",
       createdAt: (currentNote as any).createdAt || new Date().toISOString(),
-      originalFilename: data.originalFilename || newFile.name,
-      fileName: data.originalFilename || newFile.name,
-      pdfFileName: data.originalFilename || newFile.name,
-      r2Key: data.r2Key || targetStorageKey,
-      storageKey: data.r2Key || targetStorageKey,
-      storagePath: data.r2Key || targetStorageKey,
-      pdfUrl: data.pdfUrl || data.downloadUrl || (currentNote as any).pdfUrl,
-      fileSize: data.fileSize || newFile.size,
-      mimeType: data.mimeType || newFile.type || "application/pdf",
-      updatedAt: data.updatedAt || new Date().toISOString(),
+      originalFilename: newFile.name,
+      fileName: newFile.name,
+      pdfFileName: newFile.name,
+      r2Key: targetStorageKey,
+      storageKey: targetStorageKey,
+      storagePath: targetStorageKey,
+      pdfUrl: downloadUrl,
+      publicUrl: publicUrl,
+      downloadUrl: downloadUrl,
+      fileSize: newFile.size,
+      mimeType: mimeType,
+      updatedAt: new Date().toISOString(),
     };
 
     // 4. Save to Firestore
+    console.log(`[Replace Pipeline] Stage 5: Updating Firestore document...`);
     await saveClassNoteDoc(updatedNote);
 
     // 5. Invalidate cached metadata and stale blob for this note
+    console.log(`[Replace Pipeline] Stage 6: Purging cache...`);
     await notesCacheService.invalidateMetadataCache();
     await notesCacheService.invalidateBlobCache(targetStorageKey);
-    if (updatedNote.storagePath && updatedNote.storagePath !== targetStorageKey) {
-      await notesCacheService.invalidateBlobCache(updatedNote.storagePath);
-    }
+
+    console.log(`[Replace Pipeline] Stage 7: Replacement complete.`);
+    if (onProgress) onProgress(100);
 
     notesLogger.info("REPLACE_SUCCESS", {
       noteId,
@@ -430,14 +441,13 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
       fileSize: updatedNote.fileSize,
     });
 
-    if (onProgress) onProgress(100);
-
     return updatedNote;
   } catch (err: any) {
     notesLogger.error("REPLACE_ERROR", {
       noteId,
       error: err?.message || "Replacement pipeline error",
     });
+    console.error(`[Replace Pipeline] Error replacing note:`, err);
     throw new Error(err?.message || "Replacement failed. Please try again.");
   }
 }
@@ -728,6 +738,73 @@ export async function deleteChapterPipeline(params: {
 
   for (const n of matchingNotes) {
     await deleteNotePipeline(n.id, n);
+  }
+
+  await notesCacheService.invalidateMetadataCache();
+  return { deletedCount: matchingNotes.length };
+}
+
+/**
+ * Subject Delete Pipeline
+ * Recursively deletes all topic notes, Cloudflare R2 assets, and practice tests under a subject
+ */
+export async function deleteSubjectPipeline(params: {
+  type: "school" | "upsc";
+  className?: string;
+  gsPaper?: string;
+  subject: string;
+  notes: ClassNote[];
+}): Promise<{ deletedCount: number }> {
+  const { type, className, gsPaper, subject, notes } = params;
+  const cleanSubj = subject.trim().toLowerCase();
+
+  const matchingNotes = notes.filter((n) => {
+    const s = ((n as any).subjectName || n.subject || "").trim().toLowerCase();
+    if (s !== cleanSubj) return false;
+
+    if (type === "school") {
+      const cls = ((n as any).className || n.classGrade || (n as any).class || "").trim().toLowerCase();
+      return !className || cls === className.trim().toLowerCase();
+    } else {
+      const p = ((n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "").trim().toLowerCase();
+      return !gsPaper || p === gsPaper.trim().toLowerCase();
+    }
+  });
+
+  for (const n of matchingNotes) {
+    try {
+      await deleteNotePipeline(n.id, n);
+    } catch (err: any) {
+      console.warn(`[DeleteSubjectPipeline] Error deleting note ${n.id} in subject "${subject}":`, err);
+    }
+  }
+
+  await notesCacheService.invalidateMetadataCache();
+  return { deletedCount: matchingNotes.length };
+}
+
+/**
+ * GS Paper Delete Pipeline (UPSC)
+ * Recursively deletes all topic notes, Cloudflare R2 assets, and practice tests under a GS Paper
+ */
+export async function deletePaperPipeline(params: {
+  gsPaper: string;
+  notes: ClassNote[];
+}): Promise<{ deletedCount: number }> {
+  const { gsPaper, notes } = params;
+  const cleanPaper = gsPaper.trim().toLowerCase();
+
+  const matchingNotes = notes.filter((n) => {
+    const p = ((n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "").trim().toLowerCase();
+    return p === cleanPaper;
+  });
+
+  for (const n of matchingNotes) {
+    try {
+      await deleteNotePipeline(n.id, n);
+    } catch (err: any) {
+      console.warn(`[DeletePaperPipeline] Error deleting note ${n.id} in paper "${gsPaper}":`, err);
+    }
   }
 
   await notesCacheService.invalidateMetadataCache();

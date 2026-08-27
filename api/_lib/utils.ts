@@ -176,17 +176,49 @@ export function parseRequestBody<T = any>(body: any): T {
 }
 
 /**
- * Converts Readable stream or Buffer into a Buffer.
+ * Converts Readable stream or Buffer into a Buffer with timeout safety and flowing-mode guarantee.
  */
-export async function streamToBuffer(stream: Readable | any): Promise<Buffer> {
+export async function streamToBuffer(stream: Readable | any, timeoutMs: number = 30000): Promise<Buffer> {
   if (Buffer.isBuffer(stream)) return stream;
   if (!stream || typeof stream.on !== "function") return Buffer.alloc(0);
+  if (stream.readableEnded || stream._readableState?.ended) {
+    if (stream.body && Buffer.isBuffer(stream.body)) return stream.body;
+    return Buffer.alloc(0);
+  }
 
   const chunks: Buffer[] = [];
   return new Promise((resolve, reject) => {
-    stream.on("data", (chunk: any) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-    stream.on("end", () => resolve(Buffer.concat(chunks)));
-    stream.on("error", reject);
+    let finished = false;
+    const timer = setTimeout(() => {
+      if (!finished) {
+        finished = true;
+        resolve(Buffer.concat(chunks));
+      }
+    }, timeoutMs);
+
+    stream.on("data", (chunk: any) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+
+    stream.on("end", () => {
+      if (!finished) {
+        finished = true;
+        clearTimeout(timer);
+        resolve(Buffer.concat(chunks));
+      }
+    });
+
+    stream.on("error", (err: any) => {
+      if (!finished) {
+        finished = true;
+        clearTimeout(timer);
+        reject(err);
+      }
+    });
+
+    if (typeof stream.resume === "function") {
+      stream.resume();
+    }
   });
 }
 

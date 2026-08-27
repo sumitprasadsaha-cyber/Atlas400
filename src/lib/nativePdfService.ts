@@ -169,9 +169,7 @@ export async function fetchNoteBlobWithCache(
     targetUrl = `/api/r2/download?key=${encodeURIComponent(storageKey.replace(/^\/+/, ""))}`;
   }
 
-  if (onProgress) onProgress(20);
-
-  // 4. Stream response with progress and abort support
+  // 4. Stream response with real progress and abort support
   const response = await fetch(targetUrl, { signal });
   if (!response.ok) {
     if (response.status === 404) {
@@ -180,11 +178,30 @@ export async function fetchNoteBlobWithCache(
     throw new Error(`Failed to load note (Server returned status ${response.status}).`);
   }
 
-  if (onProgress) onProgress(60);
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  let blob: Blob;
 
-  const blob = await response.blob();
+  if (response.body && contentLength > 0 && typeof response.body.getReader === "function") {
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let receivedBytes = 0;
 
-  if (onProgress) onProgress(90);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        receivedBytes += value.length;
+        if (onProgress) {
+          const pct = Math.min(99, Math.round((receivedBytes / contentLength) * 100));
+          onProgress(pct);
+        }
+      }
+    }
+    blob = new Blob(chunks, { type: mimeType });
+  } else {
+    blob = await response.blob();
+  }
 
   // 5. Store in local cache for instant future retrieval & offline access
   await notesCacheService.setCachedBlob({

@@ -5,8 +5,6 @@ import {
   Search, 
   Plus, 
   RefreshCw, 
-  FolderPlus, 
-  Pencil, 
   Trash2, 
   ChevronRight,
   BookOpen,
@@ -19,7 +17,9 @@ import {
   Upload,
   CheckCircle2,
   FileCheck,
-  ChevronDown
+  ChevronDown,
+  MoreVertical,
+  MoreHorizontal
 } from "lucide-react";
 import { ClassNote, Student } from "../../types";
 import { 
@@ -29,7 +29,9 @@ import {
   renameNotePipeline,
   renameSubjectPipeline,
   deleteChapterPipeline,
-  deleteClassPipeline
+  deleteClassPipeline,
+  deleteSubjectPipeline,
+  deletePaperPipeline
 } from "../../lib/notesService";
 import { searchHierarchicalNotes } from "../../utils/notesHierarchyHelper";
 import { fetchAllPracticeTests, buildTopicTestId } from "../../lib/practiceTestService";
@@ -42,6 +44,20 @@ import CreateHierarchyNodeModal, {
 } from "./CreateHierarchyNodeModal";
 import NotesPreviewModal from "./NotesPreviewModal";
 import AdminPracticeTestModal from "../AdminPracticeTestModal";
+import NotesMiddlePanel from "./NotesMiddlePanel";
+import NotesRightPanel from "./NotesRightPanel";
+import {
+  getSchoolHierarchy,
+  getUpscHierarchy,
+  saveSchoolHierarchy,
+  saveUpscHierarchy,
+  subscribeToCurriculumHierarchy,
+  getSavedNotesSelectionState,
+  saveNotesSelectionState,
+  extractHierarchyFromNotes,
+  SchoolHierarchyData,
+  UpscHierarchyData
+} from "../../lib/curriculumService";
 
 interface AdminNotesDashboardProps {
   notes: ClassNote[];
@@ -49,82 +65,116 @@ interface AdminNotesDashboardProps {
   onRefresh?: () => void;
 }
 
-// Storage keys for custom created nodes
-const STORAGE_CUSTOM_SCHOOL_CLASSES = "tuition_custom_school_classes";
-const STORAGE_CUSTOM_SCHOOL_SUBJECTS = "tuition_custom_school_subjects";
-const STORAGE_CUSTOM_SCHOOL_CHAPTERS = "tuition_custom_school_chapters";
-const STORAGE_REMOVED_SCHOOL_SUBJECTS = "tuition_removed_school_subjects";
-const STORAGE_CUSTOM_UPSC_PAPERS = "tuition_custom_upsc_papers";
-const STORAGE_CUSTOM_UPSC_SUBJECTS = "tuition_custom_upsc_subjects";
-const STORAGE_CUSTOM_UPSC_MODULES = "tuition_custom_upsc_modules";
-const STORAGE_REMOVED_UPSC_SUBJECTS = "tuition_removed_upsc_subjects";
-
-function safeGetStorageJson<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const item = localStorage.getItem(key);
-    return item ? JSON.parse(item) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function safeSetStorageJson(key: string, value: any): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {}
-}
-
 export default function AdminNotesDashboard({
   notes = [],
   students = [],
   onRefresh,
 }: AdminNotesDashboardProps) {
+  // Load saved active selections
+  const initialSelection = useMemo(() => getSavedNotesSelectionState(), []);
+
   // Top Level Mode: School vs UPSC
-  const [activeTab, setActiveTab] = useState<"school" | "upsc">("school");
+  const [activeTab, setActiveTab] = useState<"school" | "upsc">(initialSelection.activeTab || "school");
 
-  // Custom Created Hierarchy Nodes from Local Storage
-  const [customSchoolClasses, setCustomSchoolClasses] = useState<string[]>(() => 
-    safeGetStorageJson<string[]>(STORAGE_CUSTOM_SCHOOL_CLASSES, [])
-  );
-  const [customSchoolSubjects, setCustomSchoolSubjects] = useState<Record<string, string[]>>(() => 
-    safeGetStorageJson<Record<string, string[]>>(STORAGE_CUSTOM_SCHOOL_SUBJECTS, {})
-  );
-  const [customSchoolChapters, setCustomSchoolChapters] = useState<Record<string, Record<string, Array<{ number: number; name: string }>>>>(() => 
-    safeGetStorageJson(STORAGE_CUSTOM_SCHOOL_CHAPTERS, {})
-  );
-  const [removedSchoolSubjects, setRemovedSchoolSubjects] = useState<Record<string, string[]>>(() =>
-    safeGetStorageJson<Record<string, string[]>>(STORAGE_REMOVED_SCHOOL_SUBJECTS, {})
-  );
+  // Custom Created Hierarchy Nodes from Curriculum Service (Firestore + Local)
+  const [schoolHierarchy, setSchoolHierarchy] = useState<SchoolHierarchyData>(() => getSchoolHierarchy());
+  const [upscHierarchy, setUpscHierarchy] = useState<UpscHierarchyData>(() => getUpscHierarchy());
 
-  const [customUpscPapers, setCustomUpscPapers] = useState<string[]>(() => 
-    safeGetStorageJson<string[]>(STORAGE_CUSTOM_UPSC_PAPERS, [])
-  );
-  const [customUpscSubjects, setCustomUpscSubjects] = useState<Record<string, string[]>>(() => 
-    safeGetStorageJson<Record<string, string[]>>(STORAGE_CUSTOM_UPSC_SUBJECTS, {})
-  );
-  const [customUpscModules, setCustomUpscModules] = useState<Record<string, Record<string, Array<{ number: number; name: string }>>>>(() => 
-    safeGetStorageJson(STORAGE_CUSTOM_UPSC_MODULES, {})
-  );
-  const [removedUpscSubjects, setRemovedUpscSubjects] = useState<Record<string, string[]>>(() =>
-    safeGetStorageJson<Record<string, string[]>>(STORAGE_REMOVED_UPSC_SUBJECTS, {})
-  );
+  const customSchoolClasses = schoolHierarchy.classes;
+  const customSchoolSubjects = schoolHierarchy.subjects;
+  const customSchoolChapters = schoolHierarchy.chapters;
+  const removedSchoolSubjects = schoolHierarchy.removedSubjects;
+
+  const customUpscPapers = upscHierarchy.papers;
+  const customUpscSubjects = upscHierarchy.subjects;
+  const customUpscModules = upscHierarchy.modules;
+  const removedUpscSubjects = upscHierarchy.removedSubjects;
 
   // Active Hierarchy Selection State - School (Dynamic, no hardcoded defaults)
-  const [selectedSchoolClass, setSelectedSchoolClass] = useState<string>("");
-  const [selectedSchoolSubject, setSelectedSchoolSubject] = useState<string>("");
-  const [selectedSchoolChapterNo, setSelectedSchoolChapterNo] = useState<number>(0);
-  const [selectedSchoolChapterName, setSelectedSchoolChapterName] = useState<string>("");
+  const [selectedSchoolClass, setSelectedSchoolClass] = useState<string>(initialSelection.selectedSchoolClass || "");
+  const [selectedSchoolSubject, setSelectedSchoolSubject] = useState<string>(initialSelection.selectedSchoolSubject || "");
+  const [selectedSchoolChapterNo, setSelectedSchoolChapterNo] = useState<number>(initialSelection.selectedSchoolChapterNo || 0);
+  const [selectedSchoolChapterName, setSelectedSchoolChapterName] = useState<string>(initialSelection.selectedSchoolChapterName || "");
 
   // Active Hierarchy Selection State - UPSC (Dynamic, no hardcoded defaults)
-  const [selectedUpscPaper, setSelectedUpscPaper] = useState<string>("");
-  const [selectedUpscSubject, setSelectedUpscSubject] = useState<string>("");
-  const [selectedUpscModuleNo, setSelectedUpscModuleNo] = useState<number>(0);
-  const [selectedUpscModuleName, setSelectedUpscModuleName] = useState<string>("");
+  const [selectedUpscPaper, setSelectedUpscPaper] = useState<string>(initialSelection.selectedUpscPaper || "");
+  const [selectedUpscSubject, setSelectedUpscSubject] = useState<string>(initialSelection.selectedUpscSubject || "");
+  const [selectedUpscModuleNo, setSelectedUpscModuleNo] = useState<number>(initialSelection.selectedUpscModuleNo || 0);
+  const [selectedUpscModuleName, setSelectedUpscModuleName] = useState<string>(initialSelection.selectedUpscModuleName || "");
 
-  // Search input within active topic list
-  const [searchQuery, setSearchQuery] = useState("");
+  // Accordion state: map of expanded chapter numbers
+  const [expandedChapters, setExpandedChapters] = useState<Record<number, boolean>>({});
+
+  // Active Selected Topic Note ID for 3rd Panel
+  const [selectedTopicNoteId, setSelectedTopicNoteId] = useState<string | null>(initialSelection.selectedTopicNoteId || null);
+
+  // Unified hierarchy update and persistence helpers
+  const updateSchoolHierarchy = useCallback((updater: (prev: SchoolHierarchyData) => SchoolHierarchyData) => {
+    setSchoolHierarchy((prev) => {
+      const next = updater(prev);
+      saveSchoolHierarchy(next);
+      return next;
+    });
+  }, []);
+
+  const updateUpscHierarchy = useCallback((updater: (prev: UpscHierarchyData) => UpscHierarchyData) => {
+    setUpscHierarchy((prev) => {
+      const next = updater(prev);
+      saveUpscHierarchy(next);
+      return next;
+    });
+  }, []);
+
+  // Subscribe to real-time curriculum hierarchy updates
+  useEffect(() => {
+    const unsub = subscribeToCurriculumHierarchy((data) => {
+      setSchoolHierarchy(data.school);
+      setUpscHierarchy(data.upsc);
+    });
+    return () => unsub();
+  }, []);
+
+  // Sync existing notes into curriculum hierarchy non-destructively
+  useEffect(() => {
+    if (notes && notes.length > 0) {
+      const { school: mergedSchool, upsc: mergedUpsc, added } = extractHierarchyFromNotes(
+        notes,
+        getSchoolHierarchy(),
+        getUpscHierarchy()
+      );
+      if (added) {
+        saveSchoolHierarchy(mergedSchool);
+        saveUpscHierarchy(mergedUpsc);
+      }
+    }
+  }, [notes]);
+
+  // Persist selections whenever they change
+  useEffect(() => {
+    saveNotesSelectionState({
+      activeTab,
+      selectedSchoolClass,
+      selectedSchoolSubject,
+      selectedSchoolChapterNo,
+      selectedSchoolChapterName,
+      selectedUpscPaper,
+      selectedUpscSubject,
+      selectedUpscModuleNo,
+      selectedUpscModuleName,
+      selectedTopicNoteId
+    });
+  }, [
+    activeTab,
+    selectedSchoolClass,
+    selectedSchoolSubject,
+    selectedSchoolChapterNo,
+    selectedSchoolChapterName,
+    selectedUpscPaper,
+    selectedUpscSubject,
+    selectedUpscModuleNo,
+    selectedUpscModuleName,
+    selectedTopicNoteId
+  ]);
 
   // Modals state
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -142,6 +192,7 @@ export default function AdminNotesDashboard({
   const [renameChapterTitle, setRenameChapterTitle] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
 
+  // Topic Delete Modal
   const [deletingNote, setDeletingNote] = useState<ClassNote | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -172,6 +223,30 @@ export default function AdminNotesDashboard({
   const [deletingClass, setDeletingClass] = useState<string | null>(null);
   const [isDeletingClass, setIsDeletingClass] = useState(false);
 
+  // Delete GS Paper Modal State
+  const [deletingPaper, setDeletingPaper] = useState<string | null>(null);
+  const [isDeletingPaper, setIsDeletingPaper] = useState(false);
+
+  // Delete Subject Modal State
+  const [deletingSubject, setDeletingSubject] = useState<{
+    type: "school" | "upsc";
+    className?: string;
+    gsPaper?: string;
+    subject: string;
+  } | null>(null);
+  const [isDeletingSubject, setIsDeletingSubject] = useState(false);
+
+  // Delete Chapter / Module Modal State
+  const [deletingChapter, setDeletingChapter] = useState<{
+    type: "school" | "upsc";
+    className?: string;
+    gsPaper?: string;
+    subject: string;
+    chapterNumber: number;
+    chapterName: string;
+  } | null>(null);
+  const [isDeletingChapter, setIsDeletingChapter] = useState(false);
+
   // Practice Test Bank & Modal state
   const [practiceTestBank, setPracticeTestBank] = useState<Record<string, any>>({});
   const [practiceTestTarget, setPracticeTestTarget] = useState<{
@@ -198,57 +273,69 @@ export default function AdminNotesDashboard({
         setPracticeTestBank(tests);
       }
     } catch (e) {
-      console.warn("Failed to load practice tests bank:", e);
+      console.warn("[AdminNotesDashboard] Failed to fetch practice tests:", e);
     }
   }, []);
 
   useEffect(() => {
     loadPracticeTests();
-    const handleUpdate = () => loadPracticeTests();
-    window.addEventListener("practice-tests-updated", handleUpdate);
-    return () => window.removeEventListener("practice-tests-updated", handleUpdate);
   }, [loadPracticeTests]);
 
-  // Split Notes into School vs UPSC
-  const schoolNotes = useMemo(() => {
-    return notes.filter((n) => {
-      const cls = (n as any).className || n.classGrade || (n as any).class || "";
-      const isU = n.type === "upsc" || n.isUPSC || cls.toLowerCase() === "upsc";
-      return !isU;
-    });
-  }, [notes]);
+  // Helper to check if a topic note has an active practice test
+  const checkIfTopicHasPracticeTest = useCallback((note: ClassNote): boolean => {
+    if (!note) return false;
+    const classGrade = (note as any).className || note.classGrade || (note as any).class || "";
+    const subject = (note as any).subjectName || note.subject || "";
+    const chapterNo = (note as any).chapterNumber ?? note.chapterNo ?? 1;
+    const topicName = (note as any).topicTitle || (note as any).topicName || note.partLabel || "";
+    const testId = (note as any).practiceTestId || buildTopicTestId(classGrade, subject, Number(chapterNo), topicName);
+    return Boolean(practiceTestBank[testId]);
+  }, [practiceTestBank]);
 
-  const upscNotes = useMemo(() => {
-    return notes.filter((n) => {
-      const cls = (n as any).className || n.classGrade || (n as any).class || "";
-      const isU = n.type === "upsc" || n.isUPSC || cls.toLowerCase() === "upsc";
-      return isU;
+  // Separate Notes by Category: School vs UPSC
+  const { schoolNotes, upscNotes } = useMemo(() => {
+    const sNotes: ClassNote[] = [];
+    const uNotes: ClassNote[] = [];
+
+    (notes || []).forEach((n) => {
+      const isUpsc = 
+        (n as any).type === "upsc" || 
+        Boolean((n as any).gsPaper) || 
+        Boolean((n as any).generalStudiesPaper) || 
+        (n as any).category === "upsc" ||
+        String(n.classGrade || "").toLowerCase().includes("upsc") ||
+        String((n as any).className || "").toLowerCase().includes("upsc");
+
+      if (isUpsc) {
+        uNotes.push(n);
+      } else {
+        sNotes.push(n);
+      }
     });
+
+    return { schoolNotes: sNotes, upscNotes: uNotes };
   }, [notes]);
 
   // =========================================================================
-  // SCHOOL HIERARCHY COMPUTATION (100% Dynamic from Custom State & DB Notes)
+  // SCHOOL HIERARCHY COMPUTATION (Dynamic from storage & notes)
   // =========================================================================
-  // 1. Available Classes: Custom Classes + DB Notes Classes
   const schoolClasses = useMemo(() => {
     const set = new Set<string>();
     customSchoolClasses.forEach((c) => {
       if (c && c.trim()) set.add(c.trim());
     });
     schoolNotes.forEach((n) => {
-      const cls = (n as any).className || n.classGrade || (n as any).class;
-      if (cls && typeof cls === "string" && cls.trim()) {
-        set.add(cls.trim());
-      }
+      const c = (n as any).className || n.classGrade || (n as any).class;
+      if (c && c.trim()) set.add(c.trim());
     });
     return Array.from(set).sort((a, b) => {
-      const numA = parseInt(a.replace(/\D/g, ""), 10) || 0;
-      const numB = parseInt(b.replace(/\D/g, ""), 10) || 0;
-      return numA - numB || a.localeCompare(b);
+      const numA = parseInt(a.replace(/\D/g, ""), 10);
+      const numB = parseInt(b.replace(/\D/g, ""), 10);
+      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+      return a.localeCompare(b);
     });
-  }, [schoolNotes, customSchoolClasses]);
+  }, [customSchoolClasses, schoolNotes]);
 
-  // Ensure valid selected class
   useEffect(() => {
     if (schoolClasses.length > 0) {
       if (!selectedSchoolClass || !schoolClasses.includes(selectedSchoolClass)) {
@@ -259,20 +346,19 @@ export default function AdminNotesDashboard({
     }
   }, [schoolClasses, selectedSchoolClass]);
 
-  // 2. Available Subjects for selected School Class
   const schoolSubjectsForSelectedClass = useMemo(() => {
     if (!selectedSchoolClass) return [];
     const set = new Set<string>();
     const removedForClass = new Set(removedSchoolSubjects[selectedSchoolClass] || []);
 
-    const custom = customSchoolSubjects[selectedSchoolClass] || [];
-    custom.forEach((s) => {
+    const customList = customSchoolSubjects[selectedSchoolClass] || [];
+    customList.forEach((s) => {
       if (s && s.trim() && !removedForClass.has(s.trim())) set.add(s.trim());
     });
 
     schoolNotes.forEach((n) => {
-      const cls = (n as any).className || n.classGrade || (n as any).class || "";
-      if (cls.toLowerCase() === selectedSchoolClass.toLowerCase()) {
+      const c = (n as any).className || n.classGrade || (n as any).class || "";
+      if (c.toLowerCase() === selectedSchoolClass.toLowerCase()) {
         const s = (n as any).subjectName || n.subject || "";
         if (s && s.trim() && !removedForClass.has(s.trim())) set.add(s.trim());
       }
@@ -281,7 +367,6 @@ export default function AdminNotesDashboard({
     return Array.from(set).sort();
   }, [selectedSchoolClass, schoolNotes, customSchoolSubjects, removedSchoolSubjects]);
 
-  // Ensure valid selected subject
   useEffect(() => {
     if (schoolSubjectsForSelectedClass.length > 0) {
       if (!selectedSchoolSubject || !schoolSubjectsForSelectedClass.includes(selectedSchoolSubject)) {
@@ -292,25 +377,22 @@ export default function AdminNotesDashboard({
     }
   }, [schoolSubjectsForSelectedClass, selectedSchoolSubject]);
 
-  // 3. Available Chapters for selected School Class & Subject (No baseline 1..10 hardcoding)
   const schoolChaptersForSelected = useMemo(() => {
     if (!selectedSchoolClass || !selectedSchoolSubject) return [];
     const map = new Map<number, string>();
 
-    // From custom created chapters
     const customList = customSchoolChapters[selectedSchoolClass]?.[selectedSchoolSubject] || [];
-    customList.forEach((c) => {
-      map.set(c.number, c.name || `Chapter ${c.number}`);
+    customList.forEach((ch) => {
+      map.set(ch.number, ch.name || `Chapter ${ch.number}`);
     });
 
-    // From existing notes
     schoolNotes.forEach((n) => {
-      const cls = (n as any).className || n.classGrade || (n as any).class || "";
-      const subj = (n as any).subjectName || n.subject || "";
-      if (cls.toLowerCase() === selectedSchoolClass.toLowerCase() && subj.toLowerCase() === selectedSchoolSubject.toLowerCase()) {
+      const c = (n as any).className || n.classGrade || (n as any).class || "";
+      const s = (n as any).subjectName || n.subject || "";
+      if (c.toLowerCase() === selectedSchoolClass.toLowerCase() && s.toLowerCase() === selectedSchoolSubject.toLowerCase()) {
         const rawChNo = (n as any).chapterNumber ?? n.chapterNo ?? 1;
         const chNo = typeof rawChNo === "number" ? rawChNo : parseInt(String(rawChNo).replace(/\D/g, ""), 10) || 1;
-        const chName = (n as any).chapterTitle || (n as any).chapterName || n.chapterName || `Chapter ${chNo}`;
+        const chName = (n as any).chapterTitle || (n as any).chapterName || `Chapter ${chNo}`;
         map.set(chNo, chName);
       }
     });
@@ -320,7 +402,6 @@ export default function AdminNotesDashboard({
       .sort((a, b) => a.number - b.number);
   }, [selectedSchoolClass, selectedSchoolSubject, schoolNotes, customSchoolChapters]);
 
-  // Ensure valid selected chapter
   useEffect(() => {
     if (schoolChaptersForSelected.length > 0) {
       const exists = schoolChaptersForSelected.find((c) => c.number === selectedSchoolChapterNo);
@@ -337,9 +418,8 @@ export default function AdminNotesDashboard({
   }, [schoolChaptersForSelected, selectedSchoolChapterNo]);
 
   // =========================================================================
-  // UPSC HIERARCHY COMPUTATION (100% Dynamic from Custom State & DB Notes)
+  // UPSC HIERARCHY COMPUTATION (Dynamic from storage & notes)
   // =========================================================================
-  // 1. Available GS Papers: Custom Papers + DB Notes Papers
   const upscPapers = useMemo(() => {
     const set = new Set<string>();
     customUpscPapers.forEach((p) => {
@@ -347,14 +427,11 @@ export default function AdminNotesDashboard({
     });
     upscNotes.forEach((n) => {
       const p = (n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper;
-      if (p && typeof p === "string" && p.trim()) {
-        set.add(p.trim());
-      }
+      if (p && p.trim()) set.add(p.trim());
     });
-    return Array.from(set);
-  }, [upscNotes, customUpscPapers]);
+    return Array.from(set).sort();
+  }, [customUpscPapers, upscNotes]);
 
-  // Ensure valid selected GS Paper
   useEffect(() => {
     if (upscPapers.length > 0) {
       if (!selectedUpscPaper || !upscPapers.includes(selectedUpscPaper)) {
@@ -365,14 +442,13 @@ export default function AdminNotesDashboard({
     }
   }, [upscPapers, selectedUpscPaper]);
 
-  // 2. Available Subjects for selected GS Paper
   const upscSubjectsForSelectedPaper = useMemo(() => {
     if (!selectedUpscPaper) return [];
     const set = new Set<string>();
     const removedForPaper = new Set(removedUpscSubjects[selectedUpscPaper] || []);
 
-    const custom = customUpscSubjects[selectedUpscPaper] || [];
-    custom.forEach((s) => {
+    const customList = customUpscSubjects[selectedUpscPaper] || [];
+    customList.forEach((s) => {
       if (s && s.trim() && !removedForPaper.has(s.trim())) set.add(s.trim());
     });
 
@@ -387,7 +463,6 @@ export default function AdminNotesDashboard({
     return Array.from(set).sort();
   }, [selectedUpscPaper, upscNotes, customUpscSubjects, removedUpscSubjects]);
 
-  // Ensure valid selected UPSC subject
   useEffect(() => {
     if (upscSubjectsForSelectedPaper.length > 0) {
       if (!selectedUpscSubject || !upscSubjectsForSelectedPaper.includes(selectedUpscSubject)) {
@@ -398,18 +473,15 @@ export default function AdminNotesDashboard({
     }
   }, [upscSubjectsForSelectedPaper, selectedUpscSubject]);
 
-  // 3. Available Modules for selected UPSC Paper & Subject (No baseline 1..10 hardcoding)
   const upscModulesForSelected = useMemo(() => {
     if (!selectedUpscPaper || !selectedUpscSubject) return [];
     const map = new Map<number, string>();
 
-    // From custom created modules
     const customList = customUpscModules[selectedUpscPaper]?.[selectedUpscSubject] || [];
     customList.forEach((m) => {
       map.set(m.number, m.name || `Module ${m.number}`);
     });
 
-    // From existing notes
     upscNotes.forEach((n) => {
       const p = (n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "";
       const subj = (n as any).subjectName || n.subject || "";
@@ -426,7 +498,6 @@ export default function AdminNotesDashboard({
       .sort((a, b) => a.number - b.number);
   }, [selectedUpscPaper, selectedUpscSubject, upscNotes, customUpscModules]);
 
-  // Ensure valid selected module
   useEffect(() => {
     if (upscModulesForSelected.length > 0) {
       const exists = upscModulesForSelected.find((m) => m.number === selectedUpscModuleNo);
@@ -443,63 +514,111 @@ export default function AdminNotesDashboard({
   }, [upscModulesForSelected, selectedUpscModuleNo]);
 
   // =========================================================================
-  // ACTIVE TOPIC NOTES COMPUTATION
+  // CHAPTER NOTES MAP (For Middle Panel Accordion)
   // =========================================================================
-  const activeTopicNotes = useMemo(() => {
-    if (activeTab === "school") {
-      return schoolNotes.filter((n) => {
-        const cls = (n as any).className || n.classGrade || (n as any).class || "";
-        const subj = (n as any).subjectName || n.subject || "";
-        const chNo = (n as any).chapterNumber ?? n.chapterNo ?? 1;
+  const chapterNotesMap = useMemo(() => {
+    const map = new Map<number, ClassNote[]>();
+    const currentNotes = activeTab === "school" ? schoolNotes : upscNotes;
+    const currentSubject = (activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject).trim().toLowerCase();
 
-        return (
-          cls.toLowerCase() === selectedSchoolClass.toLowerCase() &&
-          subj.toLowerCase() === selectedSchoolSubject.toLowerCase() &&
-          Number(chNo) === Number(selectedSchoolChapterNo)
-        );
-      });
-    } else {
-      return upscNotes.filter((n) => {
-        const p = (n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "";
-        const subj = (n as any).subjectName || n.subject || "";
-        const modNo = (n as any).moduleNumber ?? (n as any).moduleNo ?? (n as any).chapterNumber ?? n.chapterNo ?? 1;
+    if (!currentSubject) return map;
 
-        return (
-          p.toLowerCase() === selectedUpscPaper.toLowerCase() &&
-          subj.toLowerCase() === selectedUpscSubject.toLowerCase() &&
-          Number(modNo) === Number(selectedUpscModuleNo)
-        );
+    currentNotes.forEach((n) => {
+      const s = ((n as any).subjectName || n.subject || "").trim().toLowerCase();
+      if (s !== currentSubject) return;
+
+      if (activeTab === "school") {
+        const c = ((n as any).className || n.classGrade || (n as any).class || "").trim().toLowerCase();
+        if (c !== selectedSchoolClass.trim().toLowerCase()) return;
+        const rawCh = (n as any).chapterNumber ?? n.chapterNo ?? 1;
+        const chNum = typeof rawCh === "number" ? rawCh : parseInt(String(rawCh).replace(/\D/g, ""), 10) || 1;
+        if (!map.has(chNum)) map.set(chNum, []);
+        map.get(chNum)!.push(n);
+      } else {
+        const p = ((n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "").trim().toLowerCase();
+        if (p !== selectedUpscPaper.trim().toLowerCase()) return;
+        const rawMod = (n as any).moduleNumber ?? (n as any).moduleNo ?? (n as any).chapterNumber ?? n.chapterNo ?? 1;
+        const modNum = typeof rawMod === "number" ? rawMod : parseInt(String(rawMod).replace(/\D/g, ""), 10) || 1;
+        if (!map.has(modNum)) map.set(modNum, []);
+        map.get(modNum)!.push(n);
+      }
+    });
+
+    // Sort notes in each chapter
+    map.forEach((notesList) => {
+      notesList.sort((a, b) => {
+        const aNo = (a as any).topicNumber ?? a.topicNo ?? 1;
+        const bNo = (b as any).topicNumber ?? b.topicNo ?? 1;
+        const numA = typeof aNo === "number" ? aNo : parseInt(String(aNo).replace(/\D/g, ""), 10) || 0;
+        const numB = typeof bNo === "number" ? bNo : parseInt(String(bNo).replace(/\D/g, ""), 10) || 0;
+        return numA - numB;
       });
-    }
+    });
+
+    return map;
   }, [
     activeTab, 
     schoolNotes, 
     upscNotes, 
     selectedSchoolClass, 
     selectedSchoolSubject, 
-    selectedSchoolChapterNo, 
     selectedUpscPaper, 
-    selectedUpscSubject, 
-    selectedUpscModuleNo
+    selectedUpscSubject
   ]);
 
-  // Filtered and Sorted Topics
-  const filteredAndSortedTopics = useMemo(() => {
-    let list = activeTopicNotes;
-    if (searchQuery.trim()) {
-      list = searchHierarchicalNotes(list, searchQuery.trim());
+  // Current active chapter's topic notes for Right Panel
+  const activeChapterTopics = useMemo(() => {
+    const chNum = activeTab === "school" ? selectedSchoolChapterNo : selectedUpscModuleNo;
+    return chapterNotesMap.get(chNum) || [];
+  }, [activeTab, selectedSchoolChapterNo, selectedUpscModuleNo, chapterNotesMap]);
+
+  // Selected Topic Note object
+  const selectedTopicNote = useMemo(() => {
+    if (!selectedTopicNoteId) return null;
+    const allNotes = activeTab === "school" ? schoolNotes : upscNotes;
+    return allNotes.find((n) => n.id === selectedTopicNoteId) || null;
+  }, [selectedTopicNoteId, activeTab, schoolNotes, upscNotes]);
+
+  // Toggle Accordion Expansion
+  const handleToggleExpand = useCallback((chNum: number) => {
+    setExpandedChapters((prev) => ({
+      ...prev,
+      [chNum]: prev[chNum] === undefined ? false : !prev[chNum],
+    }));
+  }, []);
+
+  // Handle Selection from Middle Panel
+  const handleSelectChapter = useCallback((chNum: number, chName: string) => {
+    if (activeTab === "school") {
+      setSelectedSchoolChapterNo(chNum);
+      setSelectedSchoolChapterName(chName);
+    } else {
+      setSelectedUpscModuleNo(chNum);
+      setSelectedUpscModuleName(chName);
     }
+    // Auto expand on selection
+    setExpandedChapters((prev) => ({ ...prev, [chNum]: true }));
+    // Reset or keep topic
+    const notes = chapterNotesMap.get(chNum) || [];
+    if (notes.length > 0) {
+      setSelectedTopicNoteId(notes[0].id);
+    } else {
+      setSelectedTopicNoteId(null);
+    }
+  }, [activeTab, chapterNotesMap]);
 
-    return [...list].sort((a, b) => {
-      const aNo = (a as any).topicNumber ?? a.topicNo ?? 1;
-      const bNo = (b as any).topicNumber ?? b.topicNo ?? 1;
-      const numA = typeof aNo === "number" ? aNo : parseInt(String(aNo).replace(/\D/g, ""), 10) || 0;
-      const numB = typeof bNo === "number" ? bNo : parseInt(String(bNo).replace(/\D/g, ""), 10) || 0;
-      return numA - numB;
-    });
-  }, [activeTopicNotes, searchQuery]);
+  const handleSelectTopic = useCallback((note: ClassNote, chNum: number, chName: string) => {
+    if (activeTab === "school") {
+      setSelectedSchoolChapterNo(chNum);
+      setSelectedSchoolChapterName(chName);
+    } else {
+      setSelectedUpscModuleNo(chNum);
+      setSelectedUpscModuleName(chName);
+    }
+    setSelectedTopicNoteId(note.id);
+  }, [activeTab]);
 
-  // Current Parent Context for QuickAddTopicModal
+  // Parent Context for QuickAddTopicModal
   const parentContext: ParentContext = useMemo(() => {
     if (activeTab === "school") {
       return {
@@ -508,7 +627,7 @@ export default function AdminNotesDashboard({
         subject: selectedSchoolSubject,
         chapterNumber: selectedSchoolChapterNo,
         chapterName: selectedSchoolChapterName,
-        existingTopics: activeTopicNotes,
+        existingTopics: activeChapterTopics,
       };
     } else {
       return {
@@ -517,7 +636,7 @@ export default function AdminNotesDashboard({
         subject: selectedUpscSubject,
         moduleNumber: selectedUpscModuleNo,
         moduleName: selectedUpscModuleName,
-        existingTopics: activeTopicNotes,
+        existingTopics: activeChapterTopics,
       };
     }
   }, [
@@ -530,137 +649,40 @@ export default function AdminNotesDashboard({
     selectedUpscSubject, 
     selectedUpscModuleNo, 
     selectedUpscModuleName, 
-    activeTopicNotes
+    activeChapterTopics
   ]);
 
-  // Helper to check if a topic has a practice test
-  const checkIfTopicHasPracticeTest = useCallback((note: ClassNote): boolean => {
-    if ((note as any).hasPracticeTest || (note as any).practiceTest) return true;
-
-    const classGrade = activeTab === "school" ? selectedSchoolClass : "UPSC";
-    const subject = activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject;
-    const chapterNo = activeTab === "school" ? selectedSchoolChapterNo : selectedUpscModuleNo;
-    const topicName = ((note as any).topicTitle || (note as any).topicName || note.partLabel || "").trim();
-
-    const testId = buildTopicTestId(classGrade, subject, chapterNo, topicName);
-    return Boolean(practiceTestBank[testId]);
-  }, [activeTab, selectedSchoolClass, selectedSchoolSubject, selectedSchoolChapterNo, selectedUpscSubject, selectedUpscModuleNo, practiceTestBank]);
-
   // =========================================================================
-  // HIERARCHY NODE CREATION HANDLERS
+  // ACTIONS: RENAME / REPLACE / DELETE MODALS HANDLERS
   // =========================================================================
-  const handleCreateNodeSubmit = (result: {
-    nodeType: NodeType;
-    name: string;
-    number?: number;
-    className?: string;
-    gsPaper?: string;
-    subject?: string;
-  }) => {
-    const cleanName = result.name.trim();
+  const handleOpenRename = (note: ClassNote) => {
+    setRenamingNote(note);
+    setRenameTopicNumber((note as any).topicNumber ?? note.topicNo ?? 1);
+    setRenameTopicTitle((note as any).topicTitle || (note as any).topicName || note.partLabel || "");
+    setRenameChapterTitle((note as any).chapterTitle || (note as any).chapterName || (note as any).moduleTitle || "");
+  };
 
-    if (result.nodeType === "new_class") {
-      if (!customSchoolClasses.includes(cleanName)) {
-        const next = [...customSchoolClasses, cleanName];
-        setCustomSchoolClasses(next);
-        safeSetStorageJson(STORAGE_CUSTOM_SCHOOL_CLASSES, next);
-      }
-      setSelectedSchoolClass(cleanName);
-      showToast(`Class "${cleanName}" created`, "success");
-    } else if (result.nodeType === "new_gs_paper") {
-      if (!customUpscPapers.includes(cleanName)) {
-        const next = [...customUpscPapers, cleanName];
-        setCustomUpscPapers(next);
-        safeSetStorageJson(STORAGE_CUSTOM_UPSC_PAPERS, next);
-      }
-      setSelectedUpscPaper(cleanName);
-      showToast(`GS Paper "${cleanName}" created`, "success");
-    } else if (result.nodeType === "add_subject") {
-      if (activeTab === "school") {
-        const targetClass = selectedSchoolClass;
-        const currentList = customSchoolSubjects[targetClass] || [];
-        if (!currentList.includes(cleanName)) {
-          const nextMap = {
-            ...customSchoolSubjects,
-            [targetClass]: [...currentList, cleanName],
-          };
-          setCustomSchoolSubjects(nextMap);
-          safeSetStorageJson(STORAGE_CUSTOM_SCHOOL_SUBJECTS, nextMap);
-        }
-        setSelectedSchoolSubject(cleanName);
-        showToast(`Subject "${cleanName}" added to ${targetClass}`, "success");
-      } else {
-        const targetPaper = selectedUpscPaper;
-        const currentList = customUpscSubjects[targetPaper] || [];
-        if (!currentList.includes(cleanName)) {
-          const nextMap = {
-            ...customUpscSubjects,
-            [targetPaper]: [...currentList, cleanName],
-          };
-          setCustomUpscSubjects(nextMap);
-          safeSetStorageJson(STORAGE_CUSTOM_UPSC_SUBJECTS, nextMap);
-        }
-        setSelectedUpscSubject(cleanName);
-        showToast(`Subject "${cleanName}" added to ${targetPaper}`, "success");
-      }
-    } else if (result.nodeType === "add_chapter") {
-      const targetClass = selectedSchoolClass;
-      const targetSubj = selectedSchoolSubject;
-      const num = result.number || 1;
-
-      const currentClassMap = customSchoolChapters[targetClass] || {};
-      const currentSubjList = currentClassMap[targetSubj] || [];
-      const updatedList = [
-        ...currentSubjList.filter((c) => c.number !== num),
-        { number: num, name: cleanName || `Chapter ${num}` },
-      ].sort((a, b) => a.number - b.number);
-
-      const nextMap = {
-        ...customSchoolChapters,
-        [targetClass]: {
-          ...currentClassMap,
-          [targetSubj]: updatedList,
-        },
-      };
-
-      setCustomSchoolChapters(nextMap);
-      safeSetStorageJson(STORAGE_CUSTOM_SCHOOL_CHAPTERS, nextMap);
-
-      setSelectedSchoolChapterNo(num);
-      setSelectedSchoolChapterName(cleanName || `Chapter ${num}`);
-      showToast(`Chapter ${num}: "${cleanName || `Chapter ${num}`}" created`, "success");
-    } else if (result.nodeType === "add_module") {
-      const targetPaper = selectedUpscPaper;
-      const targetSubj = selectedUpscSubject;
-      const num = result.number || 1;
-
-      const currentPaperMap = customUpscModules[targetPaper] || {};
-      const currentSubjList = currentPaperMap[targetSubj] || [];
-      const updatedList = [
-        ...currentSubjList.filter((m) => m.number !== num),
-        { number: num, name: cleanName || `Module ${num}` },
-      ].sort((a, b) => a.number - b.number);
-
-      const nextMap = {
-        ...customUpscModules,
-        [targetPaper]: {
-          ...currentPaperMap,
-          [targetSubj]: updatedList,
-        },
-      };
-
-      setCustomUpscModules(nextMap);
-      safeSetStorageJson(STORAGE_CUSTOM_UPSC_MODULES, nextMap);
-
-      setSelectedUpscModuleNo(num);
-      setSelectedUpscModuleName(cleanName || `Module ${num}`);
-      showToast(`Module ${num}: "${cleanName || `Module ${num}`}" created`, "success");
+  const handleConfirmRename = async () => {
+    if (!renamingNote || !renameTopicTitle.trim()) return;
+    setIsRenaming(true);
+    try {
+      await renameNotePipeline({
+        noteId: renamingNote.id,
+        currentNote: renamingNote,
+        newTopicNumber: renameTopicNumber === "" ? 1 : Number(renameTopicNumber),
+        newTopicTitle: renameTopicTitle.trim(),
+        newChapterTitle: renameChapterTitle.trim() || undefined,
+      });
+      showToast("Note renamed successfully.", "success");
+      setRenamingNote(null);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      showToast(err?.message || "Failed to rename note.", "error");
+    } finally {
+      setIsRenaming(false);
     }
   };
 
-  // =========================================================================
-  // NOTE ACTION HANDLERS (Replace, Rename, Delete, Practice Test)
-  // =========================================================================
   const handleOpenReplace = (note: ClassNote) => {
     setReplacingNote(note);
     setReplaceFile(null);
@@ -675,7 +697,7 @@ export default function AdminNotesDashboard({
         currentNote: replacingNote,
         newFile: replaceFile,
       });
-      showToast("Note file replaced successfully!", "success");
+      showToast("Note file replaced successfully.", "success");
       setReplacingNote(null);
       setReplaceFile(null);
       if (onRefresh) onRefresh();
@@ -686,46 +708,15 @@ export default function AdminNotesDashboard({
     }
   };
 
-  const handleOpenRename = (note: ClassNote) => {
-    setRenamingNote(note);
-    const rawNo = (note as any).topicNumber ?? note.topicNo ?? 1;
-    const num = typeof rawNo === "number" ? rawNo : parseInt(String(rawNo).replace(/\D/g, ""), 10) || 1;
-    setRenameTopicNumber(num);
-    setRenameTopicTitle((note as any).topicTitle || (note as any).topicName || note.partLabel || "");
-    setRenameChapterTitle((note as any).chapterTitle || (note as any).chapterName || (note as any).moduleName || "");
-  };
-
-  const handleConfirmRename = async () => {
-    if (!renamingNote) return;
-    setIsRenaming(true);
-    try {
-      await renameNotePipeline({
-        noteId: renamingNote.id,
-        currentNote: renamingNote,
-        newTopicNumber: renameTopicNumber === "" ? undefined : renameTopicNumber,
-        newTopicTitle: renameTopicTitle.trim() || undefined,
-        newChapterTitle: renameChapterTitle.trim() || undefined,
-      });
-      showToast("Note renamed successfully!", "success");
-      setRenamingNote(null);
-      if (onRefresh) onRefresh();
-    } catch (err: any) {
-      showToast(err?.message || "Failed to rename note.", "error");
-    } finally {
-      setIsRenaming(false);
-    }
-  };
-
-  const handleOpenDelete = (note: ClassNote) => {
-    setDeletingNote(note);
-  };
-
   const handleConfirmDelete = async () => {
     if (!deletingNote) return;
     setIsDeleting(true);
     try {
       await deleteNotePipeline(deletingNote.id, deletingNote);
-      showToast("Topic note deleted successfully.", "success");
+      showToast("Note deleted successfully.", "success");
+      if (selectedTopicNoteId === deletingNote.id) {
+        setSelectedTopicNoteId(null);
+      }
       setDeletingNote(null);
       if (onRefresh) onRefresh();
     } catch (err: any) {
@@ -735,73 +726,83 @@ export default function AdminNotesDashboard({
     }
   };
 
-  // =========================================================================
-  // SUBJECT MANAGEMENT: RENAME & DELETE HANDLERS
-  // =========================================================================
-  const handleOpenRenameSubject = (subject: string) => {
-    setRenamingSubject({
-      type: activeTab,
-      className: selectedSchoolClass,
-      gsPaper: selectedUpscPaper,
-      oldSubject: subject,
-      newSubject: subject,
-    });
+  // Subject Rename Handlers
+  const handleOpenRenameSubject = (subj: string) => {
+    if (activeTab === "school") {
+      setRenamingSubject({
+        type: "school",
+        className: selectedSchoolClass,
+        oldSubject: subj,
+        newSubject: subj,
+      });
+    } else {
+      setRenamingSubject({
+        type: "upsc",
+        gsPaper: selectedUpscPaper,
+        oldSubject: subj,
+        newSubject: subj,
+      });
+    }
   };
 
   const handleConfirmRenameSubject = async () => {
-    if (!renamingSubject) return;
-    const cleanNew = renamingSubject.newSubject.trim();
-    if (!cleanNew) {
-      showToast("Subject name cannot be empty.", "error");
-      return;
-    }
-    if (cleanNew.toLowerCase() === renamingSubject.oldSubject.toLowerCase()) {
+    if (!renamingSubject || !renamingSubject.newSubject.trim()) return;
+    const { type, className, gsPaper, oldSubject, newSubject } = renamingSubject;
+    if (oldSubject.trim().toLowerCase() === newSubject.trim().toLowerCase()) {
       setRenamingSubject(null);
       return;
     }
 
     setIsRenamingSubject(true);
     try {
-      // 1. Run pipeline to update all Firestore docs and invalidate caches
-      const res = await renameSubjectPipeline({
-        type: renamingSubject.type,
-        className: renamingSubject.type === "school" ? renamingSubject.className : undefined,
-        gsPaper: renamingSubject.type === "upsc" ? renamingSubject.gsPaper : undefined,
-        oldSubject: renamingSubject.oldSubject,
-        newSubject: cleanNew,
-        notes: activeTab === "school" ? schoolNotes : upscNotes,
+      await renameSubjectPipeline({
+        type,
+        className,
+        gsPaper,
+        oldSubject: oldSubject.trim(),
+        newSubject: newSubject.trim(),
+        notes,
       });
 
-      // 2. Update custom subjects and removed subjects in localStorage
-      if (renamingSubject.type === "school") {
-        const targetCls = renamingSubject.className || selectedSchoolClass;
-        const curCustom = customSchoolSubjects[targetCls] || [];
-        const nextCustom = curCustom.map((s) => (s.toLowerCase() === renamingSubject.oldSubject.toLowerCase() ? cleanNew : s));
-        if (!nextCustom.includes(cleanNew)) nextCustom.push(cleanNew);
+      if (type === "school" && className) {
+        updateSchoolHierarchy((prev) => {
+          const curList = prev.subjects[className] || [];
+          const nextList = curList.map((s) => (s === oldSubject ? newSubject.trim() : s));
+          if (!nextList.includes(newSubject.trim())) nextList.push(newSubject.trim());
+          
+          const curChapters = prev.chapters[className] || {};
+          const chs = curChapters[oldSubject] || [];
+          const nextChaptersForClass = { ...curChapters, [newSubject.trim()]: chs };
+          delete nextChaptersForClass[oldSubject];
 
-        const updatedMap = { ...customSchoolSubjects, [targetCls]: nextCustom };
-        setCustomSchoolSubjects(updatedMap);
-        safeSetStorageJson(STORAGE_CUSTOM_SCHOOL_SUBJECTS, updatedMap);
+          return {
+            ...prev,
+            subjects: { ...prev.subjects, [className]: nextList },
+            chapters: { ...prev.chapters, [className]: nextChaptersForClass }
+          };
+        });
+        setSelectedSchoolSubject(newSubject.trim());
+      } else if (type === "upsc" && gsPaper) {
+        updateUpscHierarchy((prev) => {
+          const curList = prev.subjects[gsPaper] || [];
+          const nextList = curList.map((s) => (s === oldSubject ? newSubject.trim() : s));
+          if (!nextList.includes(newSubject.trim())) nextList.push(newSubject.trim());
+          
+          const curModules = prev.modules[gsPaper] || {};
+          const mods = curModules[oldSubject] || [];
+          const nextModsForPaper = { ...curModules, [newSubject.trim()]: mods };
+          delete nextModsForPaper[oldSubject];
 
-        if (selectedSchoolSubject.toLowerCase() === renamingSubject.oldSubject.toLowerCase()) {
-          setSelectedSchoolSubject(cleanNew);
-        }
-      } else {
-        const targetPaper = renamingSubject.gsPaper || selectedUpscPaper;
-        const curCustom = customUpscSubjects[targetPaper] || [];
-        const nextCustom = curCustom.map((s) => (s.toLowerCase() === renamingSubject.oldSubject.toLowerCase() ? cleanNew : s));
-        if (!nextCustom.includes(cleanNew)) nextCustom.push(cleanNew);
-
-        const updatedMap = { ...customUpscSubjects, [targetPaper]: nextCustom };
-        setCustomUpscSubjects(updatedMap);
-        safeSetStorageJson(STORAGE_CUSTOM_UPSC_SUBJECTS, updatedMap);
-
-        if (selectedUpscSubject.toLowerCase() === renamingSubject.oldSubject.toLowerCase()) {
-          setSelectedUpscSubject(cleanNew);
-        }
+          return {
+            ...prev,
+            subjects: { ...prev.subjects, [gsPaper]: nextList },
+            modules: { ...prev.modules, [gsPaper]: nextModsForPaper }
+          };
+        });
+        setSelectedUpscSubject(newSubject.trim());
       }
 
-      showToast(`Subject renamed to "${cleanNew}" (${res.updatedCount} notes updated)`, "success");
+      showToast(`Subject renamed to "${newSubject.trim()}".`, "success");
       setRenamingSubject(null);
       if (onRefresh) onRefresh();
     } catch (err: any) {
@@ -811,133 +812,168 @@ export default function AdminNotesDashboard({
     }
   };
 
-  const handleDeleteSubject = (subjectToDelete: string) => {
-    // Check if subject contains notes
-    const notesInSubj = (activeTab === "school" ? schoolNotes : upscNotes).filter((n) => {
-      const s = ((n as any).subjectName || n.subject || "").trim().toLowerCase();
-      if (s !== subjectToDelete.trim().toLowerCase()) return false;
+  // Subject Delete Handler (Full Cascade Deletion)
+  const handleConfirmDeleteSubject = async () => {
+    if (!deletingSubject) return;
+    const { type, className, gsPaper, subject } = deletingSubject;
+    setIsDeletingSubject(true);
 
-      if (activeTab === "school") {
-        const c = ((n as any).className || n.classGrade || (n as any).class || "").trim().toLowerCase();
-        return c === selectedSchoolClass.trim().toLowerCase();
-      } else {
-        const p = ((n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "").trim().toLowerCase();
-        return p === selectedUpscPaper.trim().toLowerCase();
+    try {
+      await deleteSubjectPipeline({
+        type,
+        className,
+        gsPaper,
+        subject,
+        notes,
+      });
+
+      if (type === "school" && className) {
+        updateSchoolHierarchy((prev) => {
+          const curRemoved = prev.removedSubjects[className] || [];
+          const nextRemoved = Array.from(new Set([...curRemoved, subject]));
+
+          const curSubjs = prev.subjects[className] || [];
+          const nextSubjs = curSubjs.filter((s) => s !== subject);
+
+          const curChs = prev.chapters[className] || {};
+          const nextChs = { ...curChs };
+          delete nextChs[subject];
+
+          return {
+            ...prev,
+            removedSubjects: { ...prev.removedSubjects, [className]: nextRemoved },
+            subjects: { ...prev.subjects, [className]: nextSubjs },
+            chapters: { ...prev.chapters, [className]: nextChs }
+          };
+        });
+
+        const remaining = schoolSubjectsForSelectedClass.filter((s) => s !== subject);
+        setSelectedSchoolSubject(remaining.length > 0 ? remaining[0] : "");
+      } else if (type === "upsc" && gsPaper) {
+        updateUpscHierarchy((prev) => {
+          const curRemoved = prev.removedSubjects[gsPaper] || [];
+          const nextRemoved = Array.from(new Set([...curRemoved, subject]));
+
+          const curSubjs = prev.subjects[gsPaper] || [];
+          const nextSubjs = curSubjs.filter((s) => s !== subject);
+
+          const curMods = prev.modules[gsPaper] || {};
+          const nextMods = { ...curMods };
+          delete nextMods[subject];
+
+          return {
+            ...prev,
+            removedSubjects: { ...prev.removedSubjects, [gsPaper]: nextRemoved },
+            subjects: { ...prev.subjects, [gsPaper]: nextSubjs },
+            modules: { ...prev.modules, [gsPaper]: nextMods }
+          };
+        });
+
+        const remaining = upscSubjectsForSelectedPaper.filter((s) => s !== subject);
+        setSelectedUpscSubject(remaining.length > 0 ? remaining[0] : "");
       }
-    });
 
-    if (notesInSubj.length > 0) {
-      showToast("This subject contains notes. Delete all Chapters/Modules first.", "error");
-      return;
-    }
-
-    if (activeTab === "school") {
-      const curRemoved = removedSchoolSubjects[selectedSchoolClass] || [];
-      const nextRemoved = {
-        ...removedSchoolSubjects,
-        [selectedSchoolClass]: Array.from(new Set([...curRemoved, subjectToDelete])),
-      };
-      setRemovedSchoolSubjects(nextRemoved);
-      safeSetStorageJson(STORAGE_REMOVED_SCHOOL_SUBJECTS, nextRemoved);
-
-      const curCustom = customSchoolSubjects[selectedSchoolClass] || [];
-      if (curCustom.includes(subjectToDelete)) {
-        const nextCustom = {
-          ...customSchoolSubjects,
-          [selectedSchoolClass]: curCustom.filter((s) => s !== subjectToDelete),
-        };
-        setCustomSchoolSubjects(nextCustom);
-        safeSetStorageJson(STORAGE_CUSTOM_SCHOOL_SUBJECTS, nextCustom);
-      }
-
-      showToast(`Subject "${subjectToDelete}" deleted.`, "success");
-    } else {
-      const curRemoved = removedUpscSubjects[selectedUpscPaper] || [];
-      const nextRemoved = {
-        ...removedUpscSubjects,
-        [selectedUpscPaper]: Array.from(new Set([...curRemoved, subjectToDelete])),
-      };
-      setRemovedUpscSubjects(nextRemoved);
-      safeSetStorageJson(STORAGE_REMOVED_UPSC_SUBJECTS, nextRemoved);
-
-      const curCustom = customUpscSubjects[selectedUpscPaper] || [];
-      if (curCustom.includes(subjectToDelete)) {
-        const nextCustom = {
-          ...customUpscSubjects,
-          [selectedUpscPaper]: curCustom.filter((s) => s !== subjectToDelete),
-        };
-        setCustomUpscSubjects(nextCustom);
-        safeSetStorageJson(STORAGE_CUSTOM_UPSC_SUBJECTS, nextCustom);
-      }
-
-      showToast(`Subject "${subjectToDelete}" deleted.`, "success");
+      showToast(`Subject "${subject}" and all child notes deleted.`, "success");
+      setDeletingSubject(null);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      showToast(err?.message || `Failed to delete subject "${subject}".`, "error");
+    } finally {
+      setIsDeletingSubject(false);
     }
   };
 
-  // =========================================================================
-  // CLASS MANAGEMENT: DELETE HANDLER (Cascade Cloudflare & Firestore Deletion)
-  // =========================================================================
+  // Class Delete Handler
   const handleConfirmDeleteClass = async () => {
     if (!deletingClass) return;
     const targetClass = deletingClass;
     setIsDeletingClass(true);
 
     try {
-      // 1. Run cascade deletion pipeline for this class (deletes R2 files, Firestore docs, practice tests)
       await deleteClassPipeline({
         className: targetClass,
         notes: notes,
       });
 
-      // 2. Remove class from customSchoolClasses
-      const updatedClasses = customSchoolClasses.filter(
-        (c) => c.toLowerCase() !== targetClass.toLowerCase()
-      );
-      setCustomSchoolClasses(updatedClasses);
-      safeSetStorageJson(STORAGE_CUSTOM_SCHOOL_CLASSES, updatedClasses);
+      updateSchoolHierarchy((prev) => {
+        const nextClasses = prev.classes.filter((c) => c.toLowerCase() !== targetClass.toLowerCase());
+        const nextSubjects = { ...prev.subjects };
+        delete nextSubjects[targetClass];
+        const nextChapters = { ...prev.chapters };
+        delete nextChapters[targetClass];
+        const nextRemoved = { ...prev.removedSubjects };
+        delete nextRemoved[targetClass];
 
-      // 3. Clean up custom subjects, custom chapters, and removed subjects mapping
-      const nextCustomSubjects = { ...customSchoolSubjects };
-      delete nextCustomSubjects[targetClass];
-      setCustomSchoolSubjects(nextCustomSubjects);
-      safeSetStorageJson(STORAGE_CUSTOM_SCHOOL_SUBJECTS, nextCustomSubjects);
+        return {
+          ...prev,
+          classes: nextClasses,
+          subjects: nextSubjects,
+          chapters: nextChapters,
+          removedSubjects: nextRemoved
+        };
+      });
 
-      const nextCustomChapters = { ...customSchoolChapters };
-      delete nextCustomChapters[targetClass];
-      setCustomSchoolChapters(nextCustomChapters);
-      safeSetStorageJson(STORAGE_CUSTOM_SCHOOL_CHAPTERS, nextCustomChapters);
-
-      const nextRemovedSubjects = { ...removedSchoolSubjects };
-      delete nextRemovedSubjects[targetClass];
-      setRemovedSchoolSubjects(nextRemovedSubjects);
-      safeSetStorageJson(STORAGE_REMOVED_SCHOOL_SUBJECTS, nextRemovedSubjects);
-
-      // 4. Compute next available class
       const remaining = schoolClasses.filter(
         (c) => c.toLowerCase() !== targetClass.toLowerCase()
       );
-      if (remaining.length > 0) {
-        setSelectedSchoolClass(remaining[0]);
-      } else {
-        setSelectedSchoolClass("");
-      }
+      setSelectedSchoolClass(remaining.length > 0 ? remaining[0] : "");
 
       showToast(`Class "${targetClass}" deleted successfully.`, "success");
       setDeletingClass(null);
-
-      // 5. Trigger parent refresh if available
-      if (onRefresh) {
-        onRefresh();
-      }
+      if (onRefresh) onRefresh();
     } catch (err: any) {
-      console.error("[AdminNotesDashboard] Delete class failure:", err);
       showToast(err?.message || `Failed to delete "${targetClass}".`, "error");
     } finally {
       setIsDeletingClass(false);
     }
   };
 
-  // Chapter & Module Rename Handlers
+  // GS Paper Delete Handler (UPSC)
+  const handleConfirmDeletePaper = async () => {
+    if (!deletingPaper) return;
+    const targetPaper = deletingPaper;
+    setIsDeletingPaper(true);
+
+    try {
+      await deletePaperPipeline({
+        gsPaper: targetPaper,
+        notes: notes,
+      });
+
+      updateUpscHierarchy((prev) => {
+        const nextPapers = prev.papers.filter((p) => p.toLowerCase() !== targetPaper.toLowerCase());
+        const nextSubjects = { ...prev.subjects };
+        delete nextSubjects[targetPaper];
+        const nextModules = { ...prev.modules };
+        delete nextModules[targetPaper];
+        const nextRemoved = { ...prev.removedSubjects };
+        delete nextRemoved[targetPaper];
+
+        return {
+          ...prev,
+          papers: nextPapers,
+          subjects: nextSubjects,
+          modules: nextModules,
+          removedSubjects: nextRemoved
+        };
+      });
+
+      const remaining = upscPapers.filter(
+        (p) => p.toLowerCase() !== targetPaper.toLowerCase()
+      );
+      setSelectedUpscPaper(remaining.length > 0 ? remaining[0] : "");
+
+      showToast(`GS Paper "${targetPaper}" deleted successfully.`, "success");
+      setDeletingPaper(null);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      showToast(err?.message || `Failed to delete "${targetPaper}".`, "error");
+    } finally {
+      setIsDeletingPaper(false);
+    }
+  };
+
+  // Chapter / Module Rename & Delete Handlers
   const handleOpenRenameChapter = (chNumber: number, chName: string) => {
     if (activeTab === "school") {
       setRenamingChapter({
@@ -962,139 +998,169 @@ export default function AdminNotesDashboard({
     }
   };
 
-  const handleConfirmRenameChapter = () => {
-    if (!renamingChapter) return;
-    const num = typeof renamingChapter.newNumber === "number" ? renamingChapter.newNumber : parseInt(String(renamingChapter.newNumber), 10) || renamingChapter.oldNumber;
-    const cleanName = renamingChapter.newName.trim() || (renamingChapter.type === "school" ? `Chapter ${num}` : `Module ${num}`);
+  const handleConfirmRenameChapter = async () => {
+    if (!renamingChapter || !renamingChapter.newName.trim()) return;
+    const { type, className, gsPaper, subject, oldNumber, newNumber, newName } = renamingChapter;
+    const validNewNum = newNumber === "" ? oldNumber : Number(newNumber);
 
-    if (renamingChapter.type === "school") {
-      const cls = renamingChapter.className || selectedSchoolClass;
-      const subj = renamingChapter.subject || selectedSchoolSubject;
-      const curClassMap = customSchoolChapters[cls] || {};
-      const curSubjList = curClassMap[subj] || [];
-      const updatedList = [
-        ...curSubjList.filter((c) => c.number !== renamingChapter.oldNumber && c.number !== num),
-        { number: num, name: cleanName },
-      ].sort((a, b) => a.number - b.number);
+    setIsRenamingChapter(true);
+    try {
+      if (type === "school" && className) {
+        updateSchoolHierarchy((prev) => {
+          const curSubjectChapters = prev.chapters[className]?.[subject] || [];
+          const updated = curSubjectChapters.filter((c) => c.number !== oldNumber);
+          updated.push({ number: validNewNum, name: newName.trim() });
+          updated.sort((a, b) => a.number - b.number);
 
-      const nextMap = {
-        ...customSchoolChapters,
-        [cls]: {
-          ...curClassMap,
-          [subj]: updatedList,
-        },
-      };
-      setCustomSchoolChapters(nextMap);
-      safeSetStorageJson(STORAGE_CUSTOM_SCHOOL_CHAPTERS, nextMap);
+          return {
+            ...prev,
+            chapters: {
+              ...prev.chapters,
+              [className]: {
+                ...(prev.chapters[className] || {}),
+                [subject]: updated
+              }
+            }
+          };
+        });
 
-      if (selectedSchoolChapterNo === renamingChapter.oldNumber) {
-        setSelectedSchoolChapterNo(num);
-        setSelectedSchoolChapterName(cleanName);
+        if (selectedSchoolChapterNo === oldNumber) {
+          setSelectedSchoolChapterNo(validNewNum);
+          setSelectedSchoolChapterName(newName.trim());
+        }
+      } else if (type === "upsc" && gsPaper) {
+        updateUpscHierarchy((prev) => {
+          const curSubjectModules = prev.modules[gsPaper]?.[subject] || [];
+          const updated = curSubjectModules.filter((m) => m.number !== oldNumber);
+          updated.push({ number: validNewNum, name: newName.trim() });
+          updated.sort((a, b) => a.number - b.number);
+
+          return {
+            ...prev,
+            modules: {
+              ...prev.modules,
+              [gsPaper]: {
+                ...(prev.modules[gsPaper] || {}),
+                [subject]: updated
+              }
+            }
+          };
+        });
+
+        if (selectedUpscModuleNo === oldNumber) {
+          setSelectedUpscModuleNo(validNewNum);
+          setSelectedUpscModuleName(newName.trim());
+        }
       }
-      showToast(`Chapter updated to "Chapter ${num}: ${cleanName}"`, "success");
-    } else {
-      const paper = renamingChapter.gsPaper || selectedUpscPaper;
-      const subj = renamingChapter.subject || selectedUpscSubject;
-      const curPaperMap = customUpscModules[paper] || {};
-      const curSubjList = curPaperMap[subj] || [];
-      const updatedList = [
-        ...curSubjList.filter((m) => m.number !== renamingChapter.oldNumber && m.number !== num),
-        { number: num, name: cleanName },
-      ].sort((a, b) => a.number - b.number);
 
-      const nextMap = {
-        ...customUpscModules,
-        [paper]: {
-          ...curPaperMap,
-          [subj]: updatedList,
-        },
-      };
-      setCustomUpscModules(nextMap);
-      safeSetStorageJson(STORAGE_CUSTOM_UPSC_MODULES, nextMap);
-
-      if (selectedUpscModuleNo === renamingChapter.oldNumber) {
-        setSelectedUpscModuleNo(num);
-        setSelectedUpscModuleName(cleanName);
-      }
-      showToast(`Module updated to "Module ${num}: ${cleanName}"`, "success");
-    }
-
-    setRenamingChapter(null);
-  };
-
-  const handleDeleteChapter = (chNum: number) => {
-    // Check if notes exist in this chapter/module
-    const notesInCh = (activeTab === "school" ? schoolNotes : upscNotes).filter((n) => {
-      const s = ((n as any).subjectName || n.subject || "").trim().toLowerCase();
-      const currSubj = (activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject).trim().toLowerCase();
-      if (s !== currSubj) return false;
-
-      if (activeTab === "school") {
-        const c = ((n as any).className || n.classGrade || (n as any).class || "").trim().toLowerCase();
-        const num = (n as any).chapterNumber ?? n.chapterNo ?? 1;
-        return c === selectedSchoolClass.trim().toLowerCase() && Number(num) === chNum;
-      } else {
-        const p = ((n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "").trim().toLowerCase();
-        const num = (n as any).moduleNumber ?? (n as any).moduleNo ?? (n as any).chapterNumber ?? n.chapterNo ?? 1;
-        return p === selectedUpscPaper.trim().toLowerCase() && Number(num) === chNum;
-      }
-    });
-
-    if (notesInCh.length > 0) {
-      showToast(`This ${activeTab === "school" ? "chapter" : "module"} contains ${notesInCh.length} note(s). Please delete the notes first.`, "error");
-      return;
-    }
-
-    if (activeTab === "school") {
-      const curClassMap = customSchoolChapters[selectedSchoolClass] || {};
-      const curSubjList = curClassMap[selectedSchoolSubject] || [];
-      const nextList = curSubjList.filter((c) => c.number !== chNum);
-      const nextMap = {
-        ...customSchoolChapters,
-        [selectedSchoolClass]: {
-          ...curClassMap,
-          [selectedSchoolSubject]: nextList,
-        },
-      };
-      setCustomSchoolChapters(nextMap);
-      safeSetStorageJson(STORAGE_CUSTOM_SCHOOL_CHAPTERS, nextMap);
-      showToast(`Chapter ${chNum} deleted.`, "success");
-    } else {
-      const curPaperMap = customUpscModules[selectedUpscPaper] || {};
-      const curSubjList = curPaperMap[selectedUpscSubject] || [];
-      const nextList = curSubjList.filter((m) => m.number !== chNum);
-      const nextMap = {
-        ...customUpscModules,
-        [selectedUpscPaper]: {
-          ...curPaperMap,
-          [selectedUpscSubject]: nextList,
-        },
-      };
-      setCustomUpscModules(nextMap);
-      safeSetStorageJson(STORAGE_CUSTOM_UPSC_MODULES, nextMap);
-      showToast(`Module ${chNum} deleted.`, "success");
+      showToast(`Chapter updated successfully.`, "success");
+      setRenamingChapter(null);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      showToast(err?.message || "Failed to update chapter.", "error");
+    } finally {
+      setIsRenamingChapter(false);
     }
   };
 
+  const handleConfirmDeleteChapter = async () => {
+    if (!deletingChapter) return;
+    const { type, className, gsPaper, subject, chapterNumber, chapterName } = deletingChapter;
+    setIsDeletingChapter(true);
+
+    try {
+      await deleteChapterPipeline({
+        type,
+        className,
+        gsPaper,
+        subject,
+        chapterNumber,
+        notes,
+      });
+
+      if (type === "school" && className) {
+        updateSchoolHierarchy((prev) => {
+          const curSubjectChapters = prev.chapters[className]?.[subject] || [];
+          const updated = curSubjectChapters.filter((c) => c.number !== chapterNumber);
+          return {
+            ...prev,
+            chapters: {
+              ...prev.chapters,
+              [className]: {
+                ...(prev.chapters[className] || {}),
+                [subject]: updated
+              }
+            }
+          };
+        });
+
+        const remaining = schoolChaptersForSelected.filter((c) => c.number !== chapterNumber);
+        if (remaining.length > 0) {
+          setSelectedSchoolChapterNo(remaining[0].number);
+          setSelectedSchoolChapterName(remaining[0].name);
+        } else {
+          setSelectedSchoolChapterNo(0);
+          setSelectedSchoolChapterName("");
+        }
+      } else if (type === "upsc" && gsPaper) {
+        updateUpscHierarchy((prev) => {
+          const curSubjectModules = prev.modules[gsPaper]?.[subject] || [];
+          const updated = curSubjectModules.filter((m) => m.number !== chapterNumber);
+          return {
+            ...prev,
+            modules: {
+              ...prev.modules,
+              [gsPaper]: {
+                ...(prev.modules[gsPaper] || {}),
+                [subject]: updated
+              }
+            }
+          };
+        });
+
+        const remaining = upscModulesForSelected.filter((m) => m.number !== chapterNumber);
+        if (remaining.length > 0) {
+          setSelectedUpscModuleNo(remaining[0].number);
+          setSelectedUpscModuleName(remaining[0].name);
+        } else {
+          setSelectedUpscModuleNo(0);
+          setSelectedUpscModuleName("");
+        }
+      }
+
+      showToast(`Chapter ${chapterNumber} deleted successfully.`, "success");
+      setDeletingChapter(null);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      showToast(err?.message || "Failed to delete chapter.", "error");
+    } finally {
+      setIsDeletingChapter(false);
+    }
+  };
+
+  // Practice Test Launcher
   const handleOpenPracticeTest = (note: ClassNote) => {
-    const classGrade = activeTab === "school" ? selectedSchoolClass : "UPSC";
-    const subject = activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject;
-    const chapterNo = activeTab === "school" ? selectedSchoolChapterNo : selectedUpscModuleNo;
-    const chapterName = activeTab === "school" ? selectedSchoolChapterName : selectedUpscModuleName;
-    const topicName = ((note as any).topicTitle || (note as any).topicName || note.partLabel || "").trim();
+    const classGrade = (note as any).className || note.classGrade || (note as any).class || "";
+    const subject = (note as any).subjectName || note.subject || "";
+    const chapterNo = (note as any).chapterNumber ?? note.chapterNo ?? 1;
+    const chapterName = (note as any).chapterTitle || (note as any).chapterName || `Chapter ${chapterNo}`;
+    const topicName = (note as any).topicTitle || (note as any).topicName || note.partLabel || "";
 
     setPracticeTestTarget({
       classGrade,
       subject,
-      chapterNo,
-      chapterName: chapterName || `Chapter ${chapterNo}`,
-      topicName: topicName || `Topic ${(note as any).topicNumber || note.topicNo || 1}`,
+      chapterNo: Number(chapterNo),
+      chapterName,
+      topicName,
     });
   };
 
+  // Subject Kebab Menu state in Left Panel
+  const [activeSubjectKebab, setActiveSubjectKebab] = useState<string | null>(null);
+
   return (
-    <div className="flex-1 min-h-0 flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 sm:rounded-2xl border-0 sm:border border-slate-200/80 dark:border-slate-800/80 overflow-hidden" id="admin-notes-management">
-      {/* Toast Notification */}
+    <div className="h-full flex flex-col bg-slate-100 dark:bg-slate-950 overflow-hidden" id="admin-notes-dashboard">
+      {/* Toast notification */}
       {toast && (
         <div 
           className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-2xl shadow-xl border flex items-center gap-3 animate-slideUp text-xs font-bold ${
@@ -1111,22 +1177,25 @@ export default function AdminNotesDashboard({
         </div>
       )}
 
-      {/* Main Grid Layout: Left Hierarchy Sidebar + Right Topic Notes Area */}
+      {/* =========================================================================
+          3-COLUMN RESPONSIVE LAYOUT
+          Column 1: Left Hierarchy Sidebar (School/UPSC Switch, Classes/Papers, Subjects)
+          Column 2: Middle Panel (Expandable Accordion of Chapters/Modules & Topics)
+          Column 3: Right Panel (Topic Notes Viewer / Detailed Workspace)
+          ========================================================================= */}
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
+        
         {/* =========================================================================
-            LEFT SIDEBAR: HIERARCHY NAVIGATION (School or UPSC)
+            COLUMN 1: LEFT SIDEBAR (Classes / Papers & Subjects)
             ========================================================================= */}
-        <aside className="w-full lg:w-80 xl:w-96 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col min-h-0 shrink-0 overflow-hidden max-h-72 lg:max-h-none" id="notes-sidebar">
+        <aside className="w-full lg:w-72 xl:w-80 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col min-h-0 shrink-0 overflow-hidden max-h-72 lg:max-h-none" id="notes-left-sidebar">
           {/* Top Switcher: School vs UPSC */}
-          <div className="p-3.5 sm:p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 shrink-0">
+          <div className="p-3.5 sm:p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 shrink-0">
             <div className="flex rounded-xl bg-slate-200/70 dark:bg-slate-800/70 p-1">
               <button
                 type="button"
-                onClick={() => {
-                  setActiveTab("school");
-                  setSearchQuery("");
-                }}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold transition-all ${
+                onClick={() => setActiveTab("school")}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   activeTab === "school"
                     ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
                     : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
@@ -1139,11 +1208,8 @@ export default function AdminNotesDashboard({
 
               <button
                 type="button"
-                onClick={() => {
-                  setActiveTab("upsc");
-                  setSearchQuery("");
-                }}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold transition-all ${
+                onClick={() => setActiveTab("upsc")}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   activeTab === "upsc"
                     ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm"
                     : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
@@ -1156,7 +1222,7 @@ export default function AdminNotesDashboard({
             </div>
           </div>
 
-          {/* Hierarchy Cascade Columns / Sections */}
+          {/* Classes & Subjects List */}
           <div className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-4 space-y-6 scrollbar-thin overscroll-contain" id="notes-sidebar-scroll">
             {activeTab === "school" ? (
               <>
@@ -1176,7 +1242,7 @@ export default function AdminNotesDashboard({
                       <p className="text-xs text-slate-400 font-medium">No classes created yet</p>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-1.5" id="school-classes-list">
+                    <div className="grid grid-cols-2 gap-1.5" id="school-classes-list">
                       {schoolClasses.map((cls) => {
                         const isSelected = selectedSchoolClass.toLowerCase() === cls.toLowerCase();
                         const classNotesCount = schoolNotes.filter((n) => {
@@ -1188,22 +1254,23 @@ export default function AdminNotesDashboard({
                           <div
                             key={cls}
                             onClick={() => setSelectedSchoolClass(cls)}
-                            className={`group px-3 py-2 rounded-xl text-left text-xs font-bold transition-all flex items-center justify-between gap-1.5 border cursor-pointer ${
+                            className={`group px-3 py-2 rounded-xl text-left text-xs font-bold transition-all flex items-center justify-between gap-1 border cursor-pointer ${
                               isSelected
                                 ? "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-300/80 dark:border-blue-700/80 shadow-2xs"
                                 : "bg-slate-50/70 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 border-slate-200/70 dark:border-slate-800/70 hover:bg-slate-100 dark:hover:bg-slate-800"
                             }`}
                             id={`class-btn-${cls.replace(/\s+/g, "-")}`}
                           >
-                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            <div className="flex items-center gap-1 min-w-0 flex-1">
                               <span className="truncate">{cls}</span>
                               {classNotesCount > 0 && (
-                                <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-slate-200/60 dark:bg-slate-800 font-mono text-slate-500 dark:text-slate-400 shrink-0">
+                                <span className="text-[10px] px-1 py-0.2 rounded-md bg-slate-200/60 dark:bg-slate-800 font-mono text-slate-500 dark:text-slate-400 shrink-0">
                                   {classNotesCount}
                                 </span>
                               )}
                             </div>
 
+                            {/* Delete Class Icon (🗑️) */}
                             <button
                               type="button"
                               title={`Delete ${cls}`}
@@ -1213,7 +1280,6 @@ export default function AdminNotesDashboard({
                               }}
                               className="p-1 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors shrink-0 cursor-pointer"
                               id={`delete-class-${cls.replace(/\s+/g, "-")}`}
-                              aria-label={`Delete ${cls}`}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -1235,7 +1301,7 @@ export default function AdminNotesDashboard({
                   </button>
                 </div>
 
-                {/* 2. Subjects List for Selected Class */}
+                {/* 2. Subjects List */}
                 <div className="pt-4 border-t border-slate-200/80 dark:border-slate-800">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500 truncate">
@@ -1247,7 +1313,7 @@ export default function AdminNotesDashboard({
                     <p className="text-xs text-slate-400 italic p-2">Create or select a class first</p>
                   ) : schoolSubjectsForSelectedClass.length === 0 ? (
                     <div className="p-3 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50/50 dark:bg-slate-900/30">
-                      <p className="text-xs text-slate-400 font-medium">No subjects added to {selectedSchoolClass}</p>
+                      <p className="text-xs text-slate-400 font-medium">No subjects in {selectedSchoolClass}</p>
                     </div>
                   ) : (
                     <div className="space-y-1" id="school-subjects-list">
@@ -1258,6 +1324,7 @@ export default function AdminNotesDashboard({
                           const s = (n as any).subjectName || n.subject || "";
                           return c.toLowerCase() === selectedSchoolClass.toLowerCase() && s.toLowerCase() === subj.toLowerCase();
                         }).length;
+                        const subjectKebabKey = `school-subj-${subj}`;
 
                         return (
                           <div
@@ -1271,7 +1338,7 @@ export default function AdminNotesDashboard({
                             <button
                               type="button"
                               onClick={() => setSelectedSchoolSubject(subj)}
-                              className="flex items-center gap-2 min-w-0 flex-1 text-left py-0.5"
+                              className="flex items-center gap-2 min-w-0 flex-1 text-left py-0.5 cursor-pointer"
                               id={`subject-btn-${subj.replace(/\s+/g, "-")}`}
                             >
                               <BookOpen className={`w-3.5 h-3.5 shrink-0 ${isSelected ? "text-blue-100" : "text-slate-400"}`} />
@@ -1285,29 +1352,18 @@ export default function AdminNotesDashboard({
                               )}
                             </button>
 
-                            {/* Action icons: Rename (📝) & Delete (🗑) */}
+                            {/* Subject Actions: Delete & 3-dots Kebab for Rename */}
                             <div className="flex items-center gap-0.5 shrink-0">
+                              {/* Delete Subject Button (🗑️) */}
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleOpenRenameSubject(subj);
-                                }}
-                                className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                                  isSelected 
-                                    ? "hover:bg-blue-700 text-blue-100" 
-                                    : "text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-                                }`}
-                                title={`Rename ${subj}`}
-                                id={`rename-subj-${subj.replace(/\s+/g, "-")}`}
-                              >
-                                <Pencil className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteSubject(subj);
+                                  setDeletingSubject({
+                                    type: "school",
+                                    className: selectedSchoolClass,
+                                    subject: subj,
+                                  });
                                 }}
                                 className={`p-1 rounded-lg transition-colors cursor-pointer ${
                                   isSelected 
@@ -1317,8 +1373,42 @@ export default function AdminNotesDashboard({
                                 title={`Delete ${subj}`}
                                 id={`delete-subj-${subj.replace(/\s+/g, "-")}`}
                               >
-                                <Trash2 className="w-3 h-3" />
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
+
+                              {/* 3-dots Kebab for Rename */}
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveSubjectKebab(activeSubjectKebab === subjectKebabKey ? null : subjectKebabKey);
+                                  }}
+                                  className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                                    isSelected 
+                                      ? "hover:bg-blue-700 text-blue-100" 
+                                      : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
+                                  }`}
+                                  title="Subject options"
+                                >
+                                  <MoreVertical className="w-3.5 h-3.5" />
+                                </button>
+
+                                {activeSubjectKebab === subjectKebabKey && (
+                                  <div className="absolute right-0 top-full mt-1 w-32 bg-white dark:bg-slate-850 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 py-1 z-30 animate-fadeIn">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveSubjectKebab(null);
+                                        handleOpenRenameSubject(subj);
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                    >
+                                      Rename Subject
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                         );
@@ -1343,137 +1433,10 @@ export default function AdminNotesDashboard({
                     </button>
                   )}
                 </div>
-
-                {/* 3. Chapters List for Selected Subject */}
-                <div className="pt-4 border-t border-slate-200/80 dark:border-slate-800">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500 truncate">
-                      {selectedSchoolSubject ? `Chapters • ${selectedSchoolSubject}` : "Chapters"}
-                    </span>
-                  </div>
-
-                  {!selectedSchoolSubject ? (
-                    <p className="text-xs text-slate-400 italic p-2">Create or select a subject first</p>
-                  ) : schoolChaptersForSelected.length === 0 ? (
-                    <div className="p-3 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50/50 dark:bg-slate-900/30">
-                      <p className="text-xs text-slate-400 font-medium">No chapters added yet</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-1" id="school-chapters-list">
-                      {schoolChaptersForSelected.map((ch) => {
-                        const isSelected = selectedSchoolChapterNo === ch.number;
-                        const chNotesCount = schoolNotes.filter((n) => {
-                          const c = (n as any).className || n.classGrade || (n as any).class || "";
-                          const s = (n as any).subjectName || n.subject || "";
-                          const chNo = (n as any).chapterNumber ?? n.chapterNo ?? 1;
-                          return c.toLowerCase() === selectedSchoolClass.toLowerCase() && 
-                                 s.toLowerCase() === selectedSchoolSubject.toLowerCase() && 
-                                 Number(chNo) === ch.number;
-                        }).length;
-
-                        return (
-                          <div
-                            key={ch.number}
-                            className={`group/ch w-full px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-1.5 border ${
-                              isSelected
-                                ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-sm"
-                                : "bg-slate-50/70 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 border-slate-200/70 dark:border-slate-800/70 hover:bg-slate-100 dark:hover:bg-slate-800"
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedSchoolChapterNo(ch.number);
-                                setSelectedSchoolChapterName(ch.name);
-                              }}
-                              className="flex items-center gap-2 min-w-0 flex-1 text-left py-0.5"
-                              id={`chapter-btn-${ch.number}`}
-                            >
-                              <Layers className={`w-3.5 h-3.5 shrink-0 ${isSelected ? "text-slate-300 dark:text-slate-700" : "text-slate-400"}`} />
-                              <span className="truncate">
-                                Ch {ch.number}: {ch.name}
-                              </span>
-                              {chNotesCount > 0 && (
-                                <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-mono shrink-0 ${
-                                  isSelected ? "bg-slate-800 dark:bg-slate-200 text-slate-200 dark:text-slate-800" : "bg-slate-200/60 dark:bg-slate-800 text-slate-500"
-                                }`}>
-                                  {chNotesCount}
-                                </span>
-                              )}
-                            </button>
-
-                            {/* Action icons: Edit Chapter No & Name (📝) & Delete (🗑) */}
-                            <div className="flex items-center gap-0.5 shrink-0">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleOpenRenameChapter(ch.number, ch.name);
-                                }}
-                                className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                                  isSelected 
-                                    ? "hover:bg-slate-800 dark:hover:bg-slate-200 text-slate-300 dark:text-slate-700 hover:text-white dark:hover:text-slate-900" 
-                                    : "text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-                                }`}
-                                title={`Edit Chapter ${ch.number}: ${ch.name}`}
-                                id={`rename-ch-${ch.number}`}
-                              >
-                                <Pencil className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteChapter(ch.number);
-                                }}
-                                className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                                  isSelected 
-                                    ? "hover:bg-slate-800 dark:hover:bg-slate-200 text-slate-300 dark:text-slate-700 hover:text-rose-300 dark:hover:text-rose-600" 
-                                    : "text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-                                }`}
-                                title={`Delete Chapter ${ch.number}`}
-                                id={`delete-ch-${ch.number}`}
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* + Add Chapter Button */}
-                  {selectedSchoolSubject && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextChNum = schoolChaptersForSelected.length > 0 
-                          ? Math.max(...schoolChaptersForSelected.map((c) => c.number)) + 1 
-                          : 1;
-                        setCreateNodeContext({
-                          nodeType: "add_chapter",
-                          type: "school",
-                          className: selectedSchoolClass,
-                          subject: selectedSchoolSubject,
-                          suggestedNumber: nextChNum,
-                        });
-                      }}
-                      className="w-full mt-2.5 py-2 px-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 bg-transparent text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                      id="add-school-chapter-btn"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>+ Add Chapter</span>
-                    </button>
-                  )}
-                </div>
               </>
             ) : (
               <>
-                {/* =========================================================================
-                    UPSC LEFT HIERARCHY
-                    ========================================================================= */}
-                {/* 1. GS Papers List */}
+                {/* UPSC 1. GS Papers List */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500">
@@ -1498,24 +1461,38 @@ export default function AdminNotesDashboard({
                         }).length;
 
                         return (
-                          <button
+                          <div
                             key={paper}
-                            type="button"
                             onClick={() => setSelectedUpscPaper(paper)}
-                            className={`w-full px-3 py-2 rounded-xl text-left text-xs font-bold transition-all flex items-center justify-between gap-1.5 border ${
+                            className={`w-full px-3 py-2 rounded-xl text-left text-xs font-bold transition-all flex items-center justify-between gap-1.5 border cursor-pointer ${
                               isSelected
                                 ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-300/80 dark:border-indigo-700/80 shadow-2xs"
                                 : "bg-slate-50/70 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 border-slate-200/70 dark:border-slate-800/70 hover:bg-slate-100 dark:hover:bg-slate-800"
                             }`}
                             id={`upsc-paper-btn-${paper.replace(/\s+/g, "-")}`}
                           >
-                            <span className="truncate">{paper}</span>
-                            {paperNotesCount > 0 && (
-                              <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-slate-200/60 dark:bg-slate-800 font-mono text-slate-500 dark:text-slate-400 shrink-0">
-                                {paperNotesCount}
-                              </span>
-                            )}
-                          </button>
+                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                              <span className="truncate">{paper}</span>
+                              {paperNotesCount > 0 && (
+                                <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-slate-200/60 dark:bg-slate-800 font-mono text-slate-500 dark:text-slate-400 shrink-0">
+                                  {paperNotesCount}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Delete GS Paper (🗑️) */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeletingPaper(paper);
+                              }}
+                              className="p-1 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors shrink-0 cursor-pointer"
+                              title={`Delete ${paper}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         );
                       })}
                     </div>
@@ -1533,7 +1510,7 @@ export default function AdminNotesDashboard({
                   </button>
                 </div>
 
-                {/* 2. Subjects List for Selected GS Paper */}
+                {/* UPSC 2. Subjects List */}
                 <div className="pt-4 border-t border-slate-200/80 dark:border-slate-800">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500 truncate">
@@ -1545,7 +1522,7 @@ export default function AdminNotesDashboard({
                     <p className="text-xs text-slate-400 italic p-2">Create or select a GS paper first</p>
                   ) : upscSubjectsForSelectedPaper.length === 0 ? (
                     <div className="p-3 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50/50 dark:bg-slate-900/30">
-                      <p className="text-xs text-slate-400 font-medium">No subjects added to {selectedUpscPaper}</p>
+                      <p className="text-xs text-slate-400 font-medium">No subjects in {selectedUpscPaper}</p>
                     </div>
                   ) : (
                     <div className="space-y-1" id="upsc-subjects-list">
@@ -1556,6 +1533,7 @@ export default function AdminNotesDashboard({
                           const s = (n as any).subjectName || n.subject || "";
                           return p.toLowerCase() === selectedUpscPaper.toLowerCase() && s.toLowerCase() === subj.toLowerCase();
                         }).length;
+                        const subjectKebabKey = `upsc-subj-${subj}`;
 
                         return (
                           <div
@@ -1569,7 +1547,7 @@ export default function AdminNotesDashboard({
                             <button
                               type="button"
                               onClick={() => setSelectedUpscSubject(subj)}
-                              className="flex items-center gap-2 min-w-0 flex-1 text-left py-0.5"
+                              className="flex items-center gap-2 min-w-0 flex-1 text-left py-0.5 cursor-pointer"
                               id={`upsc-subject-btn-${subj.replace(/\s+/g, "-")}`}
                             >
                               <BookOpen className={`w-3.5 h-3.5 shrink-0 ${isSelected ? "text-indigo-100" : "text-slate-400"}`} />
@@ -1583,29 +1561,17 @@ export default function AdminNotesDashboard({
                               )}
                             </button>
 
-                            {/* Action icons: Rename (📝) & Delete (🗑) */}
+                            {/* Subject Actions: Delete & 3-dots Kebab for Rename */}
                             <div className="flex items-center gap-0.5 shrink-0">
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleOpenRenameSubject(subj);
-                                }}
-                                className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                                  isSelected 
-                                    ? "hover:bg-indigo-700 text-indigo-100" 
-                                    : "text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-                                }`}
-                                title={`Rename ${subj}`}
-                                id={`rename-upsc-subj-${subj.replace(/\s+/g, "-")}`}
-                              >
-                                <Pencil className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteSubject(subj);
+                                  setDeletingSubject({
+                                    type: "upsc",
+                                    gsPaper: selectedUpscPaper,
+                                    subject: subj,
+                                  });
                                 }}
                                 className={`p-1 rounded-lg transition-colors cursor-pointer ${
                                   isSelected 
@@ -1615,8 +1581,42 @@ export default function AdminNotesDashboard({
                                 title={`Delete ${subj}`}
                                 id={`delete-upsc-subj-${subj.replace(/\s+/g, "-")}`}
                               >
-                                <Trash2 className="w-3 h-3" />
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
+
+                              {/* 3-dots Kebab for Rename */}
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveSubjectKebab(activeSubjectKebab === subjectKebabKey ? null : subjectKebabKey);
+                                  }}
+                                  className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                                    isSelected 
+                                      ? "hover:bg-indigo-700 text-indigo-100" 
+                                      : "text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                                  }`}
+                                  title="Subject options"
+                                >
+                                  <MoreVertical className="w-3.5 h-3.5" />
+                                </button>
+
+                                {activeSubjectKebab === subjectKebabKey && (
+                                  <div className="absolute right-0 top-full mt-1 w-32 bg-white dark:bg-slate-850 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 py-1 z-30 animate-fadeIn">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveSubjectKebab(null);
+                                        handleOpenRenameSubject(subj);
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                    >
+                                      Rename Subject
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                         );
@@ -1641,425 +1641,257 @@ export default function AdminNotesDashboard({
                     </button>
                   )}
                 </div>
-
-                {/* 3. Modules List for Selected Subject */}
-                <div className="pt-4 border-t border-slate-200/80 dark:border-slate-800">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500 truncate">
-                      {selectedUpscSubject ? `Modules • ${selectedUpscSubject}` : "Modules"}
-                    </span>
-                  </div>
-
-                  {!selectedUpscSubject ? (
-                    <p className="text-xs text-slate-400 italic p-2">Create or select a subject first</p>
-                  ) : upscModulesForSelected.length === 0 ? (
-                    <div className="p-3 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50/50 dark:bg-slate-900/30">
-                      <p className="text-xs text-slate-400 font-medium">No modules added yet</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-1" id="upsc-modules-list">
-                      {upscModulesForSelected.map((mod) => {
-                        const isSelected = selectedUpscModuleNo === mod.number;
-                        const modNotesCount = upscNotes.filter((n) => {
-                          const p = (n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "";
-                          const s = (n as any).subjectName || n.subject || "";
-                          const modNo = (n as any).moduleNumber ?? (n as any).moduleNo ?? (n as any).chapterNumber ?? n.chapterNo ?? 1;
-                          return p.toLowerCase() === selectedUpscPaper.toLowerCase() && 
-                                 s.toLowerCase() === selectedUpscSubject.toLowerCase() && 
-                                 Number(modNo) === mod.number;
-                        }).length;
-
-                        return (
-                          <div
-                            key={mod.number}
-                            className={`group/mod w-full px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-1.5 border ${
-                              isSelected
-                                ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-sm"
-                                : "bg-slate-50/70 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 border-slate-200/70 dark:border-slate-800/70 hover:bg-slate-100 dark:hover:bg-slate-800"
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedUpscModuleNo(mod.number);
-                                setSelectedUpscModuleName(mod.name);
-                              }}
-                              className="flex items-center gap-2 min-w-0 flex-1 text-left py-0.5"
-                              id={`module-btn-${mod.number}`}
-                            >
-                              <Layers className={`w-3.5 h-3.5 shrink-0 ${isSelected ? "text-slate-300 dark:text-slate-700" : "text-slate-400"}`} />
-                              <span className="truncate">
-                                Mod {mod.number}: {mod.name}
-                              </span>
-                              {modNotesCount > 0 && (
-                                <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-mono shrink-0 ${
-                                  isSelected ? "bg-slate-800 dark:bg-slate-200 text-slate-200 dark:text-slate-800" : "bg-slate-200/60 dark:bg-slate-800 text-slate-500"
-                                }`}>
-                                  {modNotesCount}
-                                </span>
-                              )}
-                            </button>
-
-                            {/* Action icons: Edit Module No & Name (📝) & Delete (🗑) */}
-                            <div className="flex items-center gap-0.5 shrink-0">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleOpenRenameChapter(mod.number, mod.name);
-                                }}
-                                className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                                  isSelected 
-                                    ? "hover:bg-slate-800 dark:hover:bg-slate-200 text-slate-300 dark:text-slate-700 hover:text-white dark:hover:text-slate-900" 
-                                    : "text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-                                }`}
-                                title={`Edit Module ${mod.number}: ${mod.name}`}
-                                id={`rename-mod-${mod.number}`}
-                              >
-                                <Pencil className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteChapter(mod.number);
-                                }}
-                                className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                                  isSelected 
-                                    ? "hover:bg-slate-800 dark:hover:bg-slate-200 text-slate-300 dark:text-slate-700 hover:text-rose-300 dark:hover:text-rose-600" 
-                                    : "text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-                                }`}
-                                title={`Delete Module ${mod.number}`}
-                                id={`delete-mod-${mod.number}`}
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* + Add Module Button */}
-                  {selectedUpscSubject && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextModNum = upscModulesForSelected.length > 0 
-                          ? Math.max(...upscModulesForSelected.map((m) => m.number)) + 1 
-                          : 1;
-                        setCreateNodeContext({
-                          nodeType: "add_module",
-                          type: "upsc",
-                          gsPaper: selectedUpscPaper,
-                          subject: selectedUpscSubject,
-                          suggestedNumber: nextModNum,
-                        });
-                      }}
-                      className="w-full mt-2.5 py-2 px-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-500 dark:hover:border-indigo-500 bg-transparent text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                      id="add-upsc-module-btn"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>+ Add Module</span>
-                    </button>
-                  )}
-                </div>
               </>
             )}
           </div>
         </aside>
 
         {/* =========================================================================
-            RIGHT MAIN AREA: ACTIVE CHAPTER/MODULE TOPICS & TOPIC CARDS
+            COLUMN 2: MIDDLE PANEL (Chapters / Modules Accordion with Nested Topics)
             ========================================================================= */}
-        <section className="flex-1 min-h-0 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-950/50 overflow-hidden" id="notes-main-content">
-          {/* Breadcrumb Navigation Bar (Fixed shrink-0) */}
-          <div className="px-4 sm:px-6 py-3 sm:py-3.5 border-b border-slate-200/80 dark:border-slate-800 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-            <div className="flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-slate-400 flex-wrap">
-              <span className="text-slate-800 dark:text-slate-200 font-extrabold flex items-center gap-1">
-                {activeTab === "school" ? <School className="w-3.5 h-3.5 text-blue-500" /> : <GraduationCap className="w-3.5 h-3.5 text-indigo-500" />}
-                {activeTab === "school" ? "School" : "UPSC"}
-              </span>
-              {(activeTab === "school" ? selectedSchoolClass : selectedUpscPaper) && (
-                <>
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                  <span>{activeTab === "school" ? selectedSchoolClass : selectedUpscPaper}</span>
-                </>
-              )}
-              {(activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject) && (
-                <>
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                  <span>{activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject}</span>
-                </>
-              )}
-              {((activeTab === "school" && selectedSchoolChapterNo > 0) || (activeTab === "upsc" && selectedUpscModuleNo > 0)) && (
-                <>
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-blue-600 dark:text-blue-400 font-black">
-                    {activeTab === "school" 
-                      ? `Chapter ${selectedSchoolChapterNo}`
-                      : `Module ${selectedUpscModuleNo}`
-                    }
-                  </span>
-                </>
-              )}
-            </div>
+        <NotesMiddlePanel
+          type={activeTab}
+          selectedSubject={activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject}
+          selectedParentName={activeTab === "school" ? selectedSchoolClass : selectedUpscPaper}
+          chapters={activeTab === "school" ? schoolChaptersForSelected : upscModulesForSelected}
+          chapterNotesMap={chapterNotesMap}
+          selectedChapterNo={activeTab === "school" ? selectedSchoolChapterNo : selectedUpscModuleNo}
+          selectedTopicNoteId={selectedTopicNoteId}
+          expandedChapters={expandedChapters}
+          onToggleExpand={handleToggleExpand}
+          onSelectChapter={handleSelectChapter}
+          onSelectTopic={handleSelectTopic}
+          onAddChapter={() => {
+            const list = activeTab === "school" ? schoolChaptersForSelected : upscModulesForSelected;
+            const nextNum = list.length > 0 ? Math.max(...list.map((c) => c.number)) + 1 : 1;
+            setCreateNodeContext({
+              nodeType: activeTab === "school" ? "add_chapter" : "add_module",
+              type: activeTab,
+              className: activeTab === "school" ? selectedSchoolClass : undefined,
+              gsPaper: activeTab === "upsc" ? selectedUpscPaper : undefined,
+              subject: activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject,
+              suggestedNumber: nextNum,
+            });
+          }}
+          onAddTopic={(chNum, chName) => {
+            if (activeTab === "school") {
+              setSelectedSchoolChapterNo(chNum);
+              setSelectedSchoolChapterName(chName);
+            } else {
+              setSelectedUpscModuleNo(chNum);
+              setSelectedUpscModuleName(chName);
+            }
+            setQuickAddOpen(true);
+          }}
+          onRenameChapter={handleOpenRenameChapter}
+          onDeleteChapter={(chNum, chName) => {
+            setDeletingChapter({
+              type: activeTab,
+              className: activeTab === "school" ? selectedSchoolClass : undefined,
+              gsPaper: activeTab === "upsc" ? selectedUpscPaper : undefined,
+              subject: activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject,
+              chapterNumber: chNum,
+              chapterName: chName,
+            });
+          }}
+          onRenameTopic={handleOpenRename}
+          onDeleteTopic={(note) => setDeletingNote(note)}
+          checkIfTopicHasPracticeTest={checkIfTopicHasPracticeTest}
+        />
 
-            {/* Quick search inside active topics */}
-            <div className="relative w-full sm:w-64">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search topics in this chapter..."
-                className="w-full pl-8 pr-3 py-1.5 bg-slate-100 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-hidden focus:border-blue-500"
-                id="search-topics-input"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Chapter / Module Header: Title + Single Circular Topic Add Button (Fixed shrink-0) */}
-          <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-4 shrink-0">
-            <div className="min-w-0">
-              <h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-slate-100 truncate">
-                {activeTab === "school" 
-                  ? (selectedSchoolChapterNo > 0 
-                      ? `Chapter ${selectedSchoolChapterNo}: ${selectedSchoolChapterName || "General"}` 
-                      : (selectedSchoolSubject ? `${selectedSchoolSubject}` : selectedSchoolClass || "Select a Class"))
-                  : (selectedUpscModuleNo > 0 
-                      ? `Module ${selectedUpscModuleNo}: ${selectedUpscModuleName || "General"}` 
-                      : (selectedUpscSubject ? `${selectedUpscSubject}` : selectedUpscPaper || "Select a GS Paper"))
-                }
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                {filteredAndSortedTopics.length} Topic Note{filteredAndSortedTopics.length === 1 ? "" : "s"} • {activeTab === "school" ? `${selectedSchoolClass || "No Class"} • ${selectedSchoolSubject || "No Subject"}` : `${selectedUpscPaper || "No Paper"} • ${selectedUpscSubject || "No Subject"}`}
-              </p>
-            </div>
-
-            {/* Small circular '+' Topic Note Add Icon */}
-            {((activeTab === "school" && selectedSchoolClass && selectedSchoolSubject && selectedSchoolChapterNo > 0) ||
-              (activeTab === "upsc" && selectedUpscPaper && selectedUpscSubject && selectedUpscModuleNo > 0)) && (
-              <button
-                type="button"
-                onClick={() => setQuickAddOpen(true)}
-                className="w-10 h-10 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-500/25 flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer shrink-0"
-                title={activeTab === "school" ? `Add Topic Note to Chapter ${selectedSchoolChapterNo}` : `Add Topic Note to Module ${selectedUpscModuleNo}`}
-                aria-label="Add Topic Note"
-                id="add-topic-circular-btn"
-              >
-                <Plus className="w-5 h-5 stroke-[2.5]" />
-              </button>
-            )}
-          </div>
-
-          {/* Topics List Body: Independent scrolling container */}
-          <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-3 scrollbar-thin overscroll-contain pb-12 sm:pb-8" id="notes-topics-scroll">
-            {/* If no class / paper created */}
-            {((activeTab === "school" && !selectedSchoolClass) || (activeTab === "upsc" && !selectedUpscPaper)) ? (
-              <div className="flex flex-col items-center justify-center py-16 px-4 text-center max-w-md mx-auto" id="empty-class-state">
-                <div 
-                  onClick={() => setCreateNodeContext(activeTab === "school" ? { nodeType: "new_class", type: "school" } : { nodeType: "new_gs_paper", type: "upsc" })}
-                  className="w-16 h-16 rounded-full bg-blue-50 dark:bg-blue-950/60 border-2 border-dashed border-blue-400 dark:border-blue-700 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-4 cursor-pointer transition-transform hover:scale-110 shadow-sm"
-                  title={activeTab === "school" ? "Create New Class" : "Create New GS Paper"}
-                >
-                  <Plus className="w-8 h-8 stroke-[2.5]" />
-                </div>
-                <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">
-                  {activeTab === "school" ? "No classes created yet" : "No GS papers created yet"}
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Start building your curriculum by clicking below to add your first {activeTab === "school" ? "Class" : "GS Paper"}.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setCreateNodeContext(activeTab === "school" ? { nodeType: "new_class", type: "school" } : { nodeType: "new_gs_paper", type: "upsc" })}
-                  className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
-                >
-                  {activeTab === "school" ? "+ New Class" : "+ New GS Paper"}
-                </button>
-              </div>
-            ) : ((activeTab === "school" && !selectedSchoolSubject) || (activeTab === "upsc" && !selectedUpscSubject)) ? (
-              /* If no subject created in selected class */
-              <div className="flex flex-col items-center justify-center py-16 px-4 text-center max-w-md mx-auto" id="empty-subject-state">
-                <div 
-                  onClick={() => setCreateNodeContext(activeTab === "school" ? { nodeType: "add_subject", type: "school", className: selectedSchoolClass } : { nodeType: "add_subject", type: "upsc", gsPaper: selectedUpscPaper })}
-                  className="w-16 h-16 rounded-full bg-indigo-50 dark:bg-indigo-950/60 border-2 border-dashed border-indigo-400 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mb-4 cursor-pointer transition-transform hover:scale-110 shadow-sm"
-                  title="Add Subject"
-                >
-                  <Plus className="w-8 h-8 stroke-[2.5]" />
-                </div>
-                <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">
-                  No subjects in {activeTab === "school" ? selectedSchoolClass : selectedUpscPaper}
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Add a subject to this {activeTab === "school" ? "class" : "paper"} to organize your chapters and topic notes.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setCreateNodeContext(activeTab === "school" ? { nodeType: "add_subject", type: "school", className: selectedSchoolClass } : { nodeType: "add_subject", type: "upsc", gsPaper: selectedUpscPaper })}
-                  className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
-                >
-                  + Add Subject
-                </button>
-              </div>
-            ) : ((activeTab === "school" && selectedSchoolChapterNo <= 0) || (activeTab === "upsc" && selectedUpscModuleNo <= 0)) ? (
-              /* If no chapter created in selected subject */
-              <div className="flex flex-col items-center justify-center py-16 px-4 text-center max-w-md mx-auto" id="empty-chapter-state">
-                <div 
-                  onClick={() => setCreateNodeContext(activeTab === "school" 
-                    ? { nodeType: "add_chapter", type: "school", className: selectedSchoolClass, subject: selectedSchoolSubject, suggestedNumber: 1 } 
-                    : { nodeType: "add_module", type: "upsc", gsPaper: selectedUpscPaper, subject: selectedUpscSubject, suggestedNumber: 1 }
-                  )}
-                  className="w-16 h-16 rounded-full bg-blue-50 dark:bg-blue-950/60 border-2 border-dashed border-blue-400 dark:border-blue-700 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-4 cursor-pointer transition-transform hover:scale-110 shadow-sm"
-                  title={activeTab === "school" ? "Add Chapter" : "Add Module"}
-                >
-                  <Plus className="w-8 h-8 stroke-[2.5]" />
-                </div>
-                <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">
-                  No {activeTab === "school" ? "chapters" : "modules"} in {activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject}
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Create a {activeTab === "school" ? "Chapter" : "Module"} (with customizable number & name) to upload topic notes.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setCreateNodeContext(activeTab === "school" 
-                    ? { nodeType: "add_chapter", type: "school", className: selectedSchoolClass, subject: selectedSchoolSubject, suggestedNumber: 1 } 
-                    : { nodeType: "add_module", type: "upsc", gsPaper: selectedUpscPaper, subject: selectedUpscSubject, suggestedNumber: 1 }
-                  )}
-                  className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
-                >
-                  {activeTab === "school" ? "+ Add Chapter" : "+ Add Module"}
-                </button>
-              </div>
-            ) : filteredAndSortedTopics.length === 0 ? (
-              /* Empty Topics State */
-              <div className="flex flex-col items-center justify-center py-16 px-4 text-center max-w-md mx-auto" id="empty-topics-state">
-                <div 
-                  onClick={() => setQuickAddOpen(true)}
-                  className="w-16 h-16 rounded-full bg-blue-50 dark:bg-blue-950/60 border-2 border-dashed border-blue-400 dark:border-blue-700 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-4 cursor-pointer transition-transform hover:scale-110 shadow-sm"
-                  title="Click to upload topic note"
-                >
-                  <Plus className="w-8 h-8 stroke-[2.5]" />
-                </div>
-                <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">
-                  No topic notes uploaded yet.
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Click the + icon to upload the first topic note.
-                </p>
-              </div>
-            ) : (
-              /* Topics Cards List */
-              <div className="space-y-3" id="topic-notes-list">
-                {filteredAndSortedTopics.map((note) => {
-                  const hasTest = checkIfTopicHasPracticeTest(note);
-                  return (
-                    <TopicCard
-                      key={note.id}
-                      note={note}
-                      topicNumber={(note as any).topicNumber ?? note.topicNo}
-                      topicTitle={(note as any).topicTitle || (note as any).topicName || note.partLabel}
-                      isAdmin={true}
-                      hasPracticeTest={hasTest}
-                      onPreview={(n) => setPreviewNote(n as ClassNote)}
-                      onReplace={(n) => handleOpenReplace(n as ClassNote)}
-                      onRename={(n) => handleOpenRename(n as ClassNote)}
-                      onDelete={(n) => handleOpenDelete(n as ClassNote)}
-                      onOpenPracticeTest={(n) => handleOpenPracticeTest(n as ClassNote)}
-                    />
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </section>
+        {/* =========================================================================
+            COLUMN 3: RIGHT PANEL (Topic Notes Viewer / Full Document Workspace)
+            ========================================================================= */}
+        <NotesRightPanel
+          type={activeTab}
+          selectedClassName={activeTab === "school" ? selectedSchoolClass : selectedUpscPaper}
+          selectedSubject={activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject}
+          selectedChapterNo={activeTab === "school" ? selectedSchoolChapterNo : selectedUpscModuleNo}
+          selectedChapterName={activeTab === "school" ? selectedSchoolChapterName : selectedUpscModuleName}
+          selectedTopicNote={selectedTopicNote}
+          chapterTopics={activeChapterTopics}
+          onOpenPreview={(n) => setPreviewNote(n)}
+          onOpenReplace={handleOpenReplace}
+          onOpenRename={handleOpenRename}
+          onOpenDelete={(n) => setDeletingNote(n)}
+          onOpenPracticeTest={handleOpenPracticeTest}
+          onUploadNewTopic={() => setQuickAddOpen(true)}
+          checkIfTopicHasPracticeTest={checkIfTopicHasPracticeTest}
+        />
       </div>
 
       {/* =========================================================================
-          MODALS
+          MODALS SECTION
           ========================================================================= */}
 
       {/* 1. Quick Add Topic Modal */}
       <QuickAddTopicModal
         isOpen={quickAddOpen}
-        parentContext={parentContext}
         onClose={() => setQuickAddOpen(false)}
+        parentContext={parentContext}
         onSuccess={(newNote) => {
-          showToast(`Topic "${(newNote as any).topicTitle || (newNote as any).topicName || newNote.partLabel || "Note"}" uploaded successfully!`, "success");
+          if (newNote) {
+            if (activeTab === "school") {
+              const rawCh = (newNote as any).chapterNumber ?? newNote.chapterNo ?? 1;
+              const chNum = typeof rawCh === "number" ? rawCh : parseInt(String(rawCh).replace(/\D/g, ""), 10) || 1;
+              const chName = (newNote as any).chapterName || (newNote as any).chapterTitle || `Chapter ${chNum}`;
+              setSelectedSchoolChapterNo(chNum);
+              setSelectedSchoolChapterName(chName);
+              setExpandedChapters((prev) => ({ ...prev, [chNum]: true }));
+            } else {
+              const rawMod = (newNote as any).moduleNumber ?? (newNote as any).moduleNo ?? (newNote as any).chapterNumber ?? 1;
+              const modNum = typeof rawMod === "number" ? rawMod : parseInt(String(rawMod).replace(/\D/g, ""), 10) || 1;
+              const modName = (newNote as any).moduleName || (newNote as any).moduleTitle || `Module ${modNum}`;
+              setSelectedUpscModuleNo(modNum);
+              setSelectedUpscModuleName(modName);
+              setExpandedChapters((prev) => ({ ...prev, [modNum]: true }));
+            }
+            setSelectedTopicNoteId(newNote.id);
+          }
           if (onRefresh) onRefresh();
+          showToast("Topic note uploaded successfully.", "success");
         }}
       />
 
-      {/* 2. Create Hierarchy Node Modal (Class, Subject, Chapter, Module) */}
-      <CreateHierarchyNodeModal
-        isOpen={Boolean(createNodeContext)}
-        context={createNodeContext}
-        onClose={() => setCreateNodeContext(null)}
-        onSubmit={handleCreateNodeSubmit}
-      />
+      {/* 2. Create Custom Hierarchy Node Modal */}
+      {createNodeContext && (
+        <CreateHierarchyNodeModal
+          isOpen={Boolean(createNodeContext)}
+          onClose={() => setCreateNodeContext(null)}
+          context={createNodeContext}
+          onSubmit={(result) => {
+            if (result.nodeType === "new_class") {
+              updateSchoolHierarchy((prev) => ({
+                ...prev,
+                classes: Array.from(new Set([...prev.classes, result.name]))
+              }));
+              setSelectedSchoolClass(result.name);
+              showToast(`Class "${result.name}" created.`, "success");
+            } else if (result.nodeType === "new_gs_paper") {
+              updateUpscHierarchy((prev) => ({
+                ...prev,
+                papers: Array.from(new Set([...prev.papers, result.name]))
+              }));
+              setSelectedUpscPaper(result.name);
+              showToast(`GS Paper "${result.name}" created.`, "success");
+            } else if (result.nodeType === "add_subject") {
+              if (result.className) {
+                updateSchoolHierarchy((prev) => {
+                  const cur = prev.subjects[result.className!] || [];
+                  const updated = Array.from(new Set([...cur, result.name]));
+                  return {
+                    ...prev,
+                    subjects: { ...prev.subjects, [result.className!]: updated }
+                  };
+                });
+                setSelectedSchoolSubject(result.name);
+                showToast(`Subject "${result.name}" added to ${result.className}.`, "success");
+              } else if (result.gsPaper) {
+                updateUpscHierarchy((prev) => {
+                  const cur = prev.subjects[result.gsPaper!] || [];
+                  const updated = Array.from(new Set([...cur, result.name]));
+                  return {
+                    ...prev,
+                    subjects: { ...prev.subjects, [result.gsPaper!]: updated }
+                  };
+                });
+                setSelectedUpscSubject(result.name);
+                showToast(`Subject "${result.name}" added to ${result.gsPaper}.`, "success");
+              }
+            } else if (result.nodeType === "add_chapter" && result.className && result.subject && result.number) {
+              updateSchoolHierarchy((prev) => {
+                const cur = prev.chapters[result.className!]?.[result.subject!] || [];
+                const updated = cur.filter((c) => c.number !== result.number);
+                updated.push({ number: result.number!, name: result.name });
+                updated.sort((a, b) => a.number - b.number);
+                return {
+                  ...prev,
+                  chapters: {
+                    ...prev.chapters,
+                    [result.className!]: {
+                      ...(prev.chapters[result.className!] || {}),
+                      [result.subject!]: updated
+                    }
+                  }
+                };
+              });
+              setSelectedSchoolChapterNo(result.number);
+              setSelectedSchoolChapterName(result.name);
+              showToast(`Chapter ${result.number}: ${result.name} created.`, "success");
+            } else if (result.nodeType === "add_module" && result.gsPaper && result.subject && result.number) {
+              updateUpscHierarchy((prev) => {
+                const cur = prev.modules[result.gsPaper!]?.[result.subject!] || [];
+                const updated = cur.filter((m) => m.number !== result.number);
+                updated.push({ number: result.number!, name: result.name });
+                updated.sort((a, b) => a.number - b.number);
+                return {
+                  ...prev,
+                  modules: {
+                    ...prev.modules,
+                    [result.gsPaper!]: {
+                      ...(prev.modules[result.gsPaper!] || {}),
+                      [result.subject!]: updated
+                    }
+                  }
+                };
+              });
+              setSelectedUpscModuleNo(result.number);
+              setSelectedUpscModuleName(result.name);
+              showToast(`Module ${result.number}: ${result.name} created.`, "success");
+            }
 
-      {/* 3. Document Preview Modal */}
-      {previewNote && (
-        <NotesPreviewModal
-          isOpen={Boolean(previewNote)}
-          note={previewNote}
-          onClose={() => setPreviewNote(null)}
+            if (onRefresh) onRefresh();
+          }}
         />
       )}
 
-      {/* 4. Replace Note Modal */}
+      {/* 3. Fullscreen Document Preview Modal */}
+      {previewNote && (
+        <NotesPreviewModal
+          isOpen={Boolean(previewNote)}
+          onClose={() => setPreviewNote(null)}
+          note={previewNote}
+        />
+      )}
+
+      {/* 4. Replace File Modal */}
       {replacingNote && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fadeIn">
           <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                <RefreshCw className="w-4 h-4 text-indigo-500" /> Replace Note File
-              </h3>
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2 font-bold text-sm text-slate-900 dark:text-slate-100">
+                <RefreshCw className="w-4 h-4 text-blue-500" />
+                <span>Replace Topic Document</span>
+              </div>
               <button
                 type="button"
                 onClick={() => setReplacingNote(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+                disabled={isReplacing}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Upload a replacement document for{" "}
-              <strong className="text-slate-800 dark:text-slate-200">
-                {(replacingNote as any).topicTitle || (replacingNote as any).topicName || replacingNote.partLabel || "Topic Note"}
-              </strong>
-              . This updates the file in-place.
-            </p>
+            <div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Replacing file for:{" "}
+                <strong className="text-slate-800 dark:text-slate-200">
+                  {(replacingNote as any).topicTitle || (replacingNote as any).topicName || replacingNote.partLabel || "Topic"}
+                </strong>
+              </p>
+            </div>
 
-            <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-4 text-center">
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                Select New File (PDF, PNG, JPG)
+              </label>
               <input
                 type="file"
-                accept=".pdf,image/png,image/jpeg,image/webp,image/jpg"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    setReplaceFile(e.target.files[0]);
-                  }
-                }}
-                className="block w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                accept=".pdf,.png,.jpg,.jpeg,.webp"
+                onChange={(e) => setReplaceFile(e.target.files?.[0] || null)}
+                className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-50 dark:file:bg-blue-950 file:text-blue-700 dark:file:text-blue-300 hover:file:bg-blue-100"
               />
-              {replaceFile && (
-                <p className="mt-2 text-xs font-bold text-emerald-600 dark:text-emerald-400 truncate">
-                  Selected: {replaceFile.name} ({(replaceFile.size / (1024 * 1024)).toFixed(2)} MB)
-                </p>
-              )}
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-2">
@@ -2067,7 +1899,7 @@ export default function AdminNotesDashboard({
                 type="button"
                 onClick={() => setReplacingNote(null)}
                 disabled={isReplacing}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
               >
                 Cancel
               </button>
@@ -2075,27 +1907,29 @@ export default function AdminNotesDashboard({
                 type="button"
                 onClick={handleConfirmReplace}
                 disabled={isReplacing || !replaceFile}
-                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 shadow-md transition-all"
+                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 shadow-md transition-all cursor-pointer"
               >
-                {isReplacing ? "Replacing..." : "Replace File"}
+                {isReplacing ? "Replacing..." : "Confirm Replace"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 5. Rename Note Modal */}
+      {/* 5. Rename Topic Modal */}
       {renamingNote && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fadeIn">
           <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                <Pencil className="w-4 h-4 text-amber-500" /> Rename Topic Note
-              </h3>
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2 font-bold text-sm text-slate-900 dark:text-slate-100">
+                <FileText className="w-4 h-4 text-blue-500" />
+                <span>Rename Topic Note</span>
+              </div>
               <button
                 type="button"
                 onClick={() => setRenamingNote(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+                disabled={isRenaming}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2148,7 +1982,7 @@ export default function AdminNotesDashboard({
                 type="button"
                 onClick={() => setRenamingNote(null)}
                 disabled={isRenaming}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
               >
                 Cancel
               </button>
@@ -2156,7 +1990,7 @@ export default function AdminNotesDashboard({
                 type="button"
                 onClick={handleConfirmRename}
                 disabled={isRenaming || !renameTopicTitle.trim()}
-                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 shadow-md transition-all"
+                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 shadow-md transition-all cursor-pointer"
               >
                 {isRenaming ? "Saving..." : "Save Changes"}
               </button>
@@ -2165,7 +1999,7 @@ export default function AdminNotesDashboard({
         </div>
       )}
 
-      {/* 6. Confirm Delete Modal */}
+      {/* 6. Delete Topic Note Modal */}
       {deletingNote && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fadeIn">
           <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 text-center">
@@ -2208,20 +2042,20 @@ export default function AdminNotesDashboard({
         </div>
       )}
 
-      {/* 6b. Rename Subject Modal */}
+      {/* 7. Rename Subject Modal */}
       {renamingSubject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fadeIn">
           <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2 font-bold text-sm text-slate-900 dark:text-slate-100">
-                <Pencil className="w-4 h-4 text-blue-500" />
+                <BookOpen className="w-4 h-4 text-blue-500" />
                 <span>Rename Subject</span>
               </div>
               <button
                 type="button"
                 onClick={() => setRenamingSubject(null)}
                 disabled={isRenamingSubject}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2246,7 +2080,7 @@ export default function AdminNotesDashboard({
                   value={renamingSubject.newSubject}
                   onChange={(e) => setRenamingSubject({ ...renamingSubject, newSubject: e.target.value })}
                   placeholder="Enter new subject name..."
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-hidden focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-hidden focus:border-blue-500"
                   autoFocus
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !isRenamingSubject) {
@@ -2280,20 +2114,20 @@ export default function AdminNotesDashboard({
         </div>
       )}
 
-      {/* 6c. Rename Chapter / Module Modal */}
+      {/* 8. Rename Chapter / Module Modal */}
       {renamingChapter && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fadeIn">
           <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2 font-bold text-sm text-slate-900 dark:text-slate-100">
-                <Pencil className="w-4 h-4 text-blue-500" />
+                <Layers className="w-4 h-4 text-blue-500" />
                 <span>{renamingChapter.type === "school" ? "Edit Chapter" : "Edit Module"}</span>
               </div>
               <button
                 type="button"
                 onClick={() => setRenamingChapter(null)}
                 disabled={isRenamingChapter}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2337,10 +2171,6 @@ export default function AdminNotesDashboard({
                   />
                 </div>
               </div>
-
-              <p className="text-[11px] text-slate-400">
-                You can independently edit the {renamingChapter.type === "school" ? "Chapter Number and Chapter Name" : "Module Number and Module Name"} without affecting uploaded topic notes.
-              </p>
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
@@ -2365,7 +2195,7 @@ export default function AdminNotesDashboard({
         </div>
       )}
 
-      {/* 6d. Delete Class Confirmation Modal */}
+      {/* 9. Delete Class Confirmation Modal */}
       {deletingClass && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fadeIn">
           <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
@@ -2378,7 +2208,7 @@ export default function AdminNotesDashboard({
                 type="button"
                 onClick={() => setDeletingClass(null)}
                 disabled={isDeletingClass}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2434,7 +2264,214 @@ export default function AdminNotesDashboard({
         </div>
       )}
 
-      {/* 7. Practice Test Builder Modal */}
+      {/* 10. Delete GS Paper Confirmation Modal */}
+      {deletingPaper && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fadeIn">
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2 font-bold text-sm text-rose-600 dark:text-rose-400">
+                <Trash2 className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                <span>Delete GS Paper</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeletingPaper(null)}
+                disabled={isDeletingPaper}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-left">
+              <p className="text-xs text-slate-700 dark:text-slate-300">
+                Are you sure you want to delete <span className="font-bold text-slate-900 dark:text-slate-100">"{deletingPaper}"</span>?
+              </p>
+              
+              <div className="text-xs text-slate-600 dark:text-slate-400 space-y-1">
+                <p className="font-semibold text-slate-700 dark:text-slate-300">This will permanently remove:</p>
+                <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400 pl-1">
+                  <li>All Subjects</li>
+                  <li>All Modules</li>
+                  <li>All Topic Notes</li>
+                  <li>Firestore metadata</li>
+                  <li>Cloudflare files</li>
+                </ul>
+              </div>
+
+              <p className="text-[11px] font-bold text-rose-600 dark:text-rose-400">
+                This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setDeletingPaper(null)}
+                disabled={isDeletingPaper}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeletePaper}
+                disabled={isDeletingPaper}
+                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 shadow-md shadow-rose-500/20 transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                {isDeletingPaper ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <span>Delete</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 11. Delete Subject Confirmation Modal */}
+      {deletingSubject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fadeIn">
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2 font-bold text-sm text-rose-600 dark:text-rose-400">
+                <Trash2 className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                <span>Delete Subject</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeletingSubject(null)}
+                disabled={isDeletingSubject}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-left">
+              <p className="text-xs text-slate-700 dark:text-slate-300">
+                Are you sure you want to delete <span className="font-bold text-slate-900 dark:text-slate-100">"{deletingSubject.subject}"</span>?
+              </p>
+              
+              <div className="text-xs text-slate-600 dark:text-slate-400 space-y-1">
+                <p className="font-semibold text-slate-700 dark:text-slate-300">This will permanently remove:</p>
+                <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400 pl-1">
+                  <li>All {deletingSubject.type === "school" ? "Chapters" : "Modules"}</li>
+                  <li>All Topic Notes</li>
+                  <li>Firestore metadata</li>
+                  <li>Cloudflare files</li>
+                </ul>
+              </div>
+
+              <p className="text-[11px] font-bold text-rose-600 dark:text-rose-400">
+                This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setDeletingSubject(null)}
+                disabled={isDeletingSubject}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteSubject}
+                disabled={isDeletingSubject}
+                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 shadow-md shadow-rose-500/20 transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                {isDeletingSubject ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <span>Delete</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 12. Delete Chapter / Module Confirmation Modal */}
+      {deletingChapter && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fadeIn">
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2 font-bold text-sm text-rose-600 dark:text-rose-400">
+                <Trash2 className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                <span>Delete {deletingChapter.type === "school" ? "Chapter" : "Module"}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeletingChapter(null)}
+                disabled={isDeletingChapter}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-left">
+              <p className="text-xs text-slate-700 dark:text-slate-300">
+                Are you sure you want to delete{" "}
+                <span className="font-bold text-slate-900 dark:text-slate-100">
+                  "{deletingChapter.type === "school" ? "Chapter" : "Module"} {deletingChapter.chapterNumber}: {deletingChapter.chapterName}"
+                </span>?
+              </p>
+              
+              <div className="text-xs text-slate-600 dark:text-slate-400 space-y-1">
+                <p className="font-semibold text-slate-700 dark:text-slate-300">This will permanently remove:</p>
+                <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400 pl-1">
+                  <li>All Topic Notes in this {deletingChapter.type === "school" ? "chapter" : "module"}</li>
+                  <li>Firestore metadata</li>
+                  <li>Cloudflare files</li>
+                </ul>
+              </div>
+
+              <p className="text-[11px] font-bold text-rose-600 dark:text-rose-400">
+                This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setDeletingChapter(null)}
+                disabled={isDeletingChapter}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteChapter}
+                disabled={isDeletingChapter}
+                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 shadow-md shadow-rose-500/20 transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                {isDeletingChapter ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <span>Delete</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 13. Practice Test Builder Modal */}
       {practiceTestTarget && (
         <AdminPracticeTestModal
           isOpen={Boolean(practiceTestTarget)}
