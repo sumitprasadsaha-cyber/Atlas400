@@ -2,21 +2,15 @@ import React, { useState, useRef, useEffect } from "react";
 import { 
   X, 
   Upload, 
-  FileText, 
   Plus, 
-  AlertCircle, 
-  CheckCircle2, 
-  Loader2, 
-  Sparkles,
   FileCheck,
   AlertTriangle,
-  Folder,
   Layers,
-  ArrowRight
+  School,
+  GraduationCap
 } from "lucide-react";
 import { ClassNote } from "../../types";
 import { uploadNotePipeline } from "../../lib/notesService";
-import { isImageFile } from "../../lib/nativePdfService";
 import { UploadProgressState } from "./NotesUploadProgressModal";
 
 export interface ParentContext {
@@ -27,7 +21,7 @@ export interface ParentContext {
   chapterNumber?: number; // e.g. 1
   chapterName?: string; // e.g. "Real Numbers"
   moduleNumber?: number; // e.g. 1
-  moduleName?: string; // e.g. "Constitution"
+  moduleName?: string; // e.g. "Historical Background"
   existingTopics: ClassNote[];
 }
 
@@ -37,13 +31,6 @@ interface QuickAddTopicModalProps {
   initialFile?: File | null;
   onClose: () => void;
   onSuccess: (newNote: ClassNote) => void;
-  onOpenTestBuilder?: (topicMeta: {
-    classGrade: string;
-    subject: string;
-    chapterNo: number;
-    chapterName: string;
-    topicName: string;
-  }) => void;
 }
 
 export default function QuickAddTopicModal({
@@ -52,12 +39,10 @@ export default function QuickAddTopicModal({
   initialFile = null,
   onClose,
   onSuccess,
-  onOpenTestBuilder,
 }: QuickAddTopicModalProps) {
   const [topicNumber, setTopicNumber] = useState<number | "">(1);
   const [topicName, setTopicName] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [attachPracticeTest, setAttachPracticeTest] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [duplicateWarning, setDuplicateWarning] = useState<{
@@ -75,9 +60,8 @@ export default function QuickAddTopicModal({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadStartTimeRef = useRef<number>(0);
-  const lastBytesRef = useRef<number>(0);
 
-  // Initialize defaults on open
+  // Initialize defaults when modal opens
   useEffect(() => {
     if (isOpen && parentContext) {
       setErrorMsg("");
@@ -85,7 +69,7 @@ export default function QuickAddTopicModal({
       setSelectedFile(initialFile);
 
       // Auto-suggest next topic number
-      const numbers = parentContext.existingTopics
+      const numbers = (parentContext.existingTopics || [])
         .map((t) => {
           const raw = (t as any).topicNumber ?? t.topicNo;
           const num = typeof raw === "number" ? raw : parseInt(String(raw).replace(/\D/g, ""), 10);
@@ -96,7 +80,6 @@ export default function QuickAddTopicModal({
       const maxNum = numbers.length > 0 ? Math.max(...numbers) : 0;
       setTopicNumber(maxNum + 1);
       setTopicName("");
-      setAttachPracticeTest(false);
     }
   }, [isOpen, parentContext, initialFile]);
 
@@ -112,7 +95,7 @@ export default function QuickAddTopicModal({
       return;
     }
 
-    const dup = parentContext.existingTopics.find((t) => {
+    const dup = (parentContext.existingTopics || []).find((t) => {
       const tNum = (t as any).topicNumber ?? t.topicNo;
       const tName = ((t as any).topicTitle || (t as any).topicName || t.partLabel || "").trim().toLowerCase();
 
@@ -137,13 +120,6 @@ export default function QuickAddTopicModal({
   if (!isOpen || !parentContext) return null;
 
   const isSchool = parentContext.type === "school";
-  const parentTitle = isSchool
-    ? `Chapter ${parentContext.chapterNumber || 1} – ${parentContext.chapterName || "General"}`
-    : `Module ${parentContext.moduleNumber || 1} – ${parentContext.moduleName || "General"}`;
-
-  const parentSubtitle = isSchool
-    ? `${parentContext.className || "Class 10"} • ${parentContext.subject}`
-    : `UPSC • ${parentContext.gsPaper || "GS I"} • ${parentContext.subject}`;
 
   const handleFileDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -151,7 +127,6 @@ export default function QuickAddTopicModal({
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
       setSelectedFile(file);
-      // If topic name is empty, suggest filename without extension
       if (!topicName) {
         const baseName = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
         setTopicName(baseName);
@@ -182,13 +157,12 @@ export default function QuickAddTopicModal({
     }
 
     if (duplicateWarning?.exists && !overrideDuplicate) {
-      setErrorMsg(`A topic with this ${duplicateWarning.field} already exists in this ${isSchool ? "Chapter" : "Module"}. Choose a different number/name or replace.`);
+      setErrorMsg(`A topic with this ${duplicateWarning.field} already exists in this ${isSchool ? "Chapter" : "Module"}. Choose a different number/name or proceed.`);
       return;
     }
 
     setErrorMsg("");
     uploadStartTimeRef.current = Date.now();
-    lastBytesRef.current = 0;
 
     const totalBytes = selectedFile.size;
 
@@ -255,18 +229,7 @@ export default function QuickAddTopicModal({
         setUploadState((prev) => ({ ...prev, isOpen: false }));
         onSuccess(result);
         onClose();
-
-        // If attach practice test was checked, open test builder
-        if (attachPracticeTest && onOpenTestBuilder) {
-          onOpenTestBuilder({
-            classGrade: parentContext.className || (isSchool ? "Class 10" : "UPSC"),
-            subject: parentContext.subject,
-            chapterNo: parentContext.chapterNumber || parentContext.moduleNumber || 1,
-            chapterName: parentContext.chapterName || parentContext.moduleName || "General",
-            topicName: topicName.trim(),
-          });
-        }
-      }, 700);
+      }, 500);
     } catch (err: any) {
       console.error("[QuickAddTopicModal] Upload failed:", err);
       setUploadState((prev) => ({
@@ -286,7 +249,7 @@ export default function QuickAddTopicModal({
         className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[92vh]"
         id="quick-add-topic-modal"
       >
-        {/* Header */}
+        {/* Modal Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/50">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/40">
@@ -294,10 +257,10 @@ export default function QuickAddTopicModal({
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                + Add Topic
+                Upload Topic Note
               </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-xs sm:max-w-md">
-                {parentSubtitle}
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {isSchool ? "Add note to selected school chapter" : "Add note to selected UPSC module"}
               </p>
             </div>
           </div>
@@ -305,36 +268,59 @@ export default function QuickAddTopicModal({
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            id="close-add-topic-modal-btn"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Content Body */}
-        <div className="p-5 space-y-4 overflow-y-auto flex-1 scrollbar-thin">
-          {/* Locked Parent Context Banner (Zero Repetitive Typing!) */}
-          <div className="p-3 bg-slate-50 dark:bg-slate-850/60 rounded-xl border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <Folder className="w-4 h-4 text-blue-500 shrink-0" />
-              <div className="min-w-0">
+        {/* Modal Body */}
+        <div className="p-5 space-y-4 overflow-y-auto flex-1">
+          {/* Automatic Destination Hierarchy display */}
+          <div className="p-3.5 bg-slate-50 dark:bg-slate-850/60 rounded-xl border border-slate-200/80 dark:border-slate-800 space-y-2 text-xs">
+            <div className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-300 pb-1.5 border-b border-slate-200/60 dark:border-slate-800">
+              {isSchool ? <School className="w-4 h-4 text-blue-500" /> : <GraduationCap className="w-4 h-4 text-indigo-500" />}
+              <span>Upload Destination</span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              <div>
                 <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                  Target {isSchool ? "Chapter" : "Module"}
+                  {isSchool ? "Class" : "GS Paper"}
                 </span>
-                <span className="font-bold text-slate-800 dark:text-slate-200 truncate block">
-                  {parentTitle}
+                <span className="font-bold text-slate-900 dark:text-slate-100 truncate block">
+                  {isSchool ? (parentContext.className || "Class 10") : (parentContext.gsPaper || "GS Paper II")}
+                </span>
+              </div>
+
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                  Subject
+                </span>
+                <span className="font-bold text-slate-900 dark:text-slate-100 truncate block">
+                  {parentContext.subject}
+                </span>
+              </div>
+
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                  {isSchool ? "Chapter" : "Module"}
+                </span>
+                <span className="font-bold text-slate-900 dark:text-slate-100 truncate block">
+                  {isSchool
+                    ? `Ch ${parentContext.chapterNumber || 1}${parentContext.chapterName ? `: ${parentContext.chapterName}` : ""}`
+                    : `Mod ${parentContext.moduleNumber || 1}${parentContext.moduleName ? `: ${parentContext.moduleName}` : ""}`
+                  }
                 </span>
               </div>
             </div>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-200/60 dark:border-blue-900/40 shrink-0">
-              Locked
-            </span>
           </div>
 
-          {/* Form Fields: Only Topic Number + Topic Name */}
+          {/* Form Fields: Topic Number + Topic Name */}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div className="sm:col-span-1">
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Topic No.
+                Topic Number <span className="text-rose-500">*</span>
               </label>
               <input
                 type="number"
@@ -342,7 +328,8 @@ export default function QuickAddTopicModal({
                 value={topicNumber}
                 onChange={(e) => setTopicNumber(e.target.value === "" ? "" : parseInt(e.target.value, 10))}
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-hidden focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
-                placeholder="01"
+                placeholder="1"
+                id="topic-number-input"
               />
             </div>
 
@@ -355,7 +342,8 @@ export default function QuickAddTopicModal({
                 value={topicName}
                 onChange={(e) => setTopicName(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-hidden focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
-                placeholder="e.g. Euclidean Algorithm / Historical Background"
+                placeholder="e.g. Real Numbers / Historical Background"
+                id="topic-name-input"
               />
             </div>
           </div>
@@ -367,16 +355,16 @@ export default function QuickAddTopicModal({
               <div className="flex-1">
                 <p className="font-bold">Topic Already Exists</p>
                 <p className="mt-0.5 text-[11px] leading-relaxed">
-                  A topic with this {duplicateWarning.field} is already present in this {isSchool ? "chapter" : "module"}.
+                  A topic with this {duplicateWarning.field} already exists in this {isSchool ? "chapter" : "module"}.
                 </p>
               </div>
             </div>
           )}
 
-          {/* Drag & Drop File Upload Area */}
+          {/* File Upload Dropzone */}
           <div>
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-              Upload PDF or Image Document <span className="text-rose-500">*</span>
+              Upload PDF or Image <span className="text-rose-500">*</span>
             </label>
             <div
               onDragOver={(e) => {
@@ -393,6 +381,7 @@ export default function QuickAddTopicModal({
                   ? "border-emerald-400 bg-emerald-50/30 dark:bg-emerald-950/20"
                   : "border-slate-200 dark:border-slate-800 hover:border-blue-400 bg-slate-50/50 dark:bg-slate-950/40"
               }`}
+              id="topic-upload-dropzone"
             >
               <input
                 ref={fileInputRef}
@@ -400,6 +389,7 @@ export default function QuickAddTopicModal({
                 accept=".pdf,image/png,image/jpeg,image/webp,image/jpg"
                 onChange={handleFileSelect}
                 className="hidden"
+                id="topic-file-input"
               />
 
               {selectedFile ? (
@@ -412,7 +402,7 @@ export default function QuickAddTopicModal({
                       {selectedFile.name}
                     </p>
                     <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                      {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Click or drop to change
+                      {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Click to replace file
                     </p>
                   </div>
                 </div>
@@ -423,10 +413,10 @@ export default function QuickAddTopicModal({
                   </div>
                   <div>
                     <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                      Drag & Drop PDF / Image here, or <span className="text-blue-600 dark:text-blue-400 underline">Browse</span>
+                      Drag & Drop PDF or Image here, or <span className="text-blue-600 dark:text-blue-400 underline">Browse</span>
                     </p>
                     <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
-                      Supports PDF, PNG, JPG, WebP up to 100MB
+                      Supports PDF, PNG, JPG, WebP
                     </p>
                   </div>
                 </>
@@ -434,60 +424,52 @@ export default function QuickAddTopicModal({
             </div>
           </div>
 
-          {/* Optional Practice Test Attachment Toggle */}
-          <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200/80 dark:border-slate-800 cursor-pointer hover:bg-slate-100/60 dark:hover:bg-slate-850/60 transition-colors">
-            <input
-              type="checkbox"
-              checked={attachPracticeTest}
-              onChange={(e) => setAttachPracticeTest(e.target.checked)}
-              className="w-4 h-4 rounded-md text-blue-600 focus:ring-blue-500 border-slate-300 dark:border-slate-700"
-            />
-            <div className="flex-1 text-xs">
-              <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" /> Attach Practice Test
-              </span>
-              <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
-                Opens the Practice Test Builder immediately after note upload completes
-              </p>
-            </div>
-          </label>
-
           {/* Error Message */}
           {errorMsg && (
-            <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
+            <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl text-xs text-rose-700 dark:text-rose-300 font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-500" />
               <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {/* Upload Progress Display */}
+          {uploadState.isUploading && (
+            <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-xl text-xs space-y-1.5">
+              <div className="flex justify-between text-[11px] font-bold text-blue-700 dark:text-blue-300">
+                <span>Uploading note to Cloudflare R2...</span>
+                <span>{uploadState.progress}%</span>
+              </div>
+              <div className="w-full h-2 bg-blue-100 dark:bg-blue-900 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                  style={{ width: `${uploadState.progress}%` }}
+                />
+              </div>
             </div>
           )}
         </div>
 
-        {/* Footer Actions */}
-        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/50 flex items-center justify-end gap-2.5">
+        {/* Modal Footer */}
+        <div className="flex items-center justify-end gap-3 px-5 py-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/50">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            disabled={uploadState.isUploading}
+            className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors"
+            id="cancel-add-topic-btn"
           >
             Cancel
           </button>
 
-          {duplicateWarning?.exists ? (
-            <button
-              type="button"
-              onClick={() => handleSaveTopic(true)}
-              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 transition-colors shadow-sm flex items-center gap-1.5"
-            >
-              Replace Existing Topic <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => handleSaveTopic(false)}
-              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-1.5"
-            >
-              Save Topic
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => handleSaveTopic(false)}
+            disabled={uploadState.isUploading || !selectedFile || !topicName.trim()}
+            className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-blue-500/20 transition-all flex items-center gap-2"
+            id="save-topic-btn"
+          >
+            {uploadState.isUploading ? "Uploading..." : "Save Topic Note"}
+          </button>
         </div>
       </div>
     </div>
