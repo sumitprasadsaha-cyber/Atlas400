@@ -183,18 +183,18 @@ export default function QuickAddTopicModal({
       const isUPSC = parentContext.type === "upsc";
       const result = await uploadNotePipeline({
         file: selectedFile,
-        classGrade: isUPSC ? "UPSC" : (parentContext.className || "Class 10"),
+        classGrade: isUPSC ? "UPSC" : (parentContext.className || ""),
         subject: parentContext.subject,
         gsPaper: parentContext.gsPaper,
         generalStudiesPaper: parentContext.gsPaper,
-        chapterNo: parentContext.chapterNumber || parentContext.moduleNumber || 1,
-        chapterNumber: parentContext.chapterNumber || parentContext.moduleNumber || 1,
-        chapterName: parentContext.chapterName || parentContext.moduleName || "Chapter 1",
-        chapterTitle: parentContext.chapterName || parentContext.moduleName || "Chapter 1",
-        moduleNo: parentContext.moduleNumber || 1,
-        moduleNumber: parentContext.moduleNumber || 1,
-        moduleName: parentContext.moduleName || "Module 1",
-        moduleTitle: parentContext.moduleName || "Module 1",
+        chapterNo: parentContext.chapterNumber,
+        chapterNumber: parentContext.chapterNumber,
+        chapterName: parentContext.chapterName,
+        chapterTitle: parentContext.chapterName,
+        moduleNo: parentContext.moduleNumber,
+        moduleNumber: parentContext.moduleNumber,
+        moduleName: parentContext.moduleName,
+        moduleTitle: parentContext.moduleName,
         topicNo: typeof topicNumber === "number" ? topicNumber : parseInt(String(topicNumber), 10) || 1,
         topicNumber: typeof topicNumber === "number" ? topicNumber : parseInt(String(topicNumber), 10) || 1,
         topicName: topicName.trim(),
@@ -289,7 +289,7 @@ export default function QuickAddTopicModal({
                   {isSchool ? "Class" : "GS Paper"}
                 </span>
                 <span className="font-bold text-slate-900 dark:text-slate-100 truncate block">
-                  {isSchool ? (parentContext.className || "Class 10") : (parentContext.gsPaper || "GS Paper II")}
+                  {isSchool ? (parentContext.className || "") : (parentContext.gsPaper || "")}
                 </span>
               </div>
 
@@ -308,8 +308,8 @@ export default function QuickAddTopicModal({
                 </span>
                 <span className="font-bold text-slate-900 dark:text-slate-100 truncate block">
                   {isSchool
-                    ? `Ch ${parentContext.chapterNumber || 1}${parentContext.chapterName ? `: ${parentContext.chapterName}` : ""}`
-                    : `Mod ${parentContext.moduleNumber || 1}${parentContext.moduleName ? `: ${parentContext.moduleName}` : ""}`
+                    ? `Chapter ${parentContext.chapterNumber}${parentContext.chapterName && parentContext.chapterName !== `Chapter ${parentContext.chapterNumber}` ? `: ${parentContext.chapterName}` : ""}`
+                    : `Module ${parentContext.moduleNumber}${parentContext.moduleName && parentContext.moduleName !== `Module ${parentContext.moduleNumber}` ? `: ${parentContext.moduleName}` : ""}`
                   }
                 </span>
               </div>

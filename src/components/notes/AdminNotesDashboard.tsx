@@ -26,7 +26,9 @@ import {
   uploadNotePipeline, 
   replaceNotePipeline, 
   deleteNotePipeline, 
-  renameNotePipeline 
+  renameNotePipeline,
+  renameSubjectPipeline,
+  deleteChapterPipeline
 } from "../../lib/notesService";
 import { searchHierarchicalNotes } from "../../utils/notesHierarchyHelper";
 import { fetchAllPracticeTests, buildTopicTestId } from "../../lib/practiceTestService";
@@ -50,9 +52,11 @@ interface AdminNotesDashboardProps {
 const STORAGE_CUSTOM_SCHOOL_CLASSES = "tuition_custom_school_classes";
 const STORAGE_CUSTOM_SCHOOL_SUBJECTS = "tuition_custom_school_subjects";
 const STORAGE_CUSTOM_SCHOOL_CHAPTERS = "tuition_custom_school_chapters";
+const STORAGE_REMOVED_SCHOOL_SUBJECTS = "tuition_removed_school_subjects";
 const STORAGE_CUSTOM_UPSC_PAPERS = "tuition_custom_upsc_papers";
 const STORAGE_CUSTOM_UPSC_SUBJECTS = "tuition_custom_upsc_subjects";
 const STORAGE_CUSTOM_UPSC_MODULES = "tuition_custom_upsc_modules";
+const STORAGE_REMOVED_UPSC_SUBJECTS = "tuition_removed_upsc_subjects";
 
 // Default Standard School Classes
 const DEFAULT_SCHOOL_CLASSES = [
@@ -131,6 +135,9 @@ export default function AdminNotesDashboard({
   const [customSchoolChapters, setCustomSchoolChapters] = useState<Record<string, Record<string, Array<{ number: number; name: string }>>>>(() => 
     safeGetStorageJson(STORAGE_CUSTOM_SCHOOL_CHAPTERS, {})
   );
+  const [removedSchoolSubjects, setRemovedSchoolSubjects] = useState<Record<string, string[]>>(() =>
+    safeGetStorageJson<Record<string, string[]>>(STORAGE_REMOVED_SCHOOL_SUBJECTS, {})
+  );
 
   const [customUpscPapers, setCustomUpscPapers] = useState<string[]>(() => 
     safeGetStorageJson<string[]>(STORAGE_CUSTOM_UPSC_PAPERS, [])
@@ -140,6 +147,9 @@ export default function AdminNotesDashboard({
   );
   const [customUpscModules, setCustomUpscModules] = useState<Record<string, Record<string, Array<{ number: number; name: string }>>>>(() => 
     safeGetStorageJson(STORAGE_CUSTOM_UPSC_MODULES, {})
+  );
+  const [removedUpscSubjects, setRemovedUpscSubjects] = useState<Record<string, string[]>>(() =>
+    safeGetStorageJson<Record<string, string[]>>(STORAGE_REMOVED_UPSC_SUBJECTS, {})
   );
 
   // Active Hierarchy Selection State - School
@@ -175,6 +185,16 @@ export default function AdminNotesDashboard({
 
   const [deletingNote, setDeletingNote] = useState<ClassNote | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Subject Rename Modal state
+  const [renamingSubject, setRenamingSubject] = useState<{
+    type: "school" | "upsc";
+    className?: string;
+    gsPaper?: string;
+    oldSubject: string;
+    newSubject: string;
+  } | null>(null);
+  const [isRenamingSubject, setIsRenamingSubject] = useState(false);
 
   // Practice Test Bank & Modal state
   const [practiceTestBank, setPracticeTestBank] = useState<Record<string, any>>({});
@@ -260,24 +280,30 @@ export default function AdminNotesDashboard({
   // 2. Available Subjects for selected School Class
   const schoolSubjectsForSelectedClass = useMemo(() => {
     const set = new Set<string>();
+    const removedForClass = new Set(removedSchoolSubjects[selectedSchoolClass] || []);
+
     const defs = DEFAULT_SCHOOL_SUBJECTS[selectedSchoolClass] || [
       "Mathematics", "Science", "English", "Social Science", "Computer Science"
     ];
-    defs.forEach((s) => set.add(s));
+    defs.forEach((s) => {
+      if (!removedForClass.has(s)) set.add(s);
+    });
 
     const custom = customSchoolSubjects[selectedSchoolClass] || [];
-    custom.forEach((s) => set.add(s));
+    custom.forEach((s) => {
+      if (!removedForClass.has(s)) set.add(s);
+    });
 
     schoolNotes.forEach((n) => {
       const cls = (n as any).className || n.classGrade || (n as any).class || "";
       if (cls.toLowerCase() === selectedSchoolClass.toLowerCase()) {
         const s = (n as any).subjectName || n.subject || "";
-        if (s && s.trim()) set.add(s.trim());
+        if (s && s.trim() && !removedForClass.has(s.trim())) set.add(s.trim());
       }
     });
 
     return Array.from(set).sort();
-  }, [selectedSchoolClass, schoolNotes, customSchoolSubjects]);
+  }, [selectedSchoolClass, schoolNotes, customSchoolSubjects, removedSchoolSubjects]);
 
   // Ensure valid selected subject
   useEffect(() => {
@@ -289,6 +315,11 @@ export default function AdminNotesDashboard({
   // 3. Available Chapters for selected School Class & Subject
   const schoolChaptersForSelected = useMemo(() => {
     const map = new Map<number, string>();
+
+    // Baseline chapters 1 to 10 so any chapter is immediately selectable
+    for (let i = 1; i <= 10; i++) {
+      map.set(i, `Chapter ${i}`);
+    }
 
     // From custom created chapters
     const customList = customSchoolChapters[selectedSchoolClass]?.[selectedSchoolSubject] || [];
@@ -307,11 +338,6 @@ export default function AdminNotesDashboard({
         map.set(chNo, chName);
       }
     });
-
-    // If empty, provide at least Chapter 1
-    if (map.size === 0) {
-      map.set(1, "Chapter 1");
-    }
 
     return Array.from(map.entries())
       .map(([number, name]) => ({ number, name }))
@@ -357,22 +383,28 @@ export default function AdminNotesDashboard({
   // 2. Available Subjects for selected GS Paper
   const upscSubjectsForSelectedPaper = useMemo(() => {
     const set = new Set<string>();
+    const removedForPaper = new Set(removedUpscSubjects[selectedUpscPaper] || []);
+
     const defs = DEFAULT_UPSC_SUBJECTS[selectedUpscPaper] || ["Polity", "Governance", "History", "Economy"];
-    defs.forEach((s) => set.add(s));
+    defs.forEach((s) => {
+      if (!removedForPaper.has(s)) set.add(s);
+    });
 
     const custom = customUpscSubjects[selectedUpscPaper] || [];
-    custom.forEach((s) => set.add(s));
+    custom.forEach((s) => {
+      if (!removedForPaper.has(s)) set.add(s);
+    });
 
     upscNotes.forEach((n) => {
       const p = (n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "";
       if (p.toLowerCase() === selectedUpscPaper.toLowerCase()) {
         const s = (n as any).subjectName || n.subject || "";
-        if (s && s.trim()) set.add(s.trim());
+        if (s && s.trim() && !removedForPaper.has(s.trim())) set.add(s.trim());
       }
     });
 
     return Array.from(set).sort();
-  }, [selectedUpscPaper, upscNotes, customUpscSubjects]);
+  }, [selectedUpscPaper, upscNotes, customUpscSubjects, removedUpscSubjects]);
 
   // Ensure valid selected UPSC subject
   useEffect(() => {
@@ -384,6 +416,11 @@ export default function AdminNotesDashboard({
   // 3. Available Modules for selected UPSC Paper & Subject
   const upscModulesForSelected = useMemo(() => {
     const map = new Map<number, string>();
+
+    // Baseline modules 1 to 10 so any module is immediately selectable
+    for (let i = 1; i <= 10; i++) {
+      map.set(i, `Module ${i}`);
+    }
 
     // From custom created modules
     const customList = customUpscModules[selectedUpscPaper]?.[selectedUpscSubject] || [];
@@ -402,11 +439,6 @@ export default function AdminNotesDashboard({
         map.set(modNo, modName);
       }
     });
-
-    // If empty, provide at least Module 1
-    if (map.size === 0) {
-      map.set(1, "Module 1");
-    }
 
     return Array.from(map.entries())
       .map(([number, name]) => ({ number, name }))
@@ -719,6 +751,145 @@ export default function AdminNotesDashboard({
     }
   };
 
+  // =========================================================================
+  // SUBJECT MANAGEMENT: RENAME & DELETE HANDLERS
+  // =========================================================================
+  const handleOpenRenameSubject = (subject: string) => {
+    setRenamingSubject({
+      type: activeTab,
+      className: selectedSchoolClass,
+      gsPaper: selectedUpscPaper,
+      oldSubject: subject,
+      newSubject: subject,
+    });
+  };
+
+  const handleConfirmRenameSubject = async () => {
+    if (!renamingSubject) return;
+    const cleanNew = renamingSubject.newSubject.trim();
+    if (!cleanNew) {
+      showToast("Subject name cannot be empty.", "error");
+      return;
+    }
+    if (cleanNew.toLowerCase() === renamingSubject.oldSubject.toLowerCase()) {
+      setRenamingSubject(null);
+      return;
+    }
+
+    setIsRenamingSubject(true);
+    try {
+      // 1. Run pipeline to update all Firestore docs and invalidate caches
+      const res = await renameSubjectPipeline({
+        type: renamingSubject.type,
+        className: renamingSubject.type === "school" ? renamingSubject.className : undefined,
+        gsPaper: renamingSubject.type === "upsc" ? renamingSubject.gsPaper : undefined,
+        oldSubject: renamingSubject.oldSubject,
+        newSubject: cleanNew,
+        notes: activeTab === "school" ? schoolNotes : upscNotes,
+      });
+
+      // 2. Update custom subjects and removed subjects in localStorage
+      if (renamingSubject.type === "school") {
+        const targetCls = renamingSubject.className || selectedSchoolClass;
+        const curCustom = customSchoolSubjects[targetCls] || [];
+        const nextCustom = curCustom.map((s) => (s.toLowerCase() === renamingSubject.oldSubject.toLowerCase() ? cleanNew : s));
+        if (!nextCustom.includes(cleanNew)) nextCustom.push(cleanNew);
+
+        const updatedMap = { ...customSchoolSubjects, [targetCls]: nextCustom };
+        setCustomSchoolSubjects(updatedMap);
+        safeSetStorageJson(STORAGE_CUSTOM_SCHOOL_SUBJECTS, updatedMap);
+
+        if (selectedSchoolSubject.toLowerCase() === renamingSubject.oldSubject.toLowerCase()) {
+          setSelectedSchoolSubject(cleanNew);
+        }
+      } else {
+        const targetPaper = renamingSubject.gsPaper || selectedUpscPaper;
+        const curCustom = customUpscSubjects[targetPaper] || [];
+        const nextCustom = curCustom.map((s) => (s.toLowerCase() === renamingSubject.oldSubject.toLowerCase() ? cleanNew : s));
+        if (!nextCustom.includes(cleanNew)) nextCustom.push(cleanNew);
+
+        const updatedMap = { ...customUpscSubjects, [targetPaper]: nextCustom };
+        setCustomUpscSubjects(updatedMap);
+        safeSetStorageJson(STORAGE_CUSTOM_UPSC_SUBJECTS, updatedMap);
+
+        if (selectedUpscSubject.toLowerCase() === renamingSubject.oldSubject.toLowerCase()) {
+          setSelectedUpscSubject(cleanNew);
+        }
+      }
+
+      showToast(`Subject renamed to "${cleanNew}" (${res.updatedCount} notes updated)`, "success");
+      setRenamingSubject(null);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      showToast(err?.message || "Failed to rename subject.", "error");
+    } finally {
+      setIsRenamingSubject(false);
+    }
+  };
+
+  const handleDeleteSubject = (subjectToDelete: string) => {
+    // Check if subject contains notes
+    const notesInSubj = (activeTab === "school" ? schoolNotes : upscNotes).filter((n) => {
+      const s = ((n as any).subjectName || n.subject || "").trim().toLowerCase();
+      if (s !== subjectToDelete.trim().toLowerCase()) return false;
+
+      if (activeTab === "school") {
+        const c = ((n as any).className || n.classGrade || (n as any).class || "").trim().toLowerCase();
+        return c === selectedSchoolClass.trim().toLowerCase();
+      } else {
+        const p = ((n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "").trim().toLowerCase();
+        return p === selectedUpscPaper.trim().toLowerCase();
+      }
+    });
+
+    if (notesInSubj.length > 0) {
+      showToast("This subject contains notes. Delete all Chapters/Modules first.", "error");
+      return;
+    }
+
+    if (activeTab === "school") {
+      const curRemoved = removedSchoolSubjects[selectedSchoolClass] || [];
+      const nextRemoved = {
+        ...removedSchoolSubjects,
+        [selectedSchoolClass]: Array.from(new Set([...curRemoved, subjectToDelete])),
+      };
+      setRemovedSchoolSubjects(nextRemoved);
+      safeSetStorageJson(STORAGE_REMOVED_SCHOOL_SUBJECTS, nextRemoved);
+
+      const curCustom = customSchoolSubjects[selectedSchoolClass] || [];
+      if (curCustom.includes(subjectToDelete)) {
+        const nextCustom = {
+          ...customSchoolSubjects,
+          [selectedSchoolClass]: curCustom.filter((s) => s !== subjectToDelete),
+        };
+        setCustomSchoolSubjects(nextCustom);
+        safeSetStorageJson(STORAGE_CUSTOM_SCHOOL_SUBJECTS, nextCustom);
+      }
+
+      showToast(`Subject "${subjectToDelete}" deleted.`, "success");
+    } else {
+      const curRemoved = removedUpscSubjects[selectedUpscPaper] || [];
+      const nextRemoved = {
+        ...removedUpscSubjects,
+        [selectedUpscPaper]: Array.from(new Set([...curRemoved, subjectToDelete])),
+      };
+      setRemovedUpscSubjects(nextRemoved);
+      safeSetStorageJson(STORAGE_REMOVED_UPSC_SUBJECTS, nextRemoved);
+
+      const curCustom = customUpscSubjects[selectedUpscPaper] || [];
+      if (curCustom.includes(subjectToDelete)) {
+        const nextCustom = {
+          ...customUpscSubjects,
+          [selectedUpscPaper]: curCustom.filter((s) => s !== subjectToDelete),
+        };
+        setCustomUpscSubjects(nextCustom);
+        safeSetStorageJson(STORAGE_CUSTOM_UPSC_SUBJECTS, nextCustom);
+      }
+
+      showToast(`Subject "${subjectToDelete}" deleted.`, "success");
+    }
+  };
+
   const handleOpenPracticeTest = (note: ClassNote) => {
     const classGrade = activeTab === "school" ? selectedSchoolClass : "UPSC";
     const subject = activeTab === "school" ? selectedSchoolSubject : selectedUpscSubject;
@@ -736,7 +907,7 @@ export default function AdminNotesDashboard({
   };
 
   return (
-    <div className="flex flex-col h-full min-h-[85vh] bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 overflow-hidden" id="admin-notes-management">
+    <div className="flex-1 min-h-0 flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 sm:rounded-2xl border-0 sm:border border-slate-200/80 dark:border-slate-800/80 overflow-hidden" id="admin-notes-management">
       {/* Toast Notification */}
       {toast && (
         <div 
@@ -744,7 +915,7 @@ export default function AdminNotesDashboard({
             toast.type === "success" 
               ? "bg-emerald-600 text-white border-emerald-500 shadow-emerald-500/20" 
               : toast.type === "error" 
-              ? "bg-rose-600 text-white border-rose-500 shadow-rose-500/20"
+              ? "bg-rose-600 text-white border-rose-500 shadow-rose-500/20" 
               : "bg-slate-900 text-white border-slate-700"
           }`}
         >
@@ -755,13 +926,13 @@ export default function AdminNotesDashboard({
       )}
 
       {/* Main Grid Layout: Left Hierarchy Sidebar + Right Topic Notes Area */}
-      <div className="flex-1 flex flex-col lg:flex-row min-h-0">
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
         {/* =========================================================================
             LEFT SIDEBAR: HIERARCHY NAVIGATION (School or UPSC)
             ========================================================================= */}
-        <div className="w-full lg:w-80 xl:w-96 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col shrink-0">
+        <aside className="w-full lg:w-80 xl:w-96 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col min-h-0 shrink-0 overflow-hidden max-h-72 lg:max-h-none" id="notes-sidebar">
           {/* Top Switcher: School vs UPSC */}
-          <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40">
+          <div className="p-3.5 sm:p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 shrink-0">
             <div className="flex rounded-xl bg-slate-200/70 dark:bg-slate-800/70 p-1">
               <button
                 type="button"
@@ -800,7 +971,7 @@ export default function AdminNotesDashboard({
           </div>
 
           {/* Hierarchy Cascade Columns / Sections */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin">
+          <div className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-4 space-y-6 scrollbar-thin overscroll-contain" id="notes-sidebar-scroll">
             {activeTab === "school" ? (
               <>
                 {/* 1. Classes List */}
@@ -875,29 +1046,67 @@ export default function AdminNotesDashboard({
                       }).length;
 
                       return (
-                        <button
+                        <div
                           key={subj}
-                          type="button"
-                          onClick={() => setSelectedSchoolSubject(subj)}
-                          className={`w-full px-3 py-2 rounded-xl text-left text-xs font-bold transition-all flex items-center justify-between gap-2 border ${
+                          className={`group/subj w-full px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-1.5 border ${
                             isSelected
                               ? "bg-blue-600 text-white border-blue-600 shadow-sm"
                               : "bg-slate-50/70 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 border-slate-200/70 dark:border-slate-800/70 hover:bg-slate-100 dark:hover:bg-slate-800"
                           }`}
-                          id={`subject-btn-${subj.replace(/\s+/g, "-")}`}
                         >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <BookOpen className={`w-3.5 h-3.5 shrink-0 ${isSelected ? "text-blue-200" : "text-slate-400"}`} />
+                          <button
+                            type="button"
+                            onClick={() => setSelectedSchoolSubject(subj)}
+                            className="flex items-center gap-2 min-w-0 flex-1 text-left py-0.5"
+                            id={`subject-btn-${subj.replace(/\s+/g, "-")}`}
+                          >
+                            <BookOpen className={`w-3.5 h-3.5 shrink-0 ${isSelected ? "text-blue-100" : "text-slate-400"}`} />
                             <span className="truncate">{subj}</span>
+                            {subjNotesCount > 0 && (
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-mono shrink-0 ${
+                                isSelected ? "bg-blue-700 text-blue-100" : "bg-slate-200/60 dark:bg-slate-800 text-slate-500"
+                              }`}>
+                                {subjNotesCount}
+                              </span>
+                            )}
+                          </button>
+
+                          {/* Action icons: Rename (📝) & Delete (🗑) */}
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenRenameSubject(subj);
+                              }}
+                              className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                                isSelected 
+                                  ? "hover:bg-blue-700 text-blue-100" 
+                                  : "text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                              }`}
+                              title={`Rename ${subj}`}
+                              id={`rename-subj-${subj.replace(/\s+/g, "-")}`}
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteSubject(subj);
+                              }}
+                              className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                                isSelected 
+                                  ? "hover:bg-blue-700 text-blue-100 hover:text-rose-200" 
+                                  : "text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                              }`}
+                              title={`Delete ${subj}`}
+                              id={`delete-subj-${subj.replace(/\s+/g, "-")}`}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
                           </div>
-                          {subjNotesCount > 0 && (
-                            <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-mono shrink-0 ${
-                              isSelected ? "bg-blue-700 text-blue-100" : "bg-slate-200/60 dark:bg-slate-800 text-slate-500"
-                            }`}>
-                              {subjNotesCount}
-                            </span>
-                          )}
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -1068,29 +1277,67 @@ export default function AdminNotesDashboard({
                       }).length;
 
                       return (
-                        <button
+                        <div
                           key={subj}
-                          type="button"
-                          onClick={() => setSelectedUpscSubject(subj)}
-                          className={`w-full px-3 py-2 rounded-xl text-left text-xs font-bold transition-all flex items-center justify-between gap-2 border ${
+                          className={`group/subj w-full px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-1.5 border ${
                             isSelected
                               ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
                               : "bg-slate-50/70 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 border-slate-200/70 dark:border-slate-800/70 hover:bg-slate-100 dark:hover:bg-slate-800"
                           }`}
-                          id={`upsc-subject-btn-${subj.replace(/\s+/g, "-")}`}
                         >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <BookOpen className={`w-3.5 h-3.5 shrink-0 ${isSelected ? "text-indigo-200" : "text-slate-400"}`} />
+                          <button
+                            type="button"
+                            onClick={() => setSelectedUpscSubject(subj)}
+                            className="flex items-center gap-2 min-w-0 flex-1 text-left py-0.5"
+                            id={`upsc-subject-btn-${subj.replace(/\s+/g, "-")}`}
+                          >
+                            <BookOpen className={`w-3.5 h-3.5 shrink-0 ${isSelected ? "text-indigo-100" : "text-slate-400"}`} />
                             <span className="truncate">{subj}</span>
+                            {subjNotesCount > 0 && (
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-mono shrink-0 ${
+                                isSelected ? "bg-indigo-700 text-indigo-100" : "bg-slate-200/60 dark:bg-slate-800 text-slate-500"
+                              }`}>
+                                {subjNotesCount}
+                              </span>
+                            )}
+                          </button>
+
+                          {/* Action icons: Rename (📝) & Delete (🗑) */}
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenRenameSubject(subj);
+                              }}
+                              className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                                isSelected 
+                                  ? "hover:bg-indigo-700 text-indigo-100" 
+                                  : "text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                              }`}
+                              title={`Rename ${subj}`}
+                              id={`rename-upsc-subj-${subj.replace(/\s+/g, "-")}`}
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteSubject(subj);
+                              }}
+                              className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                                isSelected 
+                                  ? "hover:bg-indigo-700 text-indigo-100 hover:text-rose-200" 
+                                  : "text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                              }`}
+                              title={`Delete ${subj}`}
+                              id={`delete-upsc-subj-${subj.replace(/\s+/g, "-")}`}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
                           </div>
-                          {subjNotesCount > 0 && (
-                            <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-mono shrink-0 ${
-                              isSelected ? "bg-indigo-700 text-indigo-100" : "bg-slate-200/60 dark:bg-slate-800 text-slate-500"
-                            }`}>
-                              {subjNotesCount}
-                            </span>
-                          )}
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -1189,14 +1436,14 @@ export default function AdminNotesDashboard({
               </>
             )}
           </div>
-        </div>
+        </aside>
 
         {/* =========================================================================
             RIGHT MAIN AREA: ACTIVE CHAPTER/MODULE TOPICS & TOPIC CARDS
             ========================================================================= */}
-        <div className="flex-1 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-950/50 overflow-hidden">
-          {/* Breadcrumb Navigation Bar */}
-          <div className="px-6 py-3.5 border-b border-slate-200/80 dark:border-slate-800 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <section className="flex-1 min-h-0 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-950/50 overflow-hidden" id="notes-main-content">
+          {/* Breadcrumb Navigation Bar (Fixed shrink-0) */}
+          <div className="px-4 sm:px-6 py-3 sm:py-3.5 border-b border-slate-200/80 dark:border-slate-800 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
             <div className="flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-slate-400 flex-wrap">
               <span className="text-slate-800 dark:text-slate-200 font-extrabold flex items-center gap-1">
                 {activeTab === "school" ? <School className="w-3.5 h-3.5 text-blue-500" /> : <GraduationCap className="w-3.5 h-3.5 text-indigo-500" />}
@@ -1238,8 +1485,8 @@ export default function AdminNotesDashboard({
             </div>
           </div>
 
-          {/* Chapter / Module Header: Title + Single Circular Topic Add Button */}
-          <div className="px-6 py-5 border-b border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-4">
+          {/* Chapter / Module Header: Title + Single Circular Topic Add Button (Fixed shrink-0) */}
+          <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-4 shrink-0">
             <div className="min-w-0">
               <h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-slate-100 truncate">
                 {activeTab === "school" 
@@ -1265,8 +1512,8 @@ export default function AdminNotesDashboard({
             </button>
           </div>
 
-          {/* Topics List Body */}
-          <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
+          {/* Topics List Body: Independent scrolling container */}
+          <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-3 scrollbar-thin overscroll-contain pb-12 sm:pb-8" id="notes-topics-scroll">
             {filteredAndSortedTopics.length === 0 ? (
               /* Empty State */
               <div className="flex flex-col items-center justify-center py-16 px-4 text-center max-w-md mx-auto" id="empty-topics-state">
@@ -1308,7 +1555,7 @@ export default function AdminNotesDashboard({
               </div>
             )}
           </div>
-        </div>
+        </section>
       </div>
 
       {/* =========================================================================
@@ -1515,7 +1762,7 @@ export default function AdminNotesDashboard({
                 type="button"
                 onClick={() => setDeletingNote(null)}
                 disabled={isDeleting}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
               >
                 Cancel
               </button>
@@ -1523,9 +1770,81 @@ export default function AdminNotesDashboard({
                 type="button"
                 onClick={handleConfirmDelete}
                 disabled={isDeleting}
-                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 shadow-md shadow-rose-500/20 transition-all"
+                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 shadow-md shadow-rose-500/20 transition-all cursor-pointer"
               >
                 {isDeleting ? "Deleting..." : "Delete Note"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6b. Rename Subject Modal */}
+      {renamingSubject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fadeIn">
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2 font-bold text-sm text-slate-900 dark:text-slate-100">
+                <Pencil className="w-4 h-4 text-blue-500" />
+                <span>Rename Subject</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRenamingSubject(null)}
+                disabled={isRenamingSubject}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
+                  Current Subject
+                </label>
+                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  {renamingSubject.oldSubject}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                  New Subject Name <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={renamingSubject.newSubject}
+                  onChange={(e) => setRenamingSubject({ ...renamingSubject, newSubject: e.target.value })}
+                  placeholder="Enter new subject name..."
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-hidden focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !isRenamingSubject) {
+                      e.preventDefault();
+                      handleConfirmRenameSubject();
+                    }
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setRenamingSubject(null)}
+                disabled={isRenamingSubject}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRenameSubject}
+                disabled={isRenamingSubject || !renamingSubject.newSubject.trim()}
+                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+              >
+                {isRenamingSubject ? "Saving..." : "Save Changes"}
               </button>
             </div>
           </div>

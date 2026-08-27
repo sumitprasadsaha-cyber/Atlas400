@@ -15,6 +15,7 @@ import {
   saveClassNoteDoc,
   deleteClassNoteDoc,
 } from "./firestoreService";
+import { deleteTopicPracticeTest } from "./practiceTestService";
 import { notesLogger } from "./notesLogger";
 import { notesCacheService } from "./notesCacheService";
 import { validateNoteInput } from "../utils/notesValidation";
@@ -499,7 +500,7 @@ export async function renameNotePipeline(params: NoteRenameParams): Promise<Clas
 
 /**
  * Atlas v5.0.8 Atomic Note Delete Pipeline
- * Delete R2 folder contents + Delete Firestore document + Invalidate cache
+ * Delete R2 folder contents + Delete Firestore document + Delete practice tests + Invalidate cache
  */
 export async function deleteNotePipeline(noteId: string, note?: ClassNote): Promise<void> {
   const storageKey = note?.storagePath || note?.r2Key || note?.storageKey || "";
@@ -529,7 +530,23 @@ export async function deleteNotePipeline(noteId: string, note?: ClassNote): Prom
     // 2. Delete Firestore database record
     await deleteClassNoteDoc(noteId);
 
-    // 3. Purge cached entries
+    // 3. Clean up associated practice tests if note context is available
+    if (note) {
+      const isUpsc = note.isUPSC || (note as any).type === "upsc" || (note as any).noteType === "upsc" || note.classGrade === "UPSC";
+      const classGrade = isUpsc ? "UPSC" : ((note as any).className || note.classGrade || "Class 10");
+      const subject = (note as any).subjectName || note.subject || "";
+      const rawChNo = (note as any).chapterNumber ?? note.chapterNo ?? (note as any).moduleNumber ?? 1;
+      const chapterNo = typeof rawChNo === "number" ? rawChNo : parseInt(String(rawChNo).replace(/\D/g, ""), 10) || 1;
+      const topicName = ((note as any).topicTitle || (note as any).topicName || note.partLabel || "").trim();
+
+      if (subject && topicName) {
+        await deleteTopicPracticeTest(classGrade, subject, chapterNo, topicName).catch((testErr) => {
+          console.warn("[NotesService] Practice test cleanup warning on note delete:", testErr);
+        });
+      }
+    }
+
+    // 4. Purge cached entries
     await notesCacheService.invalidateMetadataCache();
     if (storageKey) {
       await notesCacheService.invalidateBlobCache(storageKey);
@@ -543,6 +560,178 @@ export async function deleteNotePipeline(noteId: string, note?: ClassNote): Prom
     });
     throw new Error(err?.message || "Delete failed. Please try again.");
   }
+}
+
+/**
+ * Subject Rename Pipeline
+ * Atomically updates all notes in Firestore and Cloudflare metadata for a renamed subject
+ */
+export async function renameSubjectPipeline(params: {
+  type: "school" | "upsc";
+  className?: string;
+  gsPaper?: string;
+  oldSubject: string;
+  newSubject: string;
+  notes: ClassNote[];
+}): Promise<{ updatedCount: number }> {
+  const { type, className, gsPaper, oldSubject, newSubject, notes } = params;
+  const cleanOld = oldSubject.trim().toLowerCase();
+  const cleanNew = newSubject.trim();
+
+  if (!cleanNew) {
+    throw new Error("New subject name cannot be empty.");
+  }
+  if (cleanOld === cleanNew.toLowerCase()) {
+    return { updatedCount: 0 };
+  }
+
+  // Filter notes belonging to this scope and subject
+  const matchingNotes = notes.filter((n) => {
+    const s = ((n as any).subjectName || n.subject || "").trim().toLowerCase();
+    if (s !== cleanOld) return false;
+
+    if (type === "school") {
+      const cls = ((n as any).className || n.classGrade || (n as any).class || "").trim().toLowerCase();
+      return !className || cls === className.trim().toLowerCase();
+    } else {
+      const p = ((n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "").trim().toLowerCase();
+      return !gsPaper || p === gsPaper.trim().toLowerCase();
+    }
+  });
+
+  for (const n of matchingNotes) {
+    const updatedNote: ClassNote = {
+      ...n,
+      subject: cleanNew,
+      subjectName: cleanNew,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Update searchableText
+    const parts = [
+      updatedNote.classGrade || (updatedNote as any).className || "",
+      cleanNew,
+      `Chapter ${updatedNote.chapterNo || (updatedNote as any).chapterNumber || 1}`,
+      updatedNote.chapterName || "",
+      updatedNote.topicNumber ? `Topic ${updatedNote.topicNumber}` : "",
+      updatedNote.topicTitle || "",
+      updatedNote.fileName || "",
+    ];
+    updatedNote.searchableText = parts.filter(Boolean).join(" ").trim();
+
+    await saveClassNoteDoc(updatedNote);
+  }
+
+  await notesCacheService.invalidateMetadataCache();
+  return { updatedCount: matchingNotes.length };
+}
+
+/**
+ * Chapter / Module Rename Pipeline
+ * Atomically updates chapter/module number and/or chapter/module name across all matching notes in Firestore
+ */
+export async function renameChapterPipeline(params: {
+  type: "school" | "upsc";
+  className?: string;
+  gsPaper?: string;
+  subject: string;
+  oldChapterNumber: number;
+  newChapterNumber: number;
+  newChapterName: string;
+  notes: ClassNote[];
+}): Promise<{ updatedCount: number }> {
+  const { type, className, gsPaper, subject, oldChapterNumber, newChapterNumber, newChapterName, notes } = params;
+  const cleanSubj = subject.trim().toLowerCase();
+  const cleanChName = newChapterName.trim();
+
+  const matchingNotes = notes.filter((n) => {
+    const s = ((n as any).subjectName || n.subject || "").trim().toLowerCase();
+    if (s !== cleanSubj) return false;
+
+    const rawChNo = (n as any).chapterNumber ?? n.chapterNo ?? (n as any).moduleNumber ?? 1;
+    const chNo = typeof rawChNo === "number" ? rawChNo : parseInt(String(rawChNo).replace(/\D/g, ""), 10) || 1;
+    if (chNo !== oldChapterNumber) return false;
+
+    if (type === "school") {
+      const cls = ((n as any).className || n.classGrade || (n as any).class || "").trim().toLowerCase();
+      return !className || cls === className.trim().toLowerCase();
+    } else {
+      const p = ((n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "").trim().toLowerCase();
+      return !gsPaper || p === gsPaper.trim().toLowerCase();
+    }
+  });
+
+  for (const n of matchingNotes) {
+    const updatedNote: ClassNote = {
+      ...n,
+      chapterNumber: newChapterNumber,
+      chapterNo: newChapterNumber,
+      chapterName: cleanChName,
+      chapterTitle: cleanChName,
+      moduleNumber: newChapterNumber,
+      moduleNo: newChapterNumber,
+      moduleName: cleanChName,
+      moduleTitle: cleanChName,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Update searchableText
+    const parts = [
+      updatedNote.classGrade || (updatedNote as any).className || "",
+      updatedNote.subject || (updatedNote as any).subjectName || "",
+      type === "school" ? `Chapter ${newChapterNumber}` : `Module ${newChapterNumber}`,
+      cleanChName,
+      updatedNote.topicNumber ? `Topic ${updatedNote.topicNumber}` : "",
+      updatedNote.topicTitle || (updatedNote as any).topicName || "",
+      updatedNote.fileName || "",
+    ];
+    updatedNote.searchableText = parts.filter(Boolean).join(" ").trim();
+
+    await saveClassNoteDoc(updatedNote);
+  }
+
+  await notesCacheService.invalidateMetadataCache();
+  return { updatedCount: matchingNotes.length };
+}
+
+/**
+ * Chapter / Module Delete Pipeline
+ * Atomically deletes all topic notes, storage assets, and practice tests in a chapter/module
+ */
+export async function deleteChapterPipeline(params: {
+  type: "school" | "upsc";
+  className?: string;
+  gsPaper?: string;
+  subject: string;
+  chapterNumber: number;
+  notes: ClassNote[];
+}): Promise<{ deletedCount: number }> {
+  const { type, className, gsPaper, subject, chapterNumber, notes } = params;
+  const cleanSubj = subject.trim().toLowerCase();
+
+  const matchingNotes = notes.filter((n) => {
+    const s = ((n as any).subjectName || n.subject || "").trim().toLowerCase();
+    if (s !== cleanSubj) return false;
+
+    const rawChNo = (n as any).chapterNumber ?? n.chapterNo ?? (n as any).moduleNumber ?? 1;
+    const chNo = typeof rawChNo === "number" ? rawChNo : parseInt(String(rawChNo).replace(/\D/g, ""), 10) || 1;
+    if (chNo !== chapterNumber) return false;
+
+    if (type === "school") {
+      const cls = ((n as any).className || n.classGrade || (n as any).class || "").trim().toLowerCase();
+      return !className || cls === className.trim().toLowerCase();
+    } else {
+      const p = ((n as any).gsPaper || (n as any).generalStudiesPaper || (n as any).paper || "").trim().toLowerCase();
+      return !gsPaper || p === gsPaper.trim().toLowerCase();
+    }
+  });
+
+  for (const n of matchingNotes) {
+    await deleteNotePipeline(n.id, n);
+  }
+
+  await notesCacheService.invalidateMetadataCache();
+  return { deletedCount: matchingNotes.length };
 }
 
 /**

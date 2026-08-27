@@ -1610,18 +1610,17 @@ export default function App() {
   };
 
   return (
-    <div className={`min-h-screen w-full bg-slate-100 dark:bg-[#090d16] flex flex-col items-center justify-start p-0 sm:p-4 md:p-6 font-sans antialiased selection:bg-blue-500 selection:text-white theme-${visualTheme}`} id="app-shell">
+    <div className={`h-screen w-full bg-slate-100 dark:bg-[#090d16] flex flex-col font-sans antialiased selection:bg-blue-500 selection:text-white theme-${visualTheme}`} id="app-shell">
       {/* 
         Sleek, responsive container.
-        Scales up dynamically on wider devices and tablets to fit screen size.
+        Takes full available screen height and flexes cleanly with fixed header, fixed bottom nav, and scrollable content.
       */}
       <div 
         id="main-frame"
-        className="relative w-full max-w-7xl h-screen sm:h-[calc(100vh-2rem)] md:h-[calc(100vh-3rem)] bg-white dark:bg-[#111827] sm:rounded-2xl border-0 sm:border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col shadow-2xl transition-all duration-300"
-        style={{ contentVisibility: "auto" }}
+        className="relative w-full max-w-7xl h-full mx-auto bg-white dark:bg-[#111827] sm:border-x border-slate-200 dark:border-slate-800 flex flex-col shadow-2xl overflow-hidden"
       >
-        {/* Sleek top banner showing user role and logout */}
-        <div className="px-4 py-3 bg-slate-50 dark:bg-[#0d131f] border-b border-slate-150 dark:border-slate-800/80 flex items-center justify-between z-20 shrink-0" id="session-top-header">
+        {/* Sleek top banner showing user role and logout (Fixed / shrink-0) */}
+        <header className="px-4 py-3 bg-slate-50 dark:bg-[#0d131f] border-b border-slate-200 dark:border-slate-800 flex items-center justify-between z-20 shrink-0" id="session-top-header">
           <div className="flex items-center gap-2.5">
             <span className="relative flex h-2.5 w-2.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
@@ -1662,27 +1661,40 @@ export default function App() {
               Logout
             </button>
           </div>
-        </div>
+        </header>
 
-
-
-        {/* Scrollable primary content viewport */}
-        <div className="flex-1 overflow-y-auto px-4 sm:px-6 pt-5 sm:pt-6 pb-24" id="main-content-scroll">
-          
-          {/* View Routing Engine */}
+        {/* Content Area (flex: 1, min-h-0) */}
+        <main className="flex-1 min-h-0 flex flex-col overflow-hidden relative" id="main-content-viewport">
           <ErrorBoundary fallbackTitle="View Error">
-            {renderMainContent()}
+            {activeTab === "Notes" && auth.role === "admin" ? (
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-2 sm:p-4">
+                <AdminNotesView
+                  notes={classNotes}
+                  students={students}
+                  onRefresh={() => {
+                    const refreshedNotes = getLocalClassNotes();
+                    setClassNotes(refreshedNotes);
+                    const refreshedStudents = getLocalStudents();
+                    setStudents(refreshedStudents);
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 pt-5 sm:pt-6 pb-6 scrollbar-thin" id="main-content-scroll">
+                {renderMainContent()}
+              </div>
+            )}
           </ErrorBoundary>
-        </div>
+        </main>
 
         {/* 
           Global Bottom Navigation:
-          NOW FIXED AT BOTTOM ALWAYS, for both admin and students.
+          NOW FIXED AT BOTTOM in flex layout, for both admin and students.
           Allows instant navigation back or tabs swap!
         */}
         {auth.role !== null && (
           <nav 
-            className="absolute bottom-0 left-0 right-0 bg-white dark:bg-[#111827] border-t border-slate-200 dark:border-slate-800 py-3 px-4 sm:px-6 flex justify-around items-center z-30 shadow-lg"
+            className="bg-white dark:bg-[#111827] border-t border-slate-200 dark:border-slate-800 py-2.5 px-4 sm:px-6 flex justify-around items-center z-30 shrink-0 shadow-lg"
             id="bottom-navigation-bar"
           >
             {/* Nav Tab 1: Dashboard */}
