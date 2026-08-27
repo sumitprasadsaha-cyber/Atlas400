@@ -1,4 +1,5 @@
 import { ClassNote, Student } from "../types";
+import { filterClassNotesForStudent } from "../utils/classNoteHelper";
 import {
   saveClassNoteDoc,
   deleteClassNoteDoc,
@@ -312,62 +313,12 @@ export async function deleteNotePipeline(noteId: string, note?: ClassNote): Prom
  * STUDENT NOTES QUERY & FILTERING
  * Students only receive notes matching:
  * • enrolled class
- * • enrolled subject
+ * • enrolled subject (with aliases, teach mode, and UPSC GS paper resolution)
  * • assigned GS paper (for UPSC)
  * • chapter / module permissions
  * Excludes hidden and deleted notes.
  */
 export function getFilteredStudentNotes(student: Student, allNotes: ClassNote[]): ClassNote[] {
   if (!student || !Array.isArray(allNotes)) return [];
-
-  const studentClassNorm = normalizeClassGrade(student.classGrade || "");
-  const isUPSC = studentClassNorm.toUpperCase().includes("UPSC");
-
-  // Normalize enrolled subjects
-  const enrolledSubjects = new Set(
-    (student.enrolledSubjects || []).map((s) => s.trim().toLowerCase())
-  );
-
-  return allNotes.filter((note) => {
-    // 1. Exclude deleted or hidden notes
-    if (!note || !note.id) return false;
-    if ((note as any).isDeleted === true || (note as any).status === "deleted" || (note as any).deleted === true) {
-      return false;
-    }
-    if ((note as any).hidden === true || (note as any).visibility === "hidden") {
-      return false;
-    }
-
-    // 2. Must match enrolled class
-    const noteClassNorm = normalizeClassGrade(note.classGrade || (note as any).class || "");
-    if (noteClassNorm.toLowerCase() !== studentClassNorm.toLowerCase()) {
-      return false;
-    }
-
-    // 3. Subject matching
-    const noteSubjectNorm = (note.subject || "").trim().toLowerCase();
-    if (enrolledSubjects.size > 0 && !enrolledSubjects.has(noteSubjectNorm)) {
-      return false;
-    }
-
-    // 4. GS Paper matching (if UPSC)
-    if (isUPSC) {
-      const studentGsPaper = (student as any).generalStudiesPaper || (student as any).gsPaper || "";
-      const noteGsPaper = note.generalStudiesPaper || (note as any).gs_paper || (note as any).gsPaper || "";
-      if (studentGsPaper && noteGsPaper) {
-        if (studentGsPaper.trim().toLowerCase() !== noteGsPaper.trim().toLowerCase()) {
-          return false;
-        }
-      }
-    }
-
-    // 5. Allowed student list / permissions (if explicitly constrained)
-    if (Array.isArray((note as any).allowedStudentIds) && (note as any).allowedStudentIds.length > 0) {
-      if (!(note as any).allowedStudentIds.includes(student.id)) {
-        return false;
-      }
-    }
-
-    return true;
-  });
+  return filterClassNotesForStudent(allNotes, student);
 }
