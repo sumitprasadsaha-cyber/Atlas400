@@ -1,8 +1,8 @@
 {
   "name": "Academy Connect",
   "short_name": "Academy",
-  "version": "5.0.3",
-  "description": "Academy Connect Tuition Management Atlas 5.0.3",
+  "version": "5.0.4",
+  "description": "Academy Connect Tuition Management Atlas 5.0.4",
   "theme_color": "#2563eb",
   "background_color": "#ffffff",
   "display": "standalone",

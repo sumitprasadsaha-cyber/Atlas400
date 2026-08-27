@@ -23,7 +23,8 @@ import {
   Loader2,
   Layers,
   Folder,
-  Bookmark
+  Bookmark,
+  Lock
 } from "lucide-react";
 import { ClassNote, Student } from "../types";
 import { uploadNotePipeline, replaceNotePipeline, deleteNotePipeline } from "../lib/notesService";
@@ -133,6 +134,26 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
   const [selectedClassesForAccess, setSelectedClassesForAccess] = useState<string[]>([]);
   const [isSavingAccess, setIsSavingAccess] = useState(false);
   const [accessMsg, setAccessMsg] = useState("");
+
+  // Add Topic Modal state (Chapter-level quick add)
+  const [addTopicChapter, setAddTopicChapter] = useState<{
+    classGrade: string;
+    subject: string;
+    generalStudiesPaper?: string;
+    moduleNo?: number;
+    moduleName?: string;
+    chapterNo: number;
+    chapterTitle: string;
+    existingParts: ClassNote[];
+  } | null>(null);
+  const [addTopicNo, setAddTopicNo] = useState("");
+  const [addTopicName, setAddTopicName] = useState("");
+  const [addTopicFile, setAddTopicFile] = useState<File | null>(null);
+  const [isUploadingTopic, setIsUploadingTopic] = useState(false);
+  const [addTopicProgress, setAddTopicProgress] = useState(0);
+  const [addTopicError, setAddTopicError] = useState("");
+  const [addTopicSuccess, setAddTopicSuccess] = useState("");
+  const addTopicFileInputRef = useRef<HTMLInputElement>(null);
 
   // Note opening loading state
   const [openingNoteId, setOpeningNoteId] = useState<string | null>(null);
@@ -385,6 +406,186 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       setAccessMsg(err?.message || "Failed to save permissions.");
     } finally {
       setIsSavingAccess(false);
+    }
+  };
+
+  // Open Add Topic modal for standard Chapter
+  const handleOpenAddTopicForChapter = (
+    classGrade: string,
+    subject: string,
+    chGroup: { chapterNo: number; chapterName: string; parts: ClassNote[] }
+  ) => {
+    let maxTopic = 0;
+    (chGroup.parts || []).forEach((note) => {
+      const rawTopic = (note as any).topicNo ?? (note as any).topic_number ?? (note as any).chapterPartNo;
+      if (rawTopic !== undefined && rawTopic !== null) {
+        const parsed = parseInt(String(rawTopic).replace(/\D/g, ""), 10);
+        if (!isNaN(parsed) && parsed > maxTopic) maxTopic = parsed;
+      }
+      if (note.partLabel) {
+        const match = note.partLabel.match(/(?:topic|part)\s*(\d+)/i);
+        if (match) {
+          const parsed = parseInt(match[1], 10);
+          if (!isNaN(parsed) && parsed > maxTopic) maxTopic = parsed;
+        }
+      }
+    });
+    const nextTopic = maxTopic > 0 ? maxTopic + 1 : (chGroup.parts.length > 0 ? chGroup.parts.length + 1 : 1);
+
+    setAddTopicChapter({
+      classGrade,
+      subject,
+      chapterNo: chGroup.chapterNo,
+      chapterTitle: chGroup.chapterName,
+      existingParts: chGroup.parts,
+    });
+    setAddTopicNo(String(nextTopic));
+    setAddTopicName("");
+    setAddTopicFile(null);
+    setAddTopicError("");
+    setAddTopicSuccess("");
+    setAddTopicProgress(0);
+    if (addTopicFileInputRef.current) addTopicFileInputRef.current.value = "";
+  };
+
+  // Open Add Topic modal for UPSC Chapter
+  const handleOpenAddTopicForUPSCChapter = (
+    gsPaper: string,
+    subject: string,
+    modGroup: { moduleNo: number; moduleTitle: string },
+    chGroup: { chapterNo: number; chapterTitle: string; topics: { topicNo?: string | number; topicLabel: string; note: ClassNote }[] }
+  ) => {
+    let maxTopic = 0;
+    (chGroup.topics || []).forEach((t) => {
+      const rawTopic = t.topicNo || (t.note as any)?.topicNo || (t.note as any)?.topic_number;
+      if (rawTopic) {
+        const parsed = parseInt(String(rawTopic).replace(/\D/g, ""), 10);
+        if (!isNaN(parsed) && parsed > maxTopic) maxTopic = parsed;
+      }
+      if (t.topicLabel) {
+        const match = t.topicLabel.match(/(?:topic|part)\s*(\d+)/i);
+        if (match) {
+          const parsed = parseInt(match[1], 10);
+          if (!isNaN(parsed) && parsed > maxTopic) maxTopic = parsed;
+        }
+      }
+    });
+    const nextTopic = maxTopic > 0 ? maxTopic + 1 : (chGroup.topics.length > 0 ? chGroup.topics.length + 1 : 1);
+
+    setAddTopicChapter({
+      classGrade: "UPSC",
+      subject,
+      generalStudiesPaper: gsPaper,
+      moduleNo: modGroup.moduleNo,
+      moduleName: modGroup.moduleTitle,
+      chapterNo: chGroup.chapterNo,
+      chapterTitle: chGroup.chapterTitle,
+      existingParts: chGroup.topics.map((t) => t.note),
+    });
+    setAddTopicNo(String(nextTopic));
+    setAddTopicName("");
+    setAddTopicFile(null);
+    setAddTopicError("");
+    setAddTopicSuccess("");
+    setAddTopicProgress(0);
+    if (addTopicFileInputRef.current) addTopicFileInputRef.current.value = "";
+  };
+
+  // Handle Save in Add Topic modal
+  const handleUploadTopicSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addTopicChapter) return;
+    setAddTopicError("");
+    setAddTopicSuccess("");
+
+    if (!addTopicFile) {
+      setAddTopicError("Please select a PDF document or Image file to upload.");
+      return;
+    }
+
+    const isPdf = addTopicFile.type === "application/pdf" || addTopicFile.name.toLowerCase().endsWith(".pdf");
+    const isImg = addTopicFile.type.startsWith("image/") || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(addTopicFile.name);
+
+    if (!isPdf && !isImg) {
+      setAddTopicError("Unsupported file type. Please choose a PDF (.pdf) or Image (.jpg, .png, .webp).");
+      return;
+    }
+
+    setIsUploadingTopic(true);
+    setAddTopicProgress(15);
+
+    try {
+      const cleanTopicNo = addTopicNo.trim();
+      const cleanTopicName = addTopicName.trim();
+      let computedLabel = "";
+      if (cleanTopicNo && cleanTopicName) {
+        computedLabel = `Topic ${cleanTopicNo} – ${cleanTopicName}`;
+      } else if (cleanTopicNo) {
+        computedLabel = `Topic ${cleanTopicNo}`;
+      } else if (cleanTopicName) {
+        computedLabel = cleanTopicName;
+      }
+
+      const isUPSCClass = normalizeClassGrade(addTopicChapter.classGrade) === "UPSC";
+
+      await uploadNotePipeline({
+        file: addTopicFile,
+        classGrade: addTopicChapter.classGrade,
+        subject: addTopicChapter.subject,
+        generalStudiesPaper: addTopicChapter.generalStudiesPaper,
+        chapterNo: addTopicChapter.chapterNo,
+        chapterName: addTopicChapter.chapterTitle,
+        moduleNo: addTopicChapter.moduleNo,
+        moduleName: addTopicChapter.moduleName,
+        topicNo: cleanTopicNo || undefined,
+        topicName: cleanTopicName || undefined,
+        partLabel: computedLabel || undefined,
+        uploadedBy: "Admin",
+        onProgress: (percent) => setAddTopicProgress(percent),
+      });
+
+      setAddTopicProgress(100);
+      setAddTopicSuccess("Topic uploaded successfully!");
+
+      // Ensure chapter and parents remain expanded
+      const clsKey = addTopicChapter.classGrade;
+      const subjKey = isUPSCClass
+        ? `UPSC_${addTopicChapter.generalStudiesPaper}_${addTopicChapter.subject}`
+        : `${addTopicChapter.classGrade}_${addTopicChapter.subject}`;
+      
+      const chKey = isUPSCClass
+        ? `UPSC_${addTopicChapter.generalStudiesPaper}_${addTopicChapter.subject}_Mod${addTopicChapter.moduleNo}_Ch${addTopicChapter.chapterNo}`
+        : `${addTopicChapter.classGrade}_${addTopicChapter.subject}_Ch${addTopicChapter.chapterNo}_${addTopicChapter.chapterTitle}`;
+
+      if (isUPSCClass && addTopicChapter.generalStudiesPaper) {
+        const gsKey = `UPSC_${addTopicChapter.generalStudiesPaper}`;
+        setExpandedGSPapers((prev) => ({ ...prev, [gsKey]: true }));
+        if (addTopicChapter.moduleNo !== undefined) {
+          const modKey = `UPSC_${addTopicChapter.generalStudiesPaper}_${addTopicChapter.subject}_Mod${addTopicChapter.moduleNo}`;
+          setExpandedModules((prev) => ({ ...prev, [modKey]: true }));
+        }
+      }
+      setExpandedClasses((prev) => ({ ...prev, [clsKey]: true }));
+      setExpandedSubjects((prev) => ({ ...prev, [subjKey]: true }));
+      setExpandedChapters((prev) => ({ ...prev, [chKey]: true }));
+
+      // Trigger refresh if provided
+      if (onRefresh) onRefresh();
+
+      setTimeout(() => {
+        setAddTopicChapter(null);
+        setAddTopicFile(null);
+        setAddTopicNo("");
+        setAddTopicName("");
+        setAddTopicError("");
+        setAddTopicSuccess("");
+        setIsUploadingTopic(false);
+        if (addTopicFileInputRef.current) addTopicFileInputRef.current.value = "";
+      }, 700);
+    } catch (err: any) {
+      console.error("[AdminNotesView] Add topic upload error:", err);
+      setAddTopicError(err?.message || "Failed to upload topic. Please check your connection and try again.");
+      setIsUploadingTopic(false);
     }
   };
 
@@ -1090,6 +1291,19 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                                                           </button>
 
                                                           <div className="flex items-center gap-2 shrink-0">
+                                                            {/* ➕ Add Topic Button */}
+                                                            <button
+                                                              type="button"
+                                                              onClick={() => handleOpenAddTopicForUPSCChapter(gsGroup.gsPaper, subjGroup.subject, modGroup, chGroup)}
+                                                              className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/80 border border-emerald-300 dark:border-emerald-700/60 transition-all cursor-pointer text-xs font-bold flex items-center gap-1 shadow-2xs"
+                                                              title="Add a new topic note to this Chapter"
+                                                              id={`add-topic-btn-upsc-${gsGroup.gsPaper}-${subjGroup.subject}-${chGroup.chapterNo}`}
+                                                            >
+                                                              <Plus className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 stroke-[2.5]" />
+                                                              <span className="hidden sm:inline">Add Topic</span>
+                                                              <span className="sm:hidden">Add</span>
+                                                            </button>
+
                                                             {/* Manage Access Button */}
                                                             <button
                                                               type="button"
@@ -1321,6 +1535,19 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                                       </button>
 
                                       <div className="flex items-center gap-2 shrink-0">
+                                        {/* ➕ Add Topic Button */}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenAddTopicForChapter(clsGroup.classGrade, subjGroup.subject, chGroup)}
+                                          className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/80 border border-emerald-300 dark:border-emerald-700/60 transition-all cursor-pointer text-xs font-bold flex items-center gap-1.5 shadow-2xs"
+                                          title="Add a new topic note to this Chapter"
+                                          id={`add-topic-btn-${clsGroup.classGrade}-${subjGroup.subject}-${chGroup.chapterNo}`}
+                                        >
+                                          <Plus className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 stroke-[2.5]" />
+                                          <span className="hidden sm:inline">Add Topic</span>
+                                          <span className="sm:hidden">Add</span>
+                                        </button>
+
                                         {/* Manage Access Button for Chapter */}
                                         <button
                                           type="button"
@@ -2205,6 +2432,209 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* LIGHTWEIGHT UPLOAD TOPIC MODAL                       */}
+      {/* ==================================================== */}
+      {addTopicChapter && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-lg shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="px-5 py-3.5 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
+                <div className="p-1.5 bg-emerald-100 dark:bg-emerald-950/60 rounded-lg text-emerald-600 dark:text-emerald-400">
+                  <Plus className="w-4 h-4 stroke-[3]" />
+                </div>
+                <span>Upload Topic</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isUploadingTopic) {
+                    setAddTopicChapter(null);
+                    setAddTopicError("");
+                    setAddTopicSuccess("");
+                  }
+                }}
+                disabled={isUploadingTopic}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-lg transition-colors disabled:opacity-40"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleUploadTopicSave} className="p-5 space-y-4 overflow-y-auto">
+              {/* Inherited Context (Read Only) */}
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200/80 dark:border-slate-700/80 space-y-2">
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                  <Lock className="w-3 h-3" />
+                  <span>Target Chapter (Inherited • Read Only)</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 block">Class</span>
+                    <span className="font-extrabold text-slate-800 dark:text-slate-100">
+                      {addTopicChapter.classGrade}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 block">Subject</span>
+                    <span className="font-extrabold text-slate-800 dark:text-slate-100">
+                      {addTopicChapter.subject}
+                    </span>
+                  </div>
+                </div>
+
+                {addTopicChapter.generalStudiesPaper && (
+                  <div className="text-xs pt-1 border-t border-slate-200/60 dark:border-slate-700/60">
+                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 block">GS Paper & Module</span>
+                    <span className="font-semibold text-slate-700 dark:text-slate-300">
+                      {addTopicChapter.generalStudiesPaper} {addTopicChapter.moduleNo !== undefined ? `• Module ${addTopicChapter.moduleNo}: ${addTopicChapter.moduleName || ""}` : ""}
+                    </span>
+                  </div>
+                )}
+
+                <div className="text-xs pt-1 border-t border-slate-200/60 dark:border-slate-700/60">
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 block">Chapter</span>
+                  <span className="font-extrabold text-indigo-700 dark:text-indigo-300">
+                    {addTopicChapter.chapterNo} • {addTopicChapter.chapterTitle}
+                  </span>
+                </div>
+              </div>
+
+              {/* Feedback messages */}
+              {addTopicError && (
+                <div className="p-3 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 rounded-xl text-rose-700 dark:text-rose-300 text-xs font-semibold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-500" />
+                  <span>{addTopicError}</span>
+                </div>
+              )}
+
+              {addTopicSuccess && (
+                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 rounded-xl text-emerald-700 dark:text-emerald-300 text-xs font-semibold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+                  <span>{addTopicSuccess}</span>
+                </div>
+              )}
+
+              {/* Editable Fields: Topic Number & Topic Name */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-1">
+                  <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                    Topic Number <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={addTopicNo}
+                    onChange={(e) => setAddTopicNo(e.target.value)}
+                    placeholder="e.g. 5"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    required
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                    Topic Name <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={addTopicName}
+                    onChange={(e) => setAddTopicName(e.target.value)}
+                    placeholder="e.g. Respiration & Energy"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              {/* File Input */}
+              <div>
+                <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                  PDF or Image File <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  ref={addTopicFileInputRef}
+                  type="file"
+                  accept="application/pdf,image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+                      const isImg = file.type.startsWith("image/") || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(file.name);
+                      if (!isPdf && !isImg) {
+                        setAddTopicError("Please select a valid PDF document or Image file.");
+                        setAddTopicFile(null);
+                        return;
+                      }
+                      setAddTopicFile(file);
+                      setAddTopicError("");
+                    }
+                  }}
+                  className="w-full text-xs text-slate-500 dark:text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 dark:file:bg-slate-800 dark:file:text-slate-200 cursor-pointer"
+                  required
+                />
+                {addTopicFile && (
+                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold block mt-1">
+                    Selected: {addTopicFile.name} ({(addTopicFile.size / (1024 * 1024)).toFixed(2)} MB)
+                  </span>
+                )}
+              </div>
+
+              {/* Upload Progress Bar */}
+              {isUploadingTopic && (
+                <div className="space-y-1 pt-1">
+                  <div className="flex items-center justify-between text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                    <span>Uploading Topic...</span>
+                    <span>{addTopicProgress}%</span>
+                  </div>
+                  <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                    <div
+                      className="bg-emerald-600 h-full transition-all duration-200"
+                      style={{ width: `${addTopicProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddTopicChapter(null);
+                    setAddTopicError("");
+                    setAddTopicSuccess("");
+                  }}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-all cursor-pointer"
+                  disabled={isUploadingTopic}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={isUploadingTopic}
+                  className="px-5 py-2 text-xs font-black uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  {isUploadingTopic ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      Save
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
