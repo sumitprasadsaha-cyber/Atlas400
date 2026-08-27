@@ -7,7 +7,7 @@ export interface ClassNote {
   chapterNo: number;
   chapterName: string;
   
-  // Atlas400 v5.0.7 Hierarchical Fields (School & UPSC)
+  // Atlas400 v5.0.8 Hierarchical Fields (School & UPSC)
   type?: "school" | "upsc";
   classId?: string; // e.g. "class-9" or "upsc"
   className?: string; // e.g. "Class 9" or "UPSC"
@@ -26,7 +26,7 @@ export interface ClassNote {
     allowedClasses?: string[];
   };
   searchableText?: string;
-  version?: string; // e.g. "5.0.7"
+  version?: string; // e.g. "5.0.8"
 
   // UPSC specific fields
   paper?: string; // e.g. "General Studies Paper II"
@@ -34,8 +34,8 @@ export interface ClassNote {
   moduleName?: string; // alias for UPSC module_name
   module_number?: number; // exact UPSC metadata specification
   module_name?: string; // exact UPSC metadata specification
-  moduleNumber?: number; // canonical v5.0.7
-  moduleTitle?: string; // canonical v5.0.7
+  moduleNumber?: number; // canonical v5.0.8
+  moduleTitle?: string; // canonical v5.0.8
   generalStudiesPaper?: string; // e.g. "General Studies Paper I", "General Studies Paper II", "General Studies Paper III", "General Studies Paper IV", "Essay", "CSAT" (UPSC only)
   gs_paper?: string; // exact UPSC metadata specification
   partLabel?: string; // e.g. "Topic 1", "Topic 2", or legacy part label

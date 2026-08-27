@@ -12,6 +12,9 @@ import {
 import { getFirebaseDb, OperationType, handleFirestoreError } from "./firebase";
 import { Student, ClassNote, TestAttemptRecord } from "../types";
 import { migrateNoteToHierarchy } from "../utils/notesHierarchyHelper";
+import { notesCacheService } from "./notesCacheService";
+import { notesLogger } from "./notesLogger";
+import { sortNotesByTopicNumber } from "../utils/notesValidation";
 import { 
   safeLocalStorageSetItem as safeSetStorage, 
   safeLocalStorageGetItem as safeGetStorage,
@@ -1317,34 +1320,47 @@ export function getLocalClassNotes(): ClassNote[] {
     return inMemoryClassNotesCache;
   }
   if (typeof window === "undefined") return inMemoryClassNotesCache || [];
+
+  // Try local memory/storage first
   const cached = localStorage.getItem(STORAGE_KEY_CLASS_NOTES);
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
       if (Array.isArray(parsed)) {
-        inMemoryClassNotesCache = parsed.map(migrateNoteToHierarchy);
+        inMemoryClassNotesCache = parsed.map(migrateNoteToHierarchy).sort(sortNotesByTopicNumber);
         return inMemoryClassNotesCache;
       }
     } catch (e) {
       console.error("Failed to parse local class notes", e);
     }
   }
+
+  // Background hydrate from IndexedDB cache
+  notesCacheService.getCachedNotes().then((idbNotes) => {
+    if (idbNotes && Array.isArray(idbNotes) && idbNotes.length > 0) {
+      if (!inMemoryClassNotesCache || inMemoryClassNotesCache.length === 0) {
+        saveLocalClassNotes(idbNotes);
+      }
+    }
+  }).catch(() => {});
+
   return inMemoryClassNotesCache || [];
 }
 
 export function saveLocalClassNotes(notes: ClassNote[]) {
   if (typeof window === "undefined" || !Array.isArray(notes)) return;
   
-  const migratedNotes = notes.map(migrateNoteToHierarchy);
+  const migratedNotes = notes.map(migrateNoteToHierarchy).sort(sortNotesByTopicNumber);
 
   // Prevent duplicate state emissions if the dataset is unchanged
   if (areClassNotesEqual(inMemoryClassNotesCache, migratedNotes)) {
     return;
   }
 
-  // Atomically update memory cache and persistent storage
+  // Atomically update memory cache, persistent local storage, and IndexedDB
   inMemoryClassNotesCache = migratedNotes;
   safeSetStorage(STORAGE_KEY_CLASS_NOTES, JSON.stringify(migratedNotes));
+  notesCacheService.setCachedNotes(migratedNotes).catch(() => {});
 
   // Notify all registered UI listeners with the stable reference
   classNotesListeners.forEach((listener) => {

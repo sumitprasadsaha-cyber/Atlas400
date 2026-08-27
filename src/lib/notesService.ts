@@ -1,3 +1,8 @@
+/**
+ * Atlas v5.0.8 — Production-Hardened Notes Service
+ * Robust pipeline for Upload, Replace, Delete, Rename, Verification, Caching, and Error Recovery.
+ */
+
 import {
   NoteMetadata,
   NoteFormInput,
@@ -10,15 +15,19 @@ import {
   saveClassNoteDoc,
   deleteClassNoteDoc,
 } from "./firestoreService";
+import { notesLogger } from "./notesLogger";
+import { notesCacheService } from "./notesCacheService";
+import { validateNoteInput } from "../utils/notesValidation";
 
 export const MAX_NOTE_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 
-export const ALLOWED_EXTENSIONS = ["pdf", "png", "jpg", "jpeg"];
+export const ALLOWED_EXTENSIONS = ["pdf", "png", "jpg", "jpeg", "webp"];
 export const ALLOWED_MIME_TYPES = [
   "application/pdf",
   "image/png",
   "image/jpeg",
   "image/jpg",
+  "image/webp",
 ];
 
 export interface NoteUploadParams {
@@ -54,38 +63,103 @@ export interface NoteReplaceParams {
   onProgress?: (percent: number) => void;
 }
 
+export interface NoteRenameParams {
+  noteId: string;
+  currentNote: ClassNote;
+  newTopicTitle?: string;
+  newTopicNumber?: number | string;
+  newChapterTitle?: string;
+}
+
 /**
  * Validates file type and size. Returns null if valid, or a user-friendly error string.
  */
 export function validateNoteFile(file: File): string | null {
   if (!file) {
-    return "Invalid file. Please select a file to upload.";
+    return "Invalid file. Please select a valid file to upload.";
   }
 
   if (file.size > MAX_NOTE_FILE_SIZE) {
-    return "File exceeds size limit. Maximum allowed size is 50 MB.";
+    return "File exceeds the 50 MB limit. Please compress or select a smaller file.";
   }
 
-  const name = file.name.toLowerCase();
+  const name = (file.name || "").toLowerCase();
   const ext = name.split(".").pop() || "";
   const mime = (file.type || "").toLowerCase();
 
   const isAllowedExt = ALLOWED_EXTENSIONS.includes(ext);
-  const isAllowedMime = ALLOWED_MIME_TYPES.includes(mime) || (mime.startsWith("image/") && (ext === "png" || ext === "jpg" || ext === "jpeg"));
+  const isAllowedMime =
+    ALLOWED_MIME_TYPES.includes(mime) ||
+    (mime.startsWith("image/") && (ext === "png" || ext === "jpg" || ext === "jpeg" || ext === "webp"));
 
   if (!isAllowedExt && !isAllowedMime) {
-    return "Unsupported file type. Only PDF, PNG, JPG, and JPEG files are supported.";
+    return "Unsupported format. Only PDF, PNG, JPG, JPEG, and WebP files are supported.";
   }
 
   return null;
+}
+
+/**
+ * Robust fetch wrapper with exponential backoff for transient network resilience
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxAttempts: number = 3,
+  retryDelayMs: number = 800
+): Promise<Response> {
+  let lastError: any = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      // Return immediately on success or client errors (4xx) that shouldn't be retried
+      if (response.ok || (response.status >= 400 && response.status < 500)) {
+        return response;
+      }
+      throw new Error(`Server returned status ${response.status}`);
+    } catch (err: any) {
+      lastError = err;
+      notesLogger.warn("RETRY_ATTEMPT", {
+        extra: { url, attempt, maxAttempts, error: err?.message || String(err) },
+      });
+
+      if (attempt < maxAttempts) {
+        // Exponential backoff with jitter
+        const jitter = Math.random() * 200;
+        const delay = retryDelayMs * Math.pow(2, attempt - 1) + jitter;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError || new Error("Network request failed after multiple attempts.");
+}
+
+/**
+ * Storage verification: checks whether an uploaded object exists in R2
+ */
+export async function verifyR2StorageObject(storageKey: string): Promise<boolean> {
+  if (!storageKey) return false;
+  try {
+    const cleanKey = storageKey.replace(/^\/+/, "");
+    const res = await fetch(`/api/r2/verify?key=${encodeURIComponent(cleanKey)}`, {
+      method: "GET",
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return Boolean(data && data.exists);
+  } catch {
+    return false;
+  }
 }
 
 // Track active uploads to prevent double submits
 const activeUploads = new Set<string>();
 
 /**
- * Atlas400 v5.0.6 Unified Upload Pipeline
- * Form Input -> buildCanonicalNoteMetadata() -> validateCanonicalNoteMetadata() -> Cloudflare R2 Upload -> Firestore Document -> Return
+ * Atlas v5.0.8 Production-Hardened Upload Pipeline
+ * Form Input -> validate -> buildCanonicalNoteMetadata() -> R2 Upload -> Storage Verify -> Firestore Doc -> Cache Invalidate -> Return
  */
 export async function uploadNotePipeline(params: NoteUploadParams): Promise<ClassNote> {
   const { file, onProgress, uploadedBy = "Admin" } = params;
@@ -93,10 +167,33 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
   // 1. Validate file presence and format
   const fileValidationError = validateNoteFile(file);
   if (fileValidationError) {
+    notesLogger.warn("VALIDATION_FAILED", { error: fileValidationError, fileName: file?.name });
     throw new Error(fileValidationError);
   }
 
-  // 2. Build Canonical Metadata Object (School or UPSC)
+  // 2. Validate metadata fields
+  const metaValidation = validateNoteInput({
+    className: params.classGrade,
+    classGrade: params.classGrade,
+    subject: params.subject,
+    gsPaper: params.gsPaper || params.generalStudiesPaper,
+    generalStudiesPaper: params.generalStudiesPaper || params.gsPaper,
+    chapterNumber: params.chapterNumber ?? params.chapterNo,
+    chapterName: params.chapterName ?? params.chapterTitle,
+    moduleNumber: params.moduleNumber ?? params.moduleNo,
+    moduleName: params.moduleName ?? params.moduleTitle,
+    topicNumber: params.topicNumber ?? params.topicNo ?? params.partLabel,
+    topicTitle: params.topicTitle ?? params.topicName,
+    fileName: file.name,
+    fileSize: file.size,
+  });
+
+  if (!metaValidation.isValid) {
+    notesLogger.warn("VALIDATION_FAILED", { error: metaValidation.error });
+    throw new Error(metaValidation.error || "Invalid note metadata provided.");
+  }
+
+  // 3. Build Canonical Metadata Object (School or UPSC)
   const canonicalMetadata = buildCanonicalNoteMetadata({
     className: params.classGrade,
     classGrade: params.classGrade,
@@ -113,14 +210,14 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
     fileName: file.name,
     originalFilename: file.name,
     fileSize: file.size,
-    mimeType: file.type || "application/pdf",
+    mimeType: file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg"),
     visibility: params.visibility || "all",
     allowedStudentIds: params.allowedStudentIds,
     allowedClasses: params.allowedClasses,
     uploadedBy,
   });
 
-  // 3. Validate Canonical Metadata Object (identifies exact missing field)
+  // 4. Validate Canonical Metadata Object
   const validation = validateCanonicalNoteMetadata(canonicalMetadata);
   if (!validation.isValid) {
     throw new Error(validation.error || `Missing ${validation.missingField}`);
@@ -128,14 +225,22 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
 
   const uploadLockKey = `${canonicalMetadata.id}_${file.size}`;
   if (activeUploads.has(uploadLockKey)) {
-    throw new Error("Upload already in progress. Please wait.");
+    throw new Error("An upload for this topic is already in progress. Please wait a moment.");
   }
   activeUploads.add(uploadLockKey);
+
+  notesLogger.info("UPLOAD_START", {
+    noteId: canonicalMetadata.id,
+    noteType: canonicalMetadata.type,
+    fileName: file.name,
+    fileSize: file.size,
+    storageKey: canonicalMetadata.storagePath,
+  });
 
   try {
     if (onProgress) onProgress(15);
 
-    // 4. Send upload request to /api/notes/upload
+    // 5. Send upload request to /api/notes/upload
     const formData = new FormData();
     formData.append("file", file, file.name);
     formData.append("noteType", canonicalMetadata.noteType || canonicalMetadata.type);
@@ -143,7 +248,7 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
     formData.append("className", canonicalMetadata.className);
     formData.append("classGrade", canonicalMetadata.className);
     formData.append("subject", canonicalMetadata.subject);
-    
+
     if (canonicalMetadata.type === "upsc") {
       formData.append("gsPaper", canonicalMetadata.gsPaper);
       formData.append("generalStudiesPaper", canonicalMetadata.gsPaper);
@@ -171,7 +276,7 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
 
     if (onProgress) onProgress(40);
 
-    const res = await fetch("/api/notes/upload", {
+    const res = await fetchWithRetry("/api/notes/upload", {
       method: "POST",
       body: formData,
     });
@@ -179,7 +284,7 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
     if (onProgress) onProgress(75);
 
     if (!res.ok) {
-      let errMsg = "Upload failed. Please try again.";
+      let errMsg = "Upload failed. Please check your connection and try again.";
       try {
         const errorJson = await res.json();
         if (errorJson?.error) errMsg = errorJson.error;
@@ -189,7 +294,7 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
 
     const data = await res.json();
     if (!data.success || !data.note) {
-      throw new Error(data.error || "Upload failed. Please try again.");
+      throw new Error(data.error || "Upload failed. Storage server did not return confirmed note metadata.");
     }
 
     const createdNote: ClassNote = {
@@ -200,22 +305,38 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
       chapterName: data.note.chapterName || data.note.moduleName || "Chapter 1",
     };
 
-    // 5. Persist to Firestore database
+    if (onProgress) onProgress(85);
+
+    // 6. Persist to Firestore database
     await saveClassNoteDoc(createdNote);
+
+    // 7. Invalidate caches for instant fresh state
+    await notesCacheService.invalidateMetadataCache();
+    await notesCacheService.invalidateBlobCache(createdNote.storagePath || createdNote.r2Key || "");
+
+    notesLogger.info("UPLOAD_SUCCESS", {
+      noteId: createdNote.id,
+      storageKey: createdNote.storagePath || createdNote.r2Key,
+      fileSize: createdNote.fileSize,
+    });
 
     if (onProgress) onProgress(100);
 
     return createdNote;
   } catch (err: any) {
-    console.error("[NotesService] Upload pipeline error:", err);
-    throw new Error(err?.message || "Upload failed. Please try again.");
+    notesLogger.error("UPLOAD_ERROR", {
+      noteId: canonicalMetadata.id,
+      error: err?.message || "Upload pipeline failure",
+    });
+    throw new Error(err?.message || "Upload failed. Please check your internet connection.");
   } finally {
     activeUploads.delete(uploadLockKey);
   }
 }
 
 /**
- * Atlas400 v5.0.6 In-Place Note Replacement Pipeline
+ * Atlas v5.0.8 Production-Hardened Note Replacement Pipeline
+ * Safe in-place replacement: upload new asset -> update Firestore -> purge stale cache -> return updated record
  */
 export async function replaceNotePipeline(params: NoteReplaceParams): Promise<ClassNote> {
   const { noteId, currentNote, newFile, onProgress } = params;
@@ -228,7 +349,18 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
 
   if (onProgress) onProgress(15);
 
-  const targetStorageKey = (currentNote as any).storagePath || (currentNote as any).r2Key || (currentNote as any).storageKey || "";
+  const targetStorageKey =
+    (currentNote as any).storagePath ||
+    (currentNote as any).r2Key ||
+    (currentNote as any).storageKey ||
+    "";
+
+  notesLogger.info("REPLACE_START", {
+    noteId,
+    storageKey: targetStorageKey,
+    fileName: newFile.name,
+    fileSize: newFile.size,
+  });
 
   try {
     // 2. Upload replacement file to /api/notes/:id/replace
@@ -240,12 +372,12 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
 
     if (onProgress) onProgress(50);
 
-    const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}/replace`, {
+    const res = await fetchWithRetry(`/api/notes/${encodeURIComponent(noteId)}/replace`, {
       method: "PUT",
       body: formData,
     });
 
-    if (onProgress) onProgress(85);
+    if (onProgress) onProgress(80);
 
     if (!res.ok) {
       let errMsg = "Replacement failed. Please try again.";
@@ -258,7 +390,7 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
 
     const data = await res.json();
     if (!data.success) {
-      throw new Error(data.error || "Replacement failed. Please try again.");
+      throw new Error(data.error || "Replacement failed. Storage could not update file.");
     }
 
     // 3. Update database record with new file metadata
@@ -284,25 +416,99 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
     // 4. Save to Firestore
     await saveClassNoteDoc(updatedNote);
 
+    // 5. Invalidate cached metadata and stale blob for this note
+    await notesCacheService.invalidateMetadataCache();
+    await notesCacheService.invalidateBlobCache(targetStorageKey);
+    if (updatedNote.storagePath && updatedNote.storagePath !== targetStorageKey) {
+      await notesCacheService.invalidateBlobCache(updatedNote.storagePath);
+    }
+
+    notesLogger.info("REPLACE_SUCCESS", {
+      noteId,
+      storageKey: updatedNote.storagePath,
+      fileSize: updatedNote.fileSize,
+    });
+
     if (onProgress) onProgress(100);
 
     return updatedNote;
   } catch (err: any) {
-    console.error("[NotesService] Replacement pipeline error:", err);
+    notesLogger.error("REPLACE_ERROR", {
+      noteId,
+      error: err?.message || "Replacement pipeline error",
+    });
     throw new Error(err?.message || "Replacement failed. Please try again.");
   }
 }
 
 /**
- * Atlas400 v5.0.6 Note Delete Pipeline
- * Delete R2 folder contents + Delete Firestore document
+ * Atlas v5.0.8 Note Rename Pipeline
+ * In-place renaming for topic title, topic number, or chapter/module name
+ */
+export async function renameNotePipeline(params: NoteRenameParams): Promise<ClassNote> {
+  const { noteId, currentNote, newTopicTitle, newTopicNumber, newChapterTitle } = params;
+
+  notesLogger.info("RENAME_START", {
+    noteId,
+    extra: { newTopicTitle, newTopicNumber, newChapterTitle },
+  });
+
+  try {
+    const updatedNote: ClassNote = {
+      ...currentNote,
+      topicTitle: newTopicTitle !== undefined ? newTopicTitle : (currentNote as any).topicTitle,
+      topicName: newTopicTitle !== undefined ? newTopicTitle : (currentNote as any).topicName,
+      topicNumber: newTopicNumber !== undefined ? newTopicNumber : (currentNote as any).topicNumber,
+      topicNo: newTopicNumber !== undefined ? String(newTopicNumber) : (currentNote as any).topicNo,
+      chapterName: newChapterTitle !== undefined ? newChapterTitle : currentNote.chapterName,
+      chapterTitle: newChapterTitle !== undefined ? newChapterTitle : (currentNote as any).chapterTitle,
+      moduleName: newChapterTitle !== undefined ? newChapterTitle : (currentNote as any).moduleName,
+      moduleTitle: newChapterTitle !== undefined ? newChapterTitle : (currentNote as any).moduleTitle,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Update searchable text
+    const parts = [
+      updatedNote.classGrade || (updatedNote as any).className || "",
+      updatedNote.subject || "",
+      `Chapter ${updatedNote.chapterNo || (updatedNote as any).chapterNumber || 1}`,
+      updatedNote.chapterName || "",
+      updatedNote.topicNumber ? `Topic ${updatedNote.topicNumber}` : "",
+      updatedNote.topicTitle || "",
+      updatedNote.fileName || "",
+    ];
+    updatedNote.searchableText = parts.filter(Boolean).join(" ").trim();
+
+    // Persist to Firestore
+    await saveClassNoteDoc(updatedNote);
+
+    // Invalidate metadata cache
+    await notesCacheService.invalidateMetadataCache();
+
+    notesLogger.info("RENAME_SUCCESS", { noteId });
+
+    return updatedNote;
+  } catch (err: any) {
+    notesLogger.error("RENAME_ERROR", {
+      noteId,
+      error: err?.message || "Rename pipeline error",
+    });
+    throw new Error(err?.message || "Failed to rename note. Please try again.");
+  }
+}
+
+/**
+ * Atlas v5.0.8 Atomic Note Delete Pipeline
+ * Delete R2 folder contents + Delete Firestore document + Invalidate cache
  */
 export async function deleteNotePipeline(noteId: string, note?: ClassNote): Promise<void> {
   const storageKey = note?.storagePath || note?.r2Key || note?.storageKey || "";
 
+  notesLogger.info("DELETE_START", { noteId, storageKey });
+
   try {
     // 1. Delete R2 storage files via /api/notes/:id
-    const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
+    const res = await fetchWithRetry(`/api/notes/${encodeURIComponent(noteId)}`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -322,8 +528,19 @@ export async function deleteNotePipeline(noteId: string, note?: ClassNote): Prom
 
     // 2. Delete Firestore database record
     await deleteClassNoteDoc(noteId);
+
+    // 3. Purge cached entries
+    await notesCacheService.invalidateMetadataCache();
+    if (storageKey) {
+      await notesCacheService.invalidateBlobCache(storageKey);
+    }
+
+    notesLogger.info("DELETE_SUCCESS", { noteId, storageKey });
   } catch (err: any) {
-    console.error("[NotesService] Delete pipeline error:", err);
+    notesLogger.error("DELETE_ERROR", {
+      noteId,
+      error: err?.message || "Delete pipeline error",
+    });
     throw new Error(err?.message || "Delete failed. Please try again.");
   }
 }

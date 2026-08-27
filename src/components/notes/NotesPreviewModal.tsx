@@ -1,4 +1,10 @@
-import React, { useState, useEffect } from "react";
+/**
+ * Atlas v5.0.8 — Production-Hardened Notes Preview Modal
+ * Streaming/Cached PDF & Image Viewer with AbortController, Offline Support,
+ * and Native Cache Integration.
+ */
+
+import React, { useState, useEffect, useRef } from "react";
 import { 
   X, 
   Download, 
@@ -10,10 +16,13 @@ import {
   Maximize2, 
   Minimize2,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  CheckCircle2,
+  WifiOff
 } from "lucide-react";
 import { ClassNote, ChapterNote } from "../../types";
-import { isImageFile } from "../../lib/nativePdfService";
+import { isImageFile, fetchNoteBlobWithCache } from "../../lib/nativePdfService";
+import { notesLogger } from "../../lib/notesLogger";
 
 interface NotesPreviewModalProps {
   note: ClassNote | ChapterNote | null;
@@ -33,34 +42,109 @@ export default function NotesPreviewModal({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [hasError, setHasError] = useState(false);
+  const [isCached, setIsCached] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const activeObjectUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
+    // Clean up previous fetch and object URL
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (activeObjectUrlRef.current) {
+      URL.revokeObjectURL(activeObjectUrlRef.current);
+      activeObjectUrlRef.current = null;
+    }
+
     if (!isOpen || !note) {
       setBlobUrl(null);
       setIsLoading(false);
-      setHasError(false);
+      setIsCached(false);
+      setErrorMessage(null);
       setZoom(100);
       setRotation(0);
       return;
     }
 
-    setIsLoading(true);
-    setHasError(false);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
-    const url = note.pdfUrl || (note as any).publicUrl || (note as any).downloadUrl || "";
-    if (url) {
-      setBlobUrl(url);
-      setIsLoading(false);
-    } else {
-      setHasError(true);
-      setIsLoading(false);
-    }
+    setIsLoading(true);
+    setErrorMessage(null);
+    setDownloadProgress(10);
+
+    notesLogger.info("VIEW_OPEN", {
+      noteId: (note as any).id,
+      fileName: note.fileName || (note as any).pdfFileName,
+      storageKey: (note as any).storagePath || (note as any).r2Key,
+    });
+
+    const storageKey =
+      (note as any).storagePath ||
+      (note as any).r2Key ||
+      (note as any).storageKey ||
+      note.pdfUrl ||
+      "";
+
+    const fileName = note.fileName || (note as any).pdfFileName || "note.pdf";
+
+    fetchNoteBlobWithCache(
+      {
+        storageKey,
+        fileName,
+        pdfFileName: fileName,
+        mimeType: (note as any).mimeType,
+        fileType: (note as any).fileType,
+        url: note.pdfUrl,
+      },
+      controller.signal,
+      (percent) => {
+        setDownloadProgress(percent);
+      }
+    )
+      .then((res) => {
+        if (controller.signal.aborted) return;
+        activeObjectUrlRef.current = res.objectUrl;
+        setBlobUrl(res.objectUrl);
+        setIsCached(res.cached);
+        setIsLoading(false);
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        console.warn("[NotesPreviewModal] Blob fetch notice:", err);
+        // Fallback to direct URL if available
+        const fallbackUrl = note.pdfUrl || (note as any).publicUrl || (note as any).downloadUrl;
+        if (fallbackUrl && navigator.onLine) {
+          setBlobUrl(fallbackUrl);
+          setIsLoading(false);
+        } else {
+          setErrorMessage(
+            !navigator.onLine
+              ? "You are currently offline. This note has not been cached yet."
+              : "Unable to load document preview. Please check your connection or download directly."
+          );
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      if (activeObjectUrlRef.current) {
+        URL.revokeObjectURL(activeObjectUrlRef.current);
+      }
+      notesLogger.info("VIEW_CLOSE", { noteId: (note as any)?.id });
+    };
   }, [isOpen, note]);
 
   if (!isOpen || !note) return null;
 
-  const isImg = isImageFile(note.fileName || note.pdfFileName || "");
+  const isImg = isImageFile(note.fileName || (note as any).pdfFileName || "");
   const title = (note as any).topicTitle || (note as any).topicName || note.partLabel || note.chapterName || "Document Preview";
   const subtitle = [
     (note as any).className || note.classGrade,
@@ -102,9 +186,21 @@ export default function NotesPreviewModal({
               <FileText className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100 truncate" title={title}>
-                {title}
-              </h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100 truncate" title={title}>
+                  {title}
+                </h3>
+                {isCached && (
+                  <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40">
+                    <CheckCircle2 className="w-3 h-3" /> Cached
+                  </span>
+                )}
+                {!navigator.onLine && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400 border border-amber-200 dark:border-amber-800/40">
+                    <WifiOff className="w-3 h-3" /> Offline
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                 {subtitle} {note.fileName ? `• ${note.fileName}` : ""}
               </p>
@@ -192,24 +288,26 @@ export default function NotesPreviewModal({
         {/* Content Viewer Body */}
         <div className="relative flex-1 w-full h-full overflow-auto bg-slate-100 dark:bg-slate-950 flex items-center justify-center p-2 sm:p-4">
           {isLoading && (
-            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/70 dark:bg-slate-900/70 backdrop-blur-xs">
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 dark:bg-slate-900/80 backdrop-blur-xs">
               <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
               <p className="mt-3 text-xs font-bold text-slate-600 dark:text-slate-300">
-                Loading document preview...
+                {downloadProgress > 0 && downloadProgress < 100
+                  ? `Loading document... (${downloadProgress}%)`
+                  : "Loading document preview..."}
               </p>
             </div>
           )}
 
-          {hasError || !directUrl ? (
+          {errorMessage || !directUrl ? (
             <div className="flex flex-col items-center justify-center text-center p-6 max-w-md">
               <div className="p-3 bg-amber-50 dark:bg-amber-950/50 rounded-2xl text-amber-600 border border-amber-200 dark:border-amber-900 mb-3">
                 <AlertCircle className="w-8 h-8" />
               </div>
               <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">
-                Preview Unavailable
+                {errorMessage ? "Preview Unavailable" : "No Document URL"}
               </h4>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 mb-4">
-                The document preview could not be loaded directly. You can download the file or open it in a new browser tab.
+                {errorMessage || "The document preview could not be loaded. Please check your internet connection."}
               </p>
               {directUrl && (
                 <a
@@ -218,7 +316,7 @@ export default function NotesPreviewModal({
                   rel="noreferrer"
                   className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors inline-flex items-center gap-2"
                 >
-                  <ExternalLink className="w-4 h-4" /> Open File
+                  <ExternalLink className="w-4 h-4" /> Try Direct Link
                 </a>
               )}
             </div>
@@ -234,7 +332,7 @@ export default function NotesPreviewModal({
                 onLoad={() => setIsLoading(false)}
                 onError={() => {
                   setIsLoading(false);
-                  setHasError(true);
+                  setErrorMessage("Failed to render image format.");
                 }}
               />
             </div>
@@ -246,7 +344,7 @@ export default function NotesPreviewModal({
               onLoad={() => setIsLoading(false)}
               onError={() => {
                 setIsLoading(false);
-                setHasError(true);
+                setErrorMessage("Failed to render PDF format in embedded frame.");
               }}
             />
           )}

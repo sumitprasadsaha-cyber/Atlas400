@@ -1,5 +1,5 @@
 /**
- * Atlas400 v5.0.7 — Notes Storage Refactor (Final Architecture)
+ * Atlas400 v5.0.8 — Notes Storage Refactor (Final Architecture)
  * Single Canonical Source of Truth for Notes Domain Model
  * 
  * Supported Types:
@@ -64,7 +64,7 @@ export interface SchoolNote {
   createdAt: string;
   updatedAt: string;
   searchableText: string;
-  version: "5.0.7";
+  version: "5.0.8";
 
   // Compatibility aliases strictly mapped from canonical fields
   classGrade: string;
@@ -111,7 +111,7 @@ export interface UPSCNote {
   createdAt: string;
   updatedAt: string;
   searchableText: string;
-  version: "5.0.7";
+  version: "5.0.8";
 
   // Compatibility aliases strictly mapped from canonical fields
   classGrade: "UPSC";
@@ -521,7 +521,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       createdAt,
       updatedAt,
       searchableText,
-      version: "5.0.7",
+      version: "5.0.8",
 
       // Compatibility aliases
       classGrade: "UPSC",
@@ -584,7 +584,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       createdAt,
       updatedAt,
       searchableText,
-      version: "5.0.7",
+      version: "5.0.8",
 
       // Compatibility aliases
       classGrade: classInfo.className,

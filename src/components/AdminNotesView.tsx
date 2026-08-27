@@ -9,8 +9,8 @@ interface AdminNotesViewProps {
 }
 
 /**
- * Atlas v5.0.7 — Modern Hierarchical Notes Management System
- * Completely redesigned Google Drive / Notion-style Notes Manager
+ * Atlas v5.0.8 — Modern Hierarchical Notes Management System
+ * Production-Hardened Google Drive / Notion-style Notes Manager
  */
 export default function AdminNotesView({
   notes = [],

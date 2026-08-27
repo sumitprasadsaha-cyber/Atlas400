@@ -1,6 +1,15 @@
+/**
+ * Atlas v5.0.8 — High-Performance Native File Loading & Offline Service
+ * Intelligent binary caching, stream loading with AbortController, offline fallback,
+ * and native viewer integration.
+ */
+
 import { Capacitor } from "@capacitor/core";
 import { Browser } from "@capacitor/browser";
 import { openNote, resolveDirectNoteUrl, getNoteMimeType, NoteOpeningTarget } from "./noteOpener";
+import { notesCacheService } from "./notesCacheService";
+import { notesLogger } from "./notesLogger";
+import { ClassNote } from "../types";
 
 export { openNote, resolveDirectNoteUrl, getNoteMimeType };
 
@@ -38,8 +47,9 @@ export interface OpenPdfResult {
   message?: string;
   signedUrl?: string;
   isNative?: boolean;
-  blob?: any;
+  blob?: Blob;
   objectUrl?: string;
+  cached?: boolean;
 }
 
 /**
@@ -111,8 +121,144 @@ export function getMimeType(fileNameOrUrl: string, mimeType?: string, isImg?: bo
 }
 
 /**
+ * Fetches note binary data with intelligent IndexedDB cache and AbortSignal support.
+ */
+export async function fetchNoteBlobWithCache(
+  options: OpenPdfOptions,
+  signal?: AbortSignal,
+  onProgress?: (percent: number) => void
+): Promise<{ blob: Blob; mimeType: string; fileName: string; objectUrl: string; cached: boolean }> {
+  const storageKey =
+    options.storageKey ||
+    options.storagePath ||
+    options.r2Key ||
+    options.key ||
+    options.url ||
+    "";
+  const fileName = options.fileName || options.pdfFileName || options.filename || "note.pdf";
+  const mimeType = getNoteMimeType(fileName, options.mimeType, options.fileType);
+
+  // 1. Check offline / IndexedDB cache first
+  const cached = await notesCacheService.getCachedBlob(storageKey);
+  if (cached) {
+    notesLogger.info("DOWNLOAD_CACHED", { storageKey, fileName });
+    if (onProgress) onProgress(100);
+    const objectUrl = URL.createObjectURL(cached.blob);
+    return {
+      blob: cached.blob,
+      mimeType: cached.mimeType || mimeType,
+      fileName: cached.fileName || fileName,
+      objectUrl,
+      cached: true,
+    };
+  }
+
+  // 2. If offline and not in cache, throw helpful offline error
+  if (!notesCacheService.getOnlineStatus()) {
+    throw new Error("You are currently offline. This note has not been cached for offline reading yet.");
+  }
+
+  notesLogger.info("DOWNLOAD_START", { storageKey, fileName });
+
+  // 3. Resolve direct URL to download
+  let targetUrl = "";
+  try {
+    targetUrl = await resolveDirectNoteUrl(options);
+  } catch {
+    // Fallback to streaming download proxy if direct signed URL fails
+    targetUrl = `/api/r2/download?key=${encodeURIComponent(storageKey.replace(/^\/+/, ""))}`;
+  }
+
+  if (onProgress) onProgress(20);
+
+  // 4. Stream response with progress and abort support
+  const response = await fetch(targetUrl, { signal });
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error("File not found in cloud storage.");
+    }
+    throw new Error(`Failed to load note (Server returned status ${response.status}).`);
+  }
+
+  if (onProgress) onProgress(60);
+
+  const blob = await response.blob();
+
+  if (onProgress) onProgress(90);
+
+  // 5. Store in local cache for instant future retrieval & offline access
+  await notesCacheService.setCachedBlob({
+    key: storageKey,
+    blob,
+    mimeType,
+    fileName,
+  });
+
+  const objectUrl = URL.createObjectURL(blob);
+
+  notesLogger.info("DOWNLOAD_SUCCESS", {
+    storageKey,
+    fileName,
+    fileSize: blob.size,
+  });
+
+  if (onProgress) onProgress(100);
+
+  return {
+    blob,
+    mimeType,
+    fileName,
+    objectUrl,
+    cached: false,
+  };
+}
+
+/**
+ * Background preloads adjacent topic notes into cache to achieve near-instant opening
+ */
+export function preloadAdjacentNotes(notes: ClassNote[], currentIndex: number): void {
+  if (!Array.isArray(notes) || notes.length <= 1 || currentIndex < 0) return;
+
+  const adjacentIndices = [currentIndex + 1, currentIndex - 1].filter(
+    (idx) => idx >= 0 && idx < notes.length
+  );
+
+  for (const idx of adjacentIndices) {
+    const note = notes[idx];
+    const storageKey = note.storagePath || note.r2Key || (note as any).storageKey;
+    if (!storageKey) continue;
+
+    // Check if already in cache
+    notesCacheService.getCachedBlob(storageKey).then((cached) => {
+      if (!cached && notesCacheService.getOnlineStatus()) {
+        // Preload in background without blocking
+        const fileName = note.fileName || (note as any).originalFilename || "note.pdf";
+        resolveDirectNoteUrl({
+          storageKey,
+          fileName,
+          fileType: (note as any).fileType,
+          mimeType: (note as any).mimeType,
+        })
+          .then((url) => fetch(url))
+          .then((res) => (res.ok ? res.blob() : null))
+          .then((blob) => {
+            if (blob) {
+              notesCacheService.setCachedBlob({
+                key: storageKey,
+                blob,
+                mimeType: (note as any).mimeType || getMimeType(fileName),
+                fileName,
+              });
+            }
+          })
+          .catch(() => {});
+      }
+    });
+  }
+}
+
+/**
  * Directly opens a note using device-native browser or viewer.
- * Absolutely no proxying through Vercel or serverless endpoints.
  */
 export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<OpenPdfResult> {
   try {
@@ -120,13 +266,6 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
     if (!directUrl || directUrl.includes("/api/")) {
       throw new Error("Unable to resolve direct note storage URL.");
     }
-
-    const platformDetails = getRuntimePlatformDetails();
-    console.log("=== [FRONTEND DIRECT NOTE OPEN AUDIT] ===");
-    console.log("platform:", platformDetails.platform);
-    console.log("browser:", platformDetails.browser);
-    console.log("directUrl:", directUrl);
-    console.log("=========================================");
 
     await openNote(options);
 
@@ -143,7 +282,6 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
 
 /**
  * Top-level unified function for Admin Console and Student Console.
- * Directly launches device native browser/viewer and records study progress if student is active.
  */
 export async function openNoteInNativeViewer(
   options: OpenPdfOptions & { studentId?: string; subject?: string }
@@ -172,5 +310,8 @@ export async function saveAndOpenGeneratedPdf(pdfBlob: Blob, fileName: string): 
  * Invalidates cache helper.
  */
 export async function invalidateNoteCache(rawPathOrUrl: string, noteId?: string, isImg?: boolean): Promise<void> {
-  // Direct R2 streaming is stateless and requires no in-app blob cache invalidation
+  await notesCacheService.invalidateBlobCache(rawPathOrUrl);
+  if (noteId) {
+    await notesCacheService.invalidateBlobCache(noteId);
+  }
 }

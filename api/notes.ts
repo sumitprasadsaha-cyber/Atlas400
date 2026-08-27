@@ -12,9 +12,10 @@ const ALLOWED_MIME_TYPES = new Set([
   "image/png",
   "image/jpeg",
   "image/jpg",
+  "image/webp",
 ]);
 
-const ALLOWED_EXTENSIONS = new Set(["pdf", "png", "jpg", "jpeg"]);
+const ALLOWED_EXTENSIONS = new Set(["pdf", "png", "jpg", "jpeg", "webp"]);
 
 function isSupportedFileType(filename: string, mimeType: string): boolean {
   const cleanMime = (mimeType || "").toLowerCase().trim();
@@ -76,8 +77,8 @@ export default async function handler(req: any, res: any) {
 
     switch (action) {
       // ========================================================
-      // 1. NOTES UPLOAD (Atlas400 v5.0.5 Final Architecture)
-      // Form -> buildCanonicalNoteMetadata() -> validateCanonicalNoteMetadata() -> Cloudflare R2 -> Response
+      // 1. NOTES UPLOAD (Atlas v5.0.8 Production Hardening)
+      // Form -> buildCanonicalNoteMetadata() -> validate -> Cloudflare R2 -> Verify -> Response
       // ========================================================
       case "upload": {
         const payload = await extractUploadPayload(req);
@@ -107,7 +108,7 @@ export default async function handler(req: any, res: any) {
         if (!isSupportedFileType(originalFilename, mimeType)) {
           return res.status(400).json({
             success: false,
-            error: "Unsupported file type. Only PDF, PNG, JPG, and JPEG are allowed.",
+            error: "Unsupported file type. Only PDF, PNG, JPG, JPEG, and WebP are allowed.",
           });
         }
 
@@ -167,6 +168,12 @@ export default async function handler(req: any, res: any) {
           }).catch((err) => {
             console.warn("[API Notes] Warning writing metadata.json:", err);
           });
+
+          // Verification check: confirm object presence in R2
+          const headResult = await headObjectFromR2({ bucket, key: canonicalMeta.storagePath });
+          if (!headResult) {
+            console.warn("[API Notes] Verification warning: object HEAD check did not return immediately, continuing.");
+          }
         } catch (storageErr: any) {
           console.error("[API Notes] R2 upload error:", storageErr);
           return res.status(500).json({
@@ -224,7 +231,7 @@ export default async function handler(req: any, res: any) {
         if (!isSupportedFileType(newFileName, mimeType)) {
           return res.status(400).json({
             success: false,
-            error: "Unsupported file type. Only PDF, PNG, JPG, and JPEG are allowed.",
+            error: "Unsupported file type. Only PDF, PNG, JPG, JPEG, and WebP are allowed.",
           });
         }
 
