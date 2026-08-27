@@ -372,3 +372,193 @@ export async function extractUploadPayload(req: any): Promise<UploadPayload> {
     fields: extractedFields,
   };
 }
+
+/**
+ * Robust slugifier for hierarchical storage keys:
+ * Converts to lowercase, replaces spaces/underscores with hyphens, removes special characters.
+ */
+export function slugify(text: string | number | undefined | null): string {
+  if (text === undefined || text === null) return "";
+  const str = String(text).trim().toLowerCase();
+  return str
+    .replace(/[^\w\s-]/g, "")
+    .replace(/[\s_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export function slugifyClass(classGrade?: string): string {
+  if (!classGrade) return "class-general";
+  const clean = classGrade.trim().toLowerCase();
+  if (clean.includes("upsc")) return "upsc";
+
+  const romanMap: Record<string, number> = {
+    xii: 12, xi: 11, x: 10, ix: 9, viii: 8, vii: 7, vi: 6, v: 5, iv: 4, iii: 3, ii: 2, i: 1
+  };
+  const numMatch = clean.match(/\d+/);
+  if (numMatch) {
+    return `class-${numMatch[0]}`;
+  }
+  for (const [roman, num] of Object.entries(romanMap)) {
+    if (new RegExp(`\\b${roman}\\b`, "i").test(clean)) {
+      return `class-${num}`;
+    }
+  }
+  return slugify(classGrade) || "class-general";
+}
+
+export function slugifyGSPaper(paper?: string): string {
+  if (!paper) return "gs-paper-1";
+  const clean = paper.trim().toLowerCase();
+  if (clean.includes("paper iv") || clean.includes("paper 4") || clean.includes("gs iv") || clean.includes("gs 4") || clean.includes("gs-4")) return "gs-paper-4";
+  if (clean.includes("paper iii") || clean.includes("paper 3") || clean.includes("gs iii") || clean.includes("gs 3") || clean.includes("gs-3")) return "gs-paper-3";
+  if (clean.includes("paper ii") || clean.includes("paper 2") || clean.includes("gs ii") || clean.includes("gs 2") || clean.includes("gs-2")) return "gs-paper-2";
+  if (clean.includes("paper i") || clean.includes("paper 1") || clean.includes("gs i") || clean.includes("gs 1") || clean.includes("gs-1")) return "gs-paper-1";
+  if (clean.includes("essay")) return "essay";
+  if (clean.includes("csat")) return "csat";
+  if (clean.includes("optional")) return "optional";
+  return slugify(paper) || "gs-paper-1";
+}
+
+export function slugifySubject(subject?: string): string {
+  if (!subject) return "general";
+  return slugify(subject) || "general";
+}
+
+export function slugifyChapter(chapterNo?: number | string, chapterName?: string): string {
+  let num = 1;
+  if (chapterNo !== undefined && chapterNo !== null && chapterNo !== "") {
+    const parsed = parseInt(String(chapterNo), 10);
+    if (!isNaN(parsed) && parsed > 0) num = parsed;
+  }
+  let nameClean = (chapterName || "").trim();
+  nameClean = nameClean.replace(/^(?:chapter|ch)\s*\d+[\s:-]*/i, "").trim();
+  const nameSlug = slugify(nameClean);
+  if (nameSlug) {
+    return `chapter-${num}-${nameSlug}`;
+  }
+  return `chapter-${num}`;
+}
+
+export function slugifyModule(moduleNo?: number | string, moduleName?: string): string {
+  let num = 1;
+  if (moduleNo !== undefined && moduleNo !== null && moduleNo !== "") {
+    const parsed = parseInt(String(moduleNo), 10);
+    if (!isNaN(parsed) && parsed > 0) num = parsed;
+  }
+  let nameClean = (moduleName || "").trim();
+  nameClean = nameClean.replace(/^(?:module|mod)\s*\d+[\s:-]*/i, "").trim();
+  const nameSlug = slugify(nameClean);
+  if (nameSlug) {
+    return `module-${num}-${nameSlug}`;
+  }
+  return `module-${num}`;
+}
+
+export function slugifyTopic(topicNo?: number | string, topicName?: string): string {
+  let numStr = "1";
+  if (topicNo !== undefined && topicNo !== null && String(topicNo).trim() !== "") {
+    const cleanNum = String(topicNo).trim().replace(/^(?:topic|part|t)\s*/i, "").trim();
+    if (cleanNum) numStr = cleanNum;
+  }
+  let nameClean = (topicName || "").trim();
+  nameClean = nameClean.replace(/^(?:topic|part)\s*\d+[\s:-]*/i, "").trim();
+  const nameSlug = slugify(nameClean);
+  const safeNumSlug = slugify(numStr);
+  if (nameSlug) {
+    return `topic-${safeNumSlug}-${nameSlug}`;
+  }
+  return `topic-${safeNumSlug}`;
+}
+
+export function generateHierarchicalNotePaths(params: {
+  classGrade?: string;
+  subject?: string;
+  generalStudiesPaper?: string;
+  chapterNo?: number | string;
+  chapterName?: string;
+  moduleNo?: number | string;
+  moduleName?: string;
+  topicNo?: number | string;
+  topicName?: string;
+  partLabel?: string;
+  extension?: string;
+}) {
+  const rawClass = String(params.classGrade || "Class 10").trim();
+  const isUPSC = rawClass.toUpperCase().includes("UPSC");
+  const rawSubject = String(params.subject || "General").trim();
+  const subjectSlug = slugifySubject(rawSubject);
+  const ext = (params.extension || "pdf").replace(/^\.+/, "").toLowerCase();
+
+  const rawTopicNo = params.topicNo || params.partLabel || "1";
+  const rawTopicName = params.topicName || (typeof params.partLabel === "string" && !/^\d+$/.test(params.partLabel) ? params.partLabel : "");
+  const topicSlug = slugifyTopic(rawTopicNo, rawTopicName);
+  const topicNumber = String(rawTopicNo).replace(/^(?:topic|part)\s*/i, "").trim() || "1";
+  const topicTitle = rawTopicName || `Topic ${topicNumber}`;
+
+  if (isUPSC) {
+    const rawGSPaper = params.generalStudiesPaper || "General Studies Paper I";
+    const gsPaperSlug = slugifyGSPaper(rawGSPaper);
+    const modNo = params.moduleNo || params.chapterNo || 1;
+    const modName = params.moduleName || params.chapterName || `Module ${modNo}`;
+    const moduleSlug = slugifyModule(modNo, modName);
+    const moduleNumber = typeof modNo === "number" ? modNo : parseInt(String(modNo), 10) || 1;
+    const moduleTitle = modName.replace(/^(?:module|mod)\s*\d+[\s:-]*/i, "").trim() || `Module ${moduleNumber}`;
+
+    const folderPath = `notes/upsc/${gsPaperSlug}/${subjectSlug}/${moduleSlug}/${topicSlug}`;
+    const documentId = `topic_upsc_${gsPaperSlug}_${subjectSlug}_${moduleSlug}_${topicSlug}`;
+
+    return {
+      isUPSC: true,
+      classSlug: "upsc",
+      className: "UPSC",
+      subjectSlug,
+      subjectName: rawSubject,
+      gsPaperSlug,
+      gsPaperName: rawGSPaper,
+      moduleSlug,
+      moduleNumber,
+      moduleTitle,
+      topicSlug,
+      topicNumber,
+      topicTitle,
+      folderPath,
+      pdfKey: `${folderPath}/note.${ext}`,
+      metadataKey: `${folderPath}/metadata.json`,
+      practiceTestKey: `${folderPath}/practice-test.json`,
+      documentId,
+      searchableText: `UPSC ${rawGSPaper} ${rawSubject} Module ${moduleNumber} ${moduleTitle} Topic ${topicNumber} ${topicTitle}`.trim(),
+    };
+  } else {
+    const classSlug = slugifyClass(rawClass);
+    const className = rawClass.startsWith("Class ") ? rawClass : `Class ${rawClass.replace(/\D/g, "") || "10"}`;
+    const chNo = params.chapterNo || 1;
+    const chName = params.chapterName || `Chapter ${chNo}`;
+    const chapterSlug = slugifyChapter(chNo, chName);
+    const chapterNumber = typeof chNo === "number" ? chNo : parseInt(String(chNo), 10) || 1;
+    const chapterTitle = chName.replace(/^(?:chapter|ch)\s*\d+[\s:-]*/i, "").trim() || `Chapter ${chapterNumber}`;
+
+    const folderPath = `notes/${classSlug}/${subjectSlug}/${chapterSlug}/${topicSlug}`;
+    const documentId = `topic_${classSlug}_${subjectSlug}_${chapterSlug}_${topicSlug}`;
+
+    return {
+      isUPSC: false,
+      classSlug,
+      className,
+      subjectSlug,
+      subjectName: rawSubject,
+      chapterSlug,
+      chapterNumber,
+      chapterTitle,
+      topicSlug,
+      topicNumber,
+      topicTitle,
+      folderPath,
+      pdfKey: `${folderPath}/note.${ext}`,
+      metadataKey: `${folderPath}/metadata.json`,
+      practiceTestKey: `${folderPath}/practice-test.json`,
+      documentId,
+      searchableText: `${className} ${rawSubject} Chapter ${chapterNumber} ${chapterTitle} Topic ${topicNumber} ${topicTitle}`.trim(),
+    };
+  }
+}

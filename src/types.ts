@@ -1,13 +1,41 @@
 export interface ClassNote {
   id: string;
+  isUPSC?: boolean;
+  class?: string;
   classGrade: string; // e.g. "Class 6", "Class 7", "Class 8", "Class 9", "Class 10", "UPSC"
   subject: string; // e.g. "Mathematics", "Science", "English", "Polity", "International Relations"
   chapterNo: number;
   chapterName: string;
+  
+  // Atlas400 v5.0.5 Hierarchical Fields (School & UPSC)
+  type?: "school" | "upsc";
+  classId?: string; // e.g. "class-9" or "upsc"
+  className?: string; // e.g. "Class 9" or "UPSC"
+  subjectId?: string; // e.g. "mathematics"
+  subjectName?: string; // e.g. "Mathematics"
+  chapterNumber?: number; // e.g. 1
+  chapterTitle?: string; // e.g. "Number Systems"
+  topicNumber?: number | string; // e.g. 1
+  topicTitle?: string; // e.g. "Introduction"
+  r2Key?: string; // Hierarchical R2 path: class_notes/Class_9/Mathematics/Chapter_01_Number_Systems/Topic_01_Introduction/note.pdf
+  practiceTestId?: string | null; // Attached practice test ID
+  visibility?: "public" | "visible" | "all" | "selected" | "hidden" | string;
+  accessRules?: {
+    accessType?: "all" | "selected";
+    allowedStudentIds?: string[];
+    allowedClasses?: string[];
+  };
+  searchableText?: string;
+  version?: string; // e.g. "5.0.5"
+
+  // UPSC specific fields
+  paper?: string; // e.g. "General Studies Paper II"
   moduleNo?: number; // alias for UPSC module_number
   moduleName?: string; // alias for UPSC module_name
   module_number?: number; // exact UPSC metadata specification
   module_name?: string; // exact UPSC metadata specification
+  moduleNumber?: number; // canonical v5.0.5
+  moduleTitle?: string; // canonical v5.0.5
   generalStudiesPaper?: string; // e.g. "General Studies Paper I", "General Studies Paper II", "General Studies Paper III", "General Studies Paper IV", "Essay", "CSAT" (UPSC only)
   gs_paper?: string; // exact UPSC metadata specification
   partLabel?: string; // e.g. "Topic 1", "Topic 2", or legacy part label
@@ -57,10 +85,39 @@ export interface ChapterNote {
   subject?: string;
   chapterNo: number; // Only number!
   chapterName: string; // Chapter name
+  
+  // Atlas400 v5.0.5 Hierarchical Fields
+  isUPSC?: boolean;
+  class?: string;
+  classId?: string;
+  className?: string;
+  subjectId?: string;
+  subjectName?: string;
+  chapterNumber?: number;
+  chapterTitle?: string;
+  topicNumber?: number | string;
+  topicTitle?: string;
+  r2Key?: string;
+  practiceTestId?: string | null;
+  visibility?: "public" | "visible" | "all" | "selected" | string;
+  accessRules?: {
+    accessType?: "all" | "selected";
+    allowedStudentIds?: string[];
+    allowedClasses?: string[];
+    allowedRole?: string;
+  };
+  searchableText?: string;
+  version?: string;
+  originalFilename?: string;
+  updatedAt?: string;
+
+  paper?: string;
   moduleNo?: number;
   moduleName?: string;
   module_number?: number;
   module_name?: string;
+  moduleNumber?: number;
+  moduleTitle?: string;
   generalStudiesPaper?: string; // e.g. "General Studies Paper I", "General Studies Paper II", "General Studies Paper III", "General Studies Paper IV", "Essay", "CSAT" (UPSC only)
   gs_paper?: string;
   partLabel?: string; // Optional part label or legacy part label

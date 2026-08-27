@@ -32,6 +32,7 @@ import { uploadFileToR2, deleteFileFromStorage } from "../lib/storageService";
 import { verifyR2ObjectExists } from "../lib/r2Client";
 import { saveClassNoteDoc, deleteClassNoteDoc } from "../lib/firestoreService";
 import { groupClassNotesHierarchy, normalizeClassGrade, isClassGradeMatching, isSubjectMatching, inferGSPaperFromSubject } from "../utils/classNoteHelper";
+import { searchHierarchicalNotes } from "../utils/notesHierarchyHelper";
 import { getFormattedTopicLabel, isFileNameRedundant } from "../utils/chapterNotesHelper";
 import { isImageFile, invalidateNoteCache, openNoteInNativeViewer } from "../lib/nativePdfService";
 import AdminPracticeTestModal from "./AdminPracticeTestModal";
@@ -610,36 +611,9 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
     return normalizeClassGrade(cls) === "UPSC";
   }, [selectedClass, customClass]);
 
-  // Filter notes based on Admin search query
+  // Filter notes based on Admin search query across all hierarchy levels
   const filteredNotes = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return notes;
-    return notes.filter((note) => {
-      const cls = (note.classGrade || "").toLowerCase();
-      const subj = (note.subject || "").toLowerCase();
-      const gs = (note.generalStudiesPaper || (note as any).gs_paper || "").toLowerCase();
-      const modNo = `module ${(note as any).moduleNo ?? (note as any).module_number ?? ""}`.toLowerCase();
-      const modName = ((note as any).moduleName || (note as any).module_name || "").toLowerCase();
-      const chNo = `chapter ${note.chapterNo}`.toLowerCase() || `${note.chapterNo}`;
-      const title = (note.chapterName || "").toLowerCase();
-      const topNo = `topic ${(note as any).topicNo ?? (note as any).topic_number ?? ""}`.toLowerCase();
-      const topName = ((note as any).topicName || (note as any).topic_name || "").toLowerCase();
-      const part = (note.partLabel || "").toLowerCase();
-      const filename = (note.pdfFileName || "").toLowerCase();
-      return (
-        cls.includes(q) ||
-        subj.includes(q) ||
-        gs.includes(q) ||
-        modNo.includes(q) ||
-        modName.includes(q) ||
-        chNo.includes(q) ||
-        title.includes(q) ||
-        topNo.includes(q) ||
-        topName.includes(q) ||
-        part.includes(q) ||
-        filename.includes(q)
-      );
-    });
+    return searchHierarchicalNotes(notes, searchQuery);
   }, [notes, searchQuery]);
 
   // Grouped hierarchy

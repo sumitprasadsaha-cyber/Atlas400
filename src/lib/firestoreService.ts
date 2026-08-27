@@ -11,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { getFirebaseDb, OperationType, handleFirestoreError } from "./firebase";
 import { Student, ClassNote, TestAttemptRecord } from "../types";
+import { migrateNoteToHierarchy } from "../utils/notesHierarchyHelper";
 import { 
   safeLocalStorageSetItem as safeSetStorage, 
   safeLocalStorageGetItem as safeGetStorage,
@@ -1320,8 +1321,8 @@ export function getLocalClassNotes(): ClassNote[] {
     try {
       const parsed = JSON.parse(cached);
       if (Array.isArray(parsed)) {
-        inMemoryClassNotesCache = parsed;
-        return parsed;
+        inMemoryClassNotesCache = parsed.map(migrateNoteToHierarchy);
+        return inMemoryClassNotesCache;
       }
     } catch (e) {
       console.error("Failed to parse local class notes", e);
@@ -1333,19 +1334,21 @@ export function getLocalClassNotes(): ClassNote[] {
 export function saveLocalClassNotes(notes: ClassNote[]) {
   if (typeof window === "undefined" || !Array.isArray(notes)) return;
   
+  const migratedNotes = notes.map(migrateNoteToHierarchy);
+
   // Prevent duplicate state emissions if the dataset is unchanged
-  if (areClassNotesEqual(inMemoryClassNotesCache, notes)) {
+  if (areClassNotesEqual(inMemoryClassNotesCache, migratedNotes)) {
     return;
   }
 
   // Atomically update memory cache and persistent storage
-  inMemoryClassNotesCache = notes;
-  safeSetStorage(STORAGE_KEY_CLASS_NOTES, JSON.stringify(notes));
+  inMemoryClassNotesCache = migratedNotes;
+  safeSetStorage(STORAGE_KEY_CLASS_NOTES, JSON.stringify(migratedNotes));
 
   // Notify all registered UI listeners with the stable reference
   classNotesListeners.forEach((listener) => {
     try {
-      listener(notes);
+      listener(migratedNotes);
     } catch (err) {
       console.warn("[ClassNotesListener] callback warning:", err);
     }

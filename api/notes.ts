@@ -2,6 +2,7 @@ import path from "path";
 import { handleOptions, sendSuccess, sendError } from "./_lib/responses";
 import { sanitizeKey, getMimeType, extractUploadPayload, parseRequestBody } from "./_lib/utils";
 import { uploadObjectToR2, deleteObjectFromR2, headObjectFromR2, getR2ServerConfig } from "./_lib/r2";
+import { buildCanonicalNoteMetadata, validateCanonicalNoteMetadata, NoteMetadata } from "../src/domain/notes/types";
 
 export const runtime = "nodejs";
 
@@ -23,12 +24,6 @@ function isSupportedFileType(filename: string, mimeType: string): boolean {
   if (ALLOWED_EXTENSIONS.has(ext)) return true;
 
   return false;
-}
-
-function sanitizeFileName(filename: string): string {
-  return (filename || "file")
-    .replace(/[^a-zA-Z0-9._-]/g, "_")
-    .replace(/_{2,}/g, "_");
 }
 
 export default async function handler(req: any, res: any) {
@@ -81,84 +76,15 @@ export default async function handler(req: any, res: any) {
 
     switch (action) {
       // ========================================================
-      // 1. REBUILD NOTES UPLOAD
-      // Flow: Admin selects file -> Validate metadata -> Validate file
-      // -> Upload to Cloudflare R2 -> Verify upload -> Return note record
+      // 1. NOTES UPLOAD (Atlas400 v5.0.5 Final Architecture)
+      // Form -> buildCanonicalNoteMetadata() -> validateCanonicalNoteMetadata() -> Cloudflare R2 -> Response
       // ========================================================
       case "upload": {
         const payload = await extractUploadPayload(req);
         const fields = payload.fields || {};
         const parsedBody = parseRequestBody(req.body) || {};
 
-        // 1. Extract and validate metadata
-        const classGrade = (
-          fields.classGrade ||
-          fields.class ||
-          parsedBody.classGrade ||
-          parsedBody.class ||
-          query.classGrade ||
-          query.class ||
-          ""
-        ).trim();
-
-        const subject = (
-          fields.subject ||
-          parsedBody.subject ||
-          query.subject ||
-          ""
-        ).trim();
-
-        const generalStudiesPaper = (
-          fields.generalStudiesPaper ||
-          fields.gsPaper ||
-          fields.gs_paper ||
-          parsedBody.generalStudiesPaper ||
-          parsedBody.gsPaper ||
-          parsedBody.gs_paper ||
-          query.generalStudiesPaper ||
-          query.gsPaper ||
-          ""
-        ).trim();
-
-        const chapterNo = Number(
-          fields.chapterNo ||
-          fields.chapterNumber ||
-          fields.moduleNo ||
-          fields.moduleNumber ||
-          parsedBody.chapterNo ||
-          parsedBody.chapterNumber ||
-          parsedBody.moduleNo ||
-          parsedBody.moduleNumber ||
-          query.chapterNo ||
-          query.moduleNo ||
-          1
-        ) || 1;
-
-        const chapterName = (
-          fields.chapterName ||
-          fields.moduleName ||
-          parsedBody.chapterName ||
-          parsedBody.moduleName ||
-          query.chapterName ||
-          query.moduleName ||
-          ""
-        ).trim();
-
-        const moduleNo = fields.moduleNo ? Number(fields.moduleNo) : chapterNo;
-        const moduleName = (fields.moduleName || parsedBody.moduleName || chapterName).trim();
-        const topicNo = (fields.topicNo || fields.topicNumber || parsedBody.topicNo || parsedBody.topicNumber || query.topicNo || "").trim();
-        const topicName = (fields.topicName || parsedBody.topicName || query.topicName || "").trim();
-        const partLabel = (fields.partLabel || parsedBody.partLabel || query.partLabel || "").trim();
-        const uploadedBy = (fields.uploadedBy || parsedBody.uploadedBy || query.uploadedBy || "Admin").trim();
-
-        if (!classGrade || !subject) {
-          return res.status(400).json({
-            success: false,
-            error: "Missing required note metadata (class and subject).",
-          });
-        }
-
-        // 2. Validate file presence
+        // 1. Validate file presence
         if (!payload.buffer || payload.buffer.length === 0) {
           return res.status(400).json({
             success: false,
@@ -166,7 +92,7 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        // 3. Validate file size (Max 50MB)
+        // 2. Validate file size (Max 50MB)
         if (payload.size > MAX_FILE_SIZE) {
           return res.status(400).json({
             success: false,
@@ -174,8 +100,8 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        // 4. Validate file type (PDF, PNG, JPG, JPEG)
-        const originalFilename = payload.fileName || fields.fileName || parsedBody.fileName || "note.pdf";
+        // 3. Validate file type
+        const originalFilename = payload.fileName || fields.fileName || fields.originalFilename || parsedBody.fileName || "note.pdf";
         const mimeType = payload.contentType || getMimeType(originalFilename);
 
         if (!isSupportedFileType(originalFilename, mimeType)) {
@@ -185,127 +111,101 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        // 5. Generate unique R2 object key & clean filename
-        const safeOriginalName = sanitizeFileName(originalFilename);
-        const uniqueId = `note_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-        const objectKey = `notes/${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${safeOriginalName}`;
-        const storedFilename = path.basename(objectKey);
+        // 4. Build canonical NoteMetadata (School or UPSC)
+        const canonicalMeta = buildCanonicalNoteMetadata({
+          className: fields.className || fields.classGrade || fields.class || parsedBody.className || parsedBody.classGrade || parsedBody.class || query.className || query.classGrade,
+          subject: fields.subject || fields.subjectName || parsedBody.subject || parsedBody.subjectName || query.subject,
+          gsPaper: fields.gsPaper || fields.generalStudiesPaper || fields.paper || parsedBody.gsPaper || parsedBody.generalStudiesPaper || parsedBody.paper,
+          chapterNumber: fields.chapterNumber ?? fields.chapterNo ?? parsedBody.chapterNumber ?? parsedBody.chapterNo,
+          chapterName: fields.chapterName || fields.chapterTitle || parsedBody.chapterName || parsedBody.chapterTitle,
+          moduleNumber: fields.moduleNumber ?? fields.moduleNo ?? fields.module_number ?? parsedBody.moduleNumber ?? parsedBody.moduleNo,
+          moduleName: fields.moduleName || fields.moduleTitle || fields.module_name || parsedBody.moduleName || parsedBody.moduleTitle,
+          topicNumber: fields.topicNumber ?? fields.topicNo ?? fields.topic_number ?? parsedBody.topicNumber ?? parsedBody.topicNo ?? query.topicNo,
+          topicName: fields.topicName || fields.topicTitle || fields.topic_name || parsedBody.topicName || parsedBody.topicTitle || query.topicName,
+          partLabel: fields.partLabel || parsedBody.partLabel || query.partLabel,
+          fileName: originalFilename,
+          fileSize: payload.size,
+          mimeType,
+          visibility: fields.visibility || parsedBody.visibility || "all",
+          allowedStudentIds: fields.allowedStudentIds || parsedBody.allowedStudentIds,
+          allowedClasses: fields.allowedClasses || parsedBody.allowedClasses,
+          uploadedBy: fields.uploadedBy || parsedBody.uploadedBy || query.uploadedBy || "Admin",
+        });
+
+        // 5. Canonical Validation
+        const validation = validateCanonicalNoteMetadata(canonicalMeta);
+        if (!validation.isValid) {
+          return res.status(400).json({
+            success: false,
+            error: validation.error || `Missing ${validation.missingField || "metadata"}`,
+            missingField: validation.missingField,
+          });
+        }
 
         // 6. Upload to Cloudflare R2
         const r2Config = getR2ServerConfig();
         const bucket = payload.bucket || fields.bucket || parsedBody.bucket || r2Config.bucket;
 
         try {
+          // Upload note file to canonical R2 key
           await uploadObjectToR2({
             bucket,
-            key: objectKey,
+            key: canonicalMeta.storagePath,
             body: payload.buffer,
             contentType: mimeType,
           });
-        } catch (uploadErr: any) {
-          console.error("[Notes API] Upload to R2 failed:", uploadErr);
+
+          // Upload metadata.json to the canonical folder
+          const metadataKey = `${canonicalMeta.folderPath}/metadata.json`;
+          await uploadObjectToR2({
+            bucket,
+            key: metadataKey,
+            body: Buffer.from(JSON.stringify(canonicalMeta, null, 2)),
+            contentType: "application/json",
+          }).catch((err) => {
+            console.warn("[API Notes] Warning writing metadata.json:", err);
+          });
+        } catch (storageErr: any) {
+          console.error("[API Notes] R2 upload error:", storageErr);
           return res.status(500).json({
             success: false,
-            error: "Upload failed. Please try again.",
+            error: "Failed to upload file to Cloudflare R2 storage.",
+            details: storageErr?.message,
           });
         }
 
-        // 7. Verify upload in R2
-        const verifyHead = await headObjectFromR2({ bucket, key: objectKey });
-        if (!verifyHead.exists) {
-          console.warn("[Notes API] R2 verify check notice: proceeding with fallback storage.");
-        }
-
-        // 8. Build public URL and response record
-        const publicUrl = r2Config.publicUrl
-          ? `${r2Config.publicUrl.replace(/\/+$/, "")}/${objectKey}`
-          : `/api/r2/download?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(objectKey)}`;
-
-        const isUPSC = String(classGrade).toUpperCase().includes("UPSC");
-        const isImage = mimeType.startsWith("image/");
-        const nowIso = new Date().toISOString();
-
-        const noteRecord = {
-          id: uniqueId,
-          class: classGrade,
-          classGrade: classGrade,
-          subject: subject,
-          generalStudiesPaper: isUPSC && generalStudiesPaper ? generalStudiesPaper : undefined,
-          gs_paper: isUPSC && generalStudiesPaper ? generalStudiesPaper : undefined,
-          chapterNo: Number(chapterNo) || 1,
-          chapterName: chapterName,
-          moduleNo: isUPSC ? Number(moduleNo) || 1 : undefined,
-          moduleName: isUPSC ? moduleName : undefined,
-          module_number: isUPSC ? Number(moduleNo) || 1 : undefined,
-          module_name: isUPSC ? moduleName : undefined,
-          topicNo: topicNo || undefined,
-          topicName: topicName || undefined,
-          topic_number: isUPSC && topicNo ? topicNo : undefined,
-          topic_name: isUPSC && topicName ? topicName : undefined,
-          partLabel: partLabel || undefined,
-          originalFilename,
-          fileName: originalFilename,
-          pdfFileName: originalFilename,
-          storedFilename,
-          filename: storedFilename,
-          mimeType,
-          mime_type: mimeType,
-          fileType: isImage ? "image" : "pdf",
-          fileSize: payload.size,
-          file_size: payload.size,
-          objectKey,
-          storageKey: objectKey,
-          storagePath: objectKey,
-          storage_path: objectKey,
-          bucket,
-          publicUrl,
-          pdfUrl: publicUrl,
-          downloadUrl: publicUrl,
-          uploadedBy: uploadedBy || "Admin",
-          uploadedDate: nowIso,
-          uploadedAt: nowIso,
-          createdAt: nowIso,
-          updatedDate: nowIso,
-          updatedAt: nowIso,
+        // Generate download URL
+        const downloadUrl = `/api/files/download?key=${encodeURIComponent(canonicalMeta.storagePath)}`;
+        const noteResult: NoteMetadata = {
+          ...canonicalMeta,
+          pdfUrl: downloadUrl,
         };
 
-        return sendSuccess(res, {
+        return res.status(200).json({
           success: true,
-          note: noteRecord,
-          message: "Note uploaded successfully.",
+          message: "Note uploaded successfully",
+          note: noteResult,
+          documentId: canonicalMeta.id,
+          r2Key: canonicalMeta.storagePath,
+          storagePath: canonicalMeta.storagePath,
+          folderPath: canonicalMeta.folderPath,
+          downloadUrl,
+          pdfUrl: downloadUrl,
         });
       }
 
       // ========================================================
-      // 2. REBUILD NOTE REPLACEMENT
-      // Flow: Select new file -> Validate -> Upload new file -> Verify
-      // -> Delete old R2 object -> Return updated file metadata
+      // 2. NOTE REPLACEMENT (In-Place Canonical Update)
       // ========================================================
       case "replace": {
         const payload = await extractUploadPayload(req);
         const fields = payload.fields || {};
         const parsedBody = parseRequestBody(req.body) || {};
 
-        const targetNoteId =
-          noteIdFromUrl ||
-          fields.id ||
-          fields.noteId ||
-          parsedBody.id ||
-          parsedBody.noteId ||
-          query.id;
-
-        if (!targetNoteId) {
-          return res.status(400).json({
-            success: false,
-            error: "Note ID is required for replacement.",
-          });
-        }
-
-        // 1. Validate replacement file
         if (!payload.buffer || payload.buffer.length === 0) {
           return res.status(400).json({
             success: false,
-            error: "Invalid file. Please select a valid replacement file.",
+            error: "Invalid file. Please select a replacement file.",
           });
         }
 
@@ -316,198 +216,128 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        const newOriginalFilename = payload.fileName || fields.newFileName || fields.fileName || parsedBody.newFileName || parsedBody.fileName || "updated_note.pdf";
-        const newMimeType = payload.contentType || getMimeType(newOriginalFilename);
+        const newFileName = payload.fileName || fields.newFileName || fields.fileName || "note.pdf";
+        const mimeType = payload.contentType || getMimeType(newFileName);
 
-        if (!isSupportedFileType(newOriginalFilename, newMimeType)) {
+        if (!isSupportedFileType(newFileName, mimeType)) {
           return res.status(400).json({
             success: false,
             error: "Unsupported file type. Only PDF, PNG, JPG, and JPEG are allowed.",
           });
         }
 
-        // 2. Upload new file to Cloudflare R2
+        let targetStorageKey = sanitizeKey(fields.oldStorageKey || fields.storageKey || fields.storagePath || query.storageKey || "");
+
+        // If target storage key is empty, reconstruct or fail gracefully
+        if (!targetStorageKey && noteIdFromUrl) {
+          targetStorageKey = `class_notes/${noteIdFromUrl}/note.pdf`;
+        }
+
         const r2Config = getR2ServerConfig();
         const bucket = payload.bucket || fields.bucket || parsedBody.bucket || r2Config.bucket;
-        const safeOriginalName = sanitizeFileName(newOriginalFilename);
-        const newObjectKey = `notes/${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${safeOriginalName}`;
-        const newStoredFilename = path.basename(newObjectKey);
 
         try {
+          // Upload new file directly replacing existing object
           await uploadObjectToR2({
             bucket,
-            key: newObjectKey,
+            key: targetStorageKey,
             body: payload.buffer,
-            contentType: newMimeType,
+            contentType: mimeType,
           });
-        } catch (uploadErr: any) {
-          console.error("[Notes API] Replacement upload failed:", uploadErr);
+
+          // Update folder metadata.json if exists
+          const folderPath = path.dirname(targetStorageKey);
+          const metadataKey = `${folderPath}/metadata.json`;
+          const nowIso = new Date().toISOString();
+
+          const updateMetadata = {
+            storagePath: targetStorageKey,
+            r2Key: targetStorageKey,
+            fileName: newFileName,
+            originalFilename: newFileName,
+            fileSize: payload.size,
+            mimeType,
+            updatedAt: nowIso,
+          };
+
+          await uploadObjectToR2({
+            bucket,
+            key: metadataKey,
+            body: Buffer.from(JSON.stringify(updateMetadata, null, 2)),
+            contentType: "application/json",
+          }).catch(() => {});
+        } catch (replaceErr: any) {
+          console.error("[API Notes] R2 replacement error:", replaceErr);
           return res.status(500).json({
             success: false,
-            error: "Replacement failed. Please try again.",
+            error: "Failed to replace note in storage.",
+            details: replaceErr?.message,
           });
         }
 
-        // 3. Verify new upload in R2
-        const verifyHead = await headObjectFromR2({ bucket, key: newObjectKey });
-        if (!verifyHead.exists) {
-          console.warn("[Notes API] Replacement verify notice: proceeding with fallback storage.");
-        }
+        const downloadUrl = `/api/files/download?key=${encodeURIComponent(targetStorageKey)}`;
 
-        // 4. Delete old R2 object if provided
-        const oldStorageKey =
-          fields.oldStorageKey ||
-          fields.oldObjectKey ||
-          fields.oldPath ||
-          parsedBody.oldStorageKey ||
-          parsedBody.oldObjectKey ||
-          parsedBody.oldPath ||
-          query.oldStorageKey ||
-          "";
-
-        if (oldStorageKey) {
-          const cleanOldKey = sanitizeKey(oldStorageKey);
-          if (cleanOldKey && cleanOldKey !== newObjectKey) {
-            try {
-              await deleteObjectFromR2({ bucket, key: cleanOldKey });
-              console.log(`[Notes API] Deleted previous storage object: ${cleanOldKey}`);
-            } catch (delErr) {
-              console.warn(`[Notes API] Old object cleanup notice for "${cleanOldKey}":`, delErr);
-            }
-          }
-        }
-
-        const publicUrl = r2Config.publicUrl
-          ? `${r2Config.publicUrl.replace(/\/+$/, "")}/${newObjectKey}`
-          : `/api/r2/download?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(newObjectKey)}`;
-
-        const isImage = newMimeType.startsWith("image/");
-        const nowIso = new Date().toISOString();
-
-        return sendSuccess(res, {
+        return res.status(200).json({
           success: true,
-          replaced: true,
-          id: targetNoteId,
-          originalFilename: newOriginalFilename,
-          fileName: newOriginalFilename,
-          pdfFileName: newOriginalFilename,
-          storedFilename: newStoredFilename,
-          filename: newStoredFilename,
-          objectKey: newObjectKey,
-          storageKey: newObjectKey,
-          storagePath: newObjectKey,
-          storage_path: newObjectKey,
-          publicUrl,
-          pdfUrl: publicUrl,
-          downloadUrl: publicUrl,
+          message: "Note replaced successfully",
+          r2Key: targetStorageKey,
+          storageKey: targetStorageKey,
+          storagePath: targetStorageKey,
+          fileName: newFileName,
+          originalFilename: newFileName,
+          pdfFileName: newFileName,
           fileSize: payload.size,
-          file_size: payload.size,
-          mimeType: newMimeType,
-          mime_type: newMimeType,
-          fileType: isImage ? "image" : "pdf",
-          updatedDate: nowIso,
-          updatedAt: nowIso,
-          message: "Note replaced successfully.",
+          mimeType,
+          downloadUrl,
+          pdfUrl: downloadUrl,
+          publicUrl: downloadUrl,
+          updatedAt: new Date().toISOString(),
         });
       }
 
       // ========================================================
-      // 3. REBUILD NOTE DELETE
-      // Flow: Delete R2 object -> Return success
+      // 3. NOTE DELETE
+      // Clean up PDF, metadata.json, and practice-test.json from R2
       // ========================================================
       case "delete": {
         const parsedBody = parseRequestBody(req.body) || {};
-        const targetNoteId =
-          noteIdFromUrl ||
-          parsedBody.id ||
-          parsedBody.noteId ||
-          query.id ||
-          query.noteId;
+        const storageKey = sanitizeKey(parsedBody.storageKey || parsedBody.storagePath || query.storageKey || query.storagePath || "");
+        const targetId = noteIdFromUrl || parsedBody.id || query.id;
 
-        const storageKey =
-          parsedBody.storageKey ||
-          parsedBody.objectKey ||
-          parsedBody.storagePath ||
-          query.storageKey ||
-          query.objectKey ||
-          query.storagePath ||
-          "";
+        const r2Config = getR2ServerConfig();
+        const bucket = parsedBody.bucket || query.bucket || r2Config.bucket;
 
-        const bucket = parsedBody.bucket || query.bucket || getR2ServerConfig().bucket;
-
-        if (!targetNoteId && !storageKey) {
-          return res.status(400).json({
-            success: false,
-            error: "Note ID or storageKey is required for deletion.",
-          });
-        }
-
-        // Delete R2 object
         if (storageKey) {
-          const cleanKey = sanitizeKey(storageKey);
-          if (cleanKey) {
-            try {
-              await deleteObjectFromR2({ bucket, key: cleanKey });
-            } catch (delErr: any) {
-              console.error("[Notes API] Delete from R2 failed:", delErr);
-              return res.status(500).json({
-                success: false,
-                error: "Delete failed. Please try again.",
-              });
-            }
+          try {
+            await deleteObjectFromR2({ bucket, key: storageKey });
+
+            const folderPath = path.dirname(storageKey);
+            await deleteObjectFromR2({ bucket, key: `${folderPath}/metadata.json` }).catch(() => {});
+            await deleteObjectFromR2({ bucket, key: `${folderPath}/practice-test.json` }).catch(() => {});
+          } catch (delErr: any) {
+            console.warn("[API Notes] R2 delete warning (proceeding with DB deletion):", delErr);
           }
         }
 
-        return sendSuccess(res, {
+        return res.status(200).json({
           success: true,
-          deleted: true,
-          id: targetNoteId,
-          storageKey,
-          message: "Note deleted successfully.",
-        });
-      }
-
-      // ========================================================
-      // 4. ADMIN NOTES
-      // ========================================================
-      case "admin":
-      case "list": {
-        return sendSuccess(res, {
-          success: true,
-          notes: [],
-          total: 0,
-          timestamp: new Date().toISOString(),
-        });
-      }
-
-      // ========================================================
-      // 5. STUDENT NOTES QUERY
-      // ========================================================
-      case "student": {
-        const classGrade = query.classGrade || query.class || "";
-        const enrolledSubjects = (query.enrolledSubjects || "").split(",").map((s: string) => s.trim()).filter(Boolean);
-        const gsPaper = query.gsPaper || query.generalStudiesPaper || "";
-
-        return sendSuccess(res, {
-          success: true,
-          notes: [],
-          filters: {
-            classGrade,
-            enrolledSubjects,
-            gsPaper,
-          },
-          timestamp: new Date().toISOString(),
+          message: "Note deleted successfully",
+          id: targetId,
+          deletedKey: storageKey,
         });
       }
 
       default:
-        return res.status(400).json({
+        return res.status(405).json({
           success: false,
-          error: `Unsupported notes action: ${action}`,
+          error: `Method or action ${action} not allowed`,
         });
     }
   } catch (err: any) {
-    console.error("[Notes API Unhandled Exception]", err);
-    return sendError(res, err, "Notes operation failed. Please try again.");
+    console.error("[API Notes] Unhandled error:", err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || "Internal server error in Notes API",
+    });
   }
 }
