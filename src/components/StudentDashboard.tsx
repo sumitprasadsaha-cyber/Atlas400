@@ -93,7 +93,10 @@ import { filterNotesForStudent, filterSubjectsForStudent } from "../utils/noteAc
 import { filterClassNotesForStudent, getStudentSubjects, isSubjectMatching, inferGSPaperFromSubject } from "../utils/classNoteHelper";
 import { isUPSCClass } from "../utils/upscHierarchyHelper";
 import { buildStudentUPSCHierarchy, StudentUPSCGSPaper } from "../utils/studentUPSCHierarchyHelper";
+import { buildStudentSchoolHierarchy, StudentSchoolSubject, StudentSchoolClassHierarchy } from "../utils/studentSchoolHierarchyHelper";
 import StudentUPSCTree from "./StudentUPSCTree";
+import StudentSchoolTree from "./StudentSchoolTree";
+import { subscribeToCurriculumHierarchy } from "../lib/curriculumService";
 import StudentPracticeTestModal from "./StudentPracticeTestModal";
 import { getTopicPracticeTest, getStudentTestAttempts, getAllTestAttempts, fetchAllPracticeTests } from "../utils/assessmentParser";
 import { getScoreButtonStyles } from "../lib/practiceTestService";
@@ -1334,15 +1337,33 @@ function SubjectPieChart({ rate, size = 32 }: { rate: number; size?: number }) {
 }
 
 interface SubjectProgressCardProps {
-  subject: { name: string; total: number; completed: number; rate: number; notes: ChapterNote[] };
+  subject: {
+    name?: string;
+    subject?: string;
+    total?: number;
+    totalModules?: number;
+    totalTopics?: number;
+    completed?: number;
+    completedTopics?: number;
+    rate?: number;
+    progressPercent?: number;
+    notes?: ChapterNote[];
+  };
   index: number;
   onSelectSubject: (subject: string) => void;
   student: Student;
 }
 
 function SubjectProgressCard({ subject, index, onSelectSubject, student }: SubjectProgressCardProps) {
-  const palette = getSubjectCardPalette(subject.name, index);
-  const IconComponent = getSubjectIcon(subject.name, index);
+  const subjectName = subject.subject || subject.name || "Subject";
+  const totalModules = subject.totalModules ?? 0;
+  const totalTopics = subject.totalTopics ?? subject.total ?? 0;
+  const completedTopics = subject.completedTopics ?? subject.completed ?? 0;
+  const progressPercent = subject.progressPercent ?? subject.rate ?? (totalTopics > 0 ? Math.round((completedTopics / totalTopics) * 100) : 0);
+
+  const palette = getSubjectCardPalette(subjectName, index);
+  const IconComponent = getSubjectIcon(subjectName, index);
+
   return (
     <motion.div
       layout
@@ -1353,23 +1374,42 @@ function SubjectProgressCard({ subject, index, onSelectSubject, student }: Subje
     >
       <button
         type="button"
-        onClick={() => onSelectSubject(subject.name)}
-        className={`group relative flex w-full items-center justify-between overflow-hidden rounded-[20px] border border-white/10 bg-gradient-to-br ${palette.shell} p-3 text-white transition-transform hover:-translate-y-0.5 shadow-none`}
+        onClick={() => onSelectSubject(subjectName)}
+        className={`group relative flex flex-col justify-between overflow-hidden rounded-[22px] border border-white/15 bg-gradient-to-br ${palette.shell} p-4 text-white transition-all hover:-translate-y-1 shadow-xs cursor-pointer text-left w-full`}
       >
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.12),transparent_30%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.18),transparent_35%)]" />
         
-        <div className="relative flex items-center gap-2.5 min-w-0 flex-1 pr-2">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white">
-            <IconComponent className="h-4.5 w-4.5" />
+        {/* Top Header: Subject Name + Progress Pie */}
+        <div className="relative flex items-start justify-between gap-3 w-full">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-1">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white">
+              <IconComponent className="h-4.5 w-4.5" />
+            </div>
+            <div className="min-w-0 text-left">
+              <span className="inline-block text-[9px] font-black uppercase tracking-[0.2em] text-white/80 bg-white/15 px-2 py-0.5 rounded-full mb-0.5 backdrop-blur-xs">
+                {student.classGrade || "School"}
+              </span>
+              <h4 className="truncate text-sm sm:text-base font-black text-white drop-shadow-xs">{subjectName}</h4>
+              <p className="text-xs font-bold text-white/90 mt-0.5">{progressPercent}% Complete</p>
+            </div>
           </div>
-          <div className="min-w-0 text-left">
-            <p className="truncate text-[10px] font-black uppercase tracking-[0.2em] text-white/90">{subject.name}</p>
-            <p className="mt-0.5 text-xs font-bold text-white/85">{subject.completed}/{subject.total} Chapters</p>
+
+          <div className="relative shrink-0 pt-0.5">
+            <SubjectPieChart rate={progressPercent} size={38} />
           </div>
         </div>
 
-        <div className="relative shrink-0 flex items-center gap-2.5">
-          <SubjectPieChart rate={subject.rate} />
+        {/* Bottom Metadata: Modules & Topic Notes */}
+        <div className="relative mt-3.5 pt-3 border-t border-white/15 w-full">
+          <div className="flex items-center justify-between text-[11px] font-bold text-white/85 mb-1.5">
+            {totalModules > 0 && <span>Modules: {totalModules}</span>}
+            <span>Topic Notes: {totalTopics}</span>
+          </div>
+
+          <div className="flex items-center justify-between text-[11px] font-bold text-white/95 bg-black/15 px-2.5 py-1 rounded-xl">
+            <span>{completedTopics} / {totalTopics} Topic Notes Completed</span>
+            <ChevronRight className="w-3.5 h-3.5 text-white/70 group-hover:translate-x-0.5 transition-transform" />
+          </div>
         </div>
       </button>
     </motion.div>
@@ -1999,12 +2039,23 @@ export function StudentMyTab({
     return `${mockedKb} KB`;
   };
 
+  const [curriculumVersion, setCurriculumVersion] = useState(0);
+
+  React.useEffect(() => {
+    const unsub = subscribeToCurriculumHierarchy(() => {
+      setCurriculumVersion((v) => v + 1);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+
   const isUPSC = isUPSCClass(localStudent.classGrade);
 
   const upscHierarchy = useMemo(() => {
     if (!isUPSC) return [];
     return buildStudentUPSCHierarchy(localStudent, allClassNotes);
-  }, [isUPSC, localStudent, allClassNotes, testBankVersion]);
+  }, [isUPSC, localStudent, allClassNotes, curriculumVersion, testBankVersion]);
 
   const enrolledPapers = useMemo(() => {
     return upscHierarchy.map((p) => p.gsPaper);
@@ -2021,6 +2072,22 @@ export function StudentMyTab({
     if (parent) return parent;
     return upscHierarchy[0];
   }, [isUPSC, upscHierarchy, selectedSubject]);
+
+  const schoolHierarchy = useMemo(() => {
+    if (isUPSC) return null;
+    return buildStudentSchoolHierarchy(localStudent, allClassNotes);
+  }, [isUPSC, localStudent, allClassNotes, curriculumVersion, testBankVersion]);
+
+  const schoolSubjects = useMemo(() => {
+    return schoolHierarchy ? schoolHierarchy.subjects : [];
+  }, [schoolHierarchy]);
+
+  const activeSchoolSubject = useMemo(() => {
+    if (isUPSC || !schoolHierarchy || schoolHierarchy.subjects.length === 0) return null;
+    if (!selectedSubject) return schoolHierarchy.subjects[0];
+    const found = schoolHierarchy.subjects.find((s) => s.subject.toLowerCase() === selectedSubject.toLowerCase());
+    return found || schoolHierarchy.subjects[0];
+  }, [isUPSC, schoolHierarchy, selectedSubject]);
 
   const handleToggleTopicCompletion = async (note: ClassNote | ChapterNote, subject: string, isCompleted: boolean) => {
     const subjClean = (subject || note.subject || "").trim();
@@ -2047,20 +2114,8 @@ export function StudentMyTab({
       [keyNoteOnly]: newRecord
     };
 
-    const currentNotes = (localStudent.notes?.[subjClean] || localStudent.notes?.[note.subject] || []) as ChapterNote[];
-    const updatedNotes = currentNotes.map((n) => {
-      if (n.id === note.id) {
-        return { ...n, isCompleted };
-      }
-      return n;
-    });
-
     const updatedStudent: Student = {
       ...localStudent,
-      notes: {
-        ...(localStudent.notes || {}),
-        [subjClean]: updatedNotes
-      },
       chapterProgress: updatedChapterProgress
     };
 
@@ -2086,7 +2141,7 @@ export function StudentMyTab({
             <p className="text-[10px] font-black uppercase tracking-[0.25em] text-indigo-600 dark:text-indigo-400">My Study Space</p>
           </div>
           <div className="rounded-full bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500 dark:bg-slate-950 dark:text-slate-400">
-            {isUPSC ? `${enrolledPapers.length} Enrolled Papers` : `${sortedSubjects.length} Enrolled Subjects`}
+            {isUPSC ? `${enrolledPapers.length} Enrolled Papers` : `${schoolSubjects.length} Enrolled Subjects`}
           </div>
         </div>
       </div>
@@ -2152,34 +2207,50 @@ export function StudentMyTab({
                   );
                 })
               )
-            ) : sortedSubjects.length === 0 ? (
+            ) : schoolSubjects.length === 0 ? (
               <div className="text-center py-8 px-3">
                 <BookOpen className="w-8 h-8 text-slate-300 dark:text-slate-700 mx-auto mb-2 stroke-[1.2]" />
                 <p className="text-xs font-bold text-slate-500 dark:text-slate-400">No Enrolled Subjects</p>
                 <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">No subjects assigned yet.</p>
               </div>
             ) : (
-              sortedSubjects.map((subject, idx) => {
-                const isActive = selectedSubject === subject;
-                const palette = getSubjectColor(subject);
-                const IconComponent = getSubjectIcon(subject, idx);
+              schoolSubjects.map((sub, idx) => {
+                const isActive = activeSchoolSubject?.subject.toLowerCase() === sub.subject.toLowerCase();
+                const palette = getSubjectColor(sub.subject);
+                const IconComponent = getSubjectIcon(sub.subject, idx);
                 return (
                   <button
-                    key={`${subject}_${idx}`}
-                    onClick={() => handleSelectSubject(subject)}
+                    key={`${sub.subject}_${idx}`}
+                    onClick={() => handleSelectSubject(sub.subject)}
                     className={`group rounded-xl border px-3 py-2.5 text-left text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
                       isActive 
                         ? `${palette.bg} border-blue-500 text-blue-700 dark:text-blue-400 shadow-sm` 
                         : "border-slate-100 dark:border-slate-800/60 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-950 hover:border-slate-200"
                     }`}
                   >
-                    <div className="flex items-center gap-2 truncate">
-                      <div className={`p-1.5 rounded-lg ${isActive ? palette.badge : "bg-slate-50 dark:bg-slate-950 group-hover:bg-slate-100"}`}>
+                    <div className="flex items-center gap-2 truncate min-w-0 flex-1">
+                      <div className={`p-1.5 rounded-lg shrink-0 ${isActive ? palette.badge : "bg-slate-50 dark:bg-slate-950 group-hover:bg-slate-100"}`}>
                         <IconComponent className={`h-3.5 w-3.5 ${isActive ? palette.text : "text-slate-400"}`} />
                       </div>
-                      <span className="truncate">{subject}</span>
+                      <div className="min-w-0 truncate">
+                        <span className="truncate block font-bold text-slate-800 dark:text-slate-200">{sub.subject}</span>
+                        <span className="text-[10px] text-slate-400 font-medium block">
+                          {sub.totalModules} Modules • {sub.totalTopics} Topics
+                        </span>
+                      </div>
                     </div>
-                    <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${isActive ? "text-blue-500 translate-x-0.5" : "text-slate-350 opacity-0 group-hover:opacity-100"}`} />
+                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md ${
+                        sub.progressPercent === 100
+                          ? "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300"
+                          : sub.progressPercent > 0
+                          ? "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-500"
+                      }`}>
+                        {sub.progressPercent}%
+                      </span>
+                      <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${isActive ? "text-blue-500 translate-x-0.5" : "text-slate-350 opacity-0 group-hover:opacity-100"}`} />
+                    </div>
                   </button>
                 );
               })
@@ -2236,23 +2307,37 @@ export function StudentMyTab({
                 {enrolledPapers.length === 0 ? "No General Studies Papers have been assigned yet." : "Choose a General Studies Paper to view subjects and modules."}
               </div>
             )
-          ) : selectedSubject ? (
-            <>
-              <div className="border-b border-slate-100 dark:border-slate-800 pb-3 mb-4 flex items-center justify-between shrink-0" id="study-right-header">
+          ) : activeSchoolSubject ? (
+            <div className="flex flex-col h-full min-h-0">
+              {/* Header for School Selected Subject */}
+              <div className="border-b border-slate-100 dark:border-slate-800 pb-3 mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shrink-0" id="study-right-header">
                 <div className="truncate">
                   <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400">Selected Subject</p>
-                  <h3 className="text-lg font-black text-slate-800 dark:text-slate-100 truncate pr-2">{selectedSubject}</h3>
+                  <h3 className="text-lg font-black text-slate-800 dark:text-slate-100 truncate pr-2">{activeSchoolSubject.subject}</h3>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                    {activeSchoolSubject.totalModules} Modules
+                  </span>
+                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                    {activeSchoolSubject.totalTopics} Topic Notes
+                  </span>
+                  <span className={`text-[11px] font-black px-2.5 py-1 rounded-lg ${
+                    activeSchoolSubject.progressPercent === 100
+                      ? "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300"
+                      : "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300"
+                  }`}>
+                    {activeSchoolSubject.progressPercent}% Complete
+                  </span>
                   <button
                     onClick={() => {
-                      if (!selectedSubject) return;
+                      if (!activeSchoolSubject?.subject) return;
                       if (!isAdmin && currentTabServiceStatus === "ended") {
                         alert("Your academy services have ended. Please contact the administrator if you believe this is an error.");
                         return;
                       }
                       const allStudentAttempts = getStudentTestAttempts(localStudent.id || localStudent.name || "");
-                      const rData = calculateSubjectTestProgress(selectedSubject, localStudent, allClassNotes, allStudentAttempts, isAdmin);
+                      const rData = calculateSubjectTestProgress(activeSchoolSubject.subject, localStudent, allClassNotes, allStudentAttempts, isAdmin);
                       setReportModalData(rData);
                       setIsReportModalOpen(true);
                     }}
@@ -2262,405 +2347,26 @@ export function StudentMyTab({
                     <FileText className="w-3.5 h-3.5" />
                     <span className="hidden min-[400px]:inline">Report</span>
                   </button>
-                  <div className="rounded-xl bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs font-bold text-slate-600 dark:text-slate-400 border border-slate-100 dark:border-slate-850/60 flex items-center gap-1.5">
-                    <BookOpen className="w-3.5 h-3.5 text-blue-500" />
-                    <span>{selectedChapterGroups.length} Chapters</span>
-                  </div>
                 </div>
               </div>
 
-              {/* Search Bar for Notes */}
-              <div className="relative mb-3">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Search by subject, chapter number, or chapter name..."
-                  value={noteSearchQuery}
-                  onChange={(e) => setNoteSearchQuery(e.target.value)}
-                  className="w-full pl-8 pr-7 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-hidden focus:border-blue-500"
+              {/* School Collapsible 4-tier Tree */}
+              <div className="flex-1 overflow-y-auto pr-1">
+                <StudentSchoolTree
+                  className={localStudent.classGrade}
+                  subjects={[activeSchoolSubject]}
+                  student={localStudent}
+                  onPreviewNote={handlePreviewPdf as any}
+                  onToggleTopicCompletion={handleToggleTopicCompletion}
+                  onOpenPracticeTest={(target) => setStudentTestTarget(target)}
+                  openingNoteId={openingNoteId}
+                  isAdmin={isAdmin}
                 />
-                {noteSearchQuery && (
-                  <button
-                    onClick={() => setNoteSearchQuery("")}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
               </div>
-
-              <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 scrollbar-thin" id="study-right-notes">
-                {selectedChapterGroups.length === 0 ? (
-                  <div className="flex-1 flex flex-col items-center justify-center text-center p-8 my-auto border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/20 dark:bg-slate-950/10">
-                    <div className="relative mb-4">
-                      <div className="p-4 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-400 dark:text-slate-500 shadow-xs">
-                        <FileText className="w-10 h-10 stroke-[1.2]" />
-                      </div>
-                      <div className="absolute -bottom-1.5 -right-1.5 p-1 bg-amber-500 rounded-full text-white shadow-xs">
-                        <AlertCircle className="w-4 h-4" />
-                      </div>
-                    </div>
-                    <h4 className="text-sm font-black text-slate-750 dark:text-slate-200">
-                      {noteSearchQuery ? "No matching chapters found." : "No notes are available for this subject."}
-                    </h4>
-                    <p className="text-[11px] text-slate-400 dark:text-slate-500 max-w-xs mt-1">
-                      {noteSearchQuery ? "Try searching with a different term." : `Your tutor hasn't uploaded any PDF chapters for ${selectedSubject} yet. Please check back later.`}
-                    </p>
-                  </div>
-                ) : (
-                  selectedChapterGroups.map((group) => {
-                    const chapterNotes = group.notes;
-                    let completedParts = 0;
-                    let startedParts = 0;
-                    let chapterRemark = "";
-
-                    chapterNotes.forEach((n) => {
-                      const progRecord = getChapterProgressRecord(n.id, selectedSubject, localStudent.chapterProgress);
-                      const statusConfig = progRecord ? getStatusConfig(progRecord.selectedStatus) : null;
-                      const normStatus = progRecord?.selectedStatus ? normalizeStatusLabel(progRecord.selectedStatus) : "";
-                      const isPartCompleted = normStatus === "Fully Prepared" || (statusConfig && statusConfig.category === "completed") || !!n.isCompleted;
-                      const isPartStarted = isPartCompleted || (normStatus !== "" && normStatus !== "Not Started");
-                      const rem = progRecord?.remarks || n.remark || "";
-
-                      if (isPartCompleted) completedParts++;
-                      if (isPartStarted) startedParts++;
-                      if (rem && !chapterRemark) chapterRemark = rem;
-                    });
-
-                    const isChapterCompleted = chapterNotes.length > 0 && completedParts === chapterNotes.length;
-                    let chapterStatusLabel = "Not Started";
-                    if (isChapterCompleted) {
-                      chapterStatusLabel = "Completed";
-                    } else if (startedParts > 0 || completedParts > 0) {
-                      chapterStatusLabel = "In Progress";
-                    }
-
-                    if (chapterNotes.length === 1) {
-                      const note = chapterNotes[0];
-                      const topicName = getFormattedTopicLabel(note) || `Topic ${group.chapterNo}`;
-                      const topicTest = getTopicPracticeTest(
-                        localStudent.classGrade || note.classGrade || "",
-                        selectedSubject || note.subject || "",
-                        group.chapterNo,
-                        topicName
-                      );
-                      const hasTest = !!(topicTest && topicTest.questions && topicTest.questions.length > 0);
-
-                      return (
-                        <div 
-                          key={`chapter-single-${group.chapterNo}-${note.id}`} 
-                          className={`rounded-2xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 hover:border-blue-300 dark:hover:border-blue-800 transition-all flex flex-col gap-3 group shadow-xs ${
-                            openingNoteId === note.id ? "ring-2 ring-blue-500/50 pointer-events-none" : openingNoteId ? "pointer-events-none opacity-80" : ""
-                          }`}
-                        >
-                          {/* Row 1: Book Icon & Chapter Title */}
-                          <div 
-                            className={`flex items-center gap-3 min-w-0 w-full cursor-pointer ${
-                              openingNoteId ? "pointer-events-none" : ""
-                            }`} 
-                            onClick={() => handlePreviewPdf(note)}
-                          >
-                            <div className="p-2 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 rounded-xl shrink-0 border border-blue-100/60 dark:border-blue-900/30 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                              {openingNoteId === note.id ? (
-                                <RefreshCw className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400" />
-                              ) : (
-                                <BookOpen className="w-4 h-4" />
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <h4 className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100 break-words group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                  Chapter {group.chapterNo} – {group.chapterName}
-                                </h4>
-                                {openingNoteId === note.id && (
-                                  <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 animate-pulse">
-                                    Opening...
-                                  </span>
-                                )}
-                              </div>
-                              {note.pdfFileName && (
-                                <p className="text-[10px] font-semibold text-slate-400 truncate mt-0.5">
-                                  {note.pdfFileName} {note.createdAt ? `• Added ${formatDate(note.createdAt)}` : ""}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Row 2: Status Badge (left), Test Icon Button (right) */}
-                          <div className="flex items-center justify-between gap-2.5 w-full pt-0.5">
-                            <div className="flex items-center gap-2 shrink-0 min-w-0">
-                              {isChapterCompleted && (
-                                <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-md flex items-center gap-1 whitespace-nowrap shrink-0 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-                                  <CheckCircle2 className="w-2.5 h-2.5 stroke-[2.5]" />
-                                  <span>Completed</span>
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="flex items-center gap-2 shrink-0 ml-auto" onClick={(e) => e.stopPropagation()}>
-                              {hasTest && (() => {
-                                const studentClass = localStudent.classGrade || note.classGrade || "";
-                                const studentSubj = selectedSubject || note.subject || "";
-                                const allAttempts = getStudentTestAttempts(localStudent.id || localStudent.name || "");
-                                const normTopic = (topicName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                                const attempts = allAttempts.filter((a) => {
-                                  if (a.chapterNo !== group.chapterNo) return false;
-                                  const aClass = (a.classGrade || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                                  const sClass = (studentClass || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                                  if (aClass && sClass && aClass !== sClass && !aClass.includes(sClass) && !sClass.includes(aClass)) return false;
-                                  const aSubj = (a.subject || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                                  const sSubj = (studentSubj || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                                  if (aSubj && sSubj && aSubj !== sSubj && !aSubj.includes(sSubj) && !sSubj.includes(aSubj)) return false;
-                                  const aNorm = (a.topicName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                                  return aNorm === normTopic || aNorm.includes(normTopic) || normTopic.includes(aNorm);
-                                });
-                                const bestScore = attempts.length > 0 ? Math.max(...attempts.map((a) => a.score)) : null;
-                                const bestAttempt = attempts.find((a) => a.score === bestScore);
-                                const totalQ = bestAttempt?.totalQuestions || topicTest?.questions?.length || 0;
-                                const isAttempted = bestScore !== null;
-                                const pct = isAttempted && totalQ > 0 ? Math.round((bestScore / totalQ) * 100) : null;
-                                const btnStyles = getScoreButtonStyles(isAttempted, pct);
-
-                                return (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (!isAdmin) {
-                                        if (currentTabServiceStatus === "paused") {
-                                          alert("Your learning services are temporarily paused. Please contact the academy for assistance.");
-                                          return;
-                                        }
-                                        if (currentTabServiceStatus === "ended") {
-                                          alert("Your academy services have ended. Please contact the administrator if you believe this is an error.");
-                                          return;
-                                        }
-                                      }
-                                      setStudentTestTarget({
-                                        classGrade: studentClass,
-                                        subject: studentSubj,
-                                        chapterNo: group.chapterNo,
-                                        chapterName: group.chapterName,
-                                        topicName,
-                                        testType: "topic"
-                                      });
-                                    }}
-                                    className={`px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-2xs shrink-0 flex items-center gap-2 font-extrabold min-w-[70px] whitespace-nowrap active:scale-95 ${btnStyles.container}`}
-                                    title={isAttempted ? `Highest Score: ${bestScore}/${totalQ}` : "Take Practice Test"}
-                                  >
-                                    <FileCheck className={`w-4 h-4 shrink-0 ${btnStyles.icon}`} />
-                                    {isAttempted ? (
-                                      <div className="flex flex-col items-center justify-center text-center leading-none">
-                                        <span className={`text-xs font-extrabold ${btnStyles.scoreText}`}>
-                                          {bestScore}/{totalQ}
-                                        </span>
-                                        <span className={`text-[10px] font-bold mt-0.5 ${btnStyles.labelText}`}>
-                                          Test
-                                        </span>
-                                      </div>
-                                    ) : (
-                                      <span className={`text-xs font-bold ${btnStyles.labelText}`}>
-                                        Test
-                                      </span>
-                                    )}
-                                  </button>
-                                );
-                              })()}
-                            </div>
-                          </div>
-
-                          {/* Remark Display */}
-                          {chapterRemark ? (
-                            <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80">
-                              <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 break-words">
-                                <span className="font-bold text-slate-700 dark:text-slate-300">Remark:</span> {chapterRemark.split("\n")[0]}
-                              </p>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    }
-
-                    // Multiple PDFs in this Chapter (Collapsible Parent + Parts List)
-                    const isExpanded = !!expandedStudentChapters[group.chapterNo];
-
-                    return (
-                      <div
-                        key={`chapter-group-${group.chapterNo}`}
-                        className="rounded-2xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col overflow-hidden transition-all"
-                      >
-                        {/* Parent Chapter Header */}
-                        <div className="p-3.5 flex flex-col gap-3 hover:bg-slate-50/80 dark:hover:bg-slate-850/50 transition-colors group/hdr">
-                          {/* Row 1: Expand Arrow, Book Icon, Chapter Title */}
-                          <div 
-                            className="flex items-center gap-3 min-w-0 w-full cursor-pointer"
-                            onClick={() => toggleStudentChapterExpand(group.chapterNo)}
-                            title="Click to expand/collapse chapter topics"
-                          >
-                            <div className="p-1.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-lg group-hover/hdr:bg-blue-50 group-hover/hdr:text-blue-600 dark:group-hover/hdr:bg-blue-950/50 dark:group-hover/hdr:text-blue-400 transition-colors shrink-0">
-                              {isExpanded ? (
-                                <ChevronDown className="w-4 h-4" />
-                              ) : (
-                                <ChevronRight className="w-4 h-4" />
-                              )}
-                            </div>
-                            <div className="p-2 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 rounded-xl shrink-0">
-                              <BookOpen className="w-4 h-4" />
-                            </div>
-                            <h4 className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100 break-words flex-1 min-w-0 group-hover/hdr:text-blue-600 dark:group-hover/hdr:text-blue-400 transition-colors">
-                              Chapter {group.chapterNo} – {group.chapterName}
-                            </h4>
-                          </div>
-
-                          {/* Row 2: Status Badge (left), Topics Badge */}
-                          <div className="flex items-center justify-between gap-2.5 w-full pt-0.5">
-                            <div className="flex items-center gap-2 shrink-0 min-w-0">
-                              {isChapterCompleted && (
-                                <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-md flex items-center gap-1 whitespace-nowrap shrink-0 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-                                  <CheckCircle2 className="w-2.5 h-2.5 stroke-[2.5]" />
-                                  <span>Completed</span>
-                                </span>
-                              )}
-
-                              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md whitespace-nowrap shrink-0">
-                                {group.notes.length} {group.notes.length === 1 ? "Topic" : "Topics"}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Expanded Parts List */}
-                        {isExpanded && (
-                          <div className="p-3 pt-0 flex flex-col gap-2 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/30 dark:bg-slate-950/20 animate-fadeIn">
-                            {group.notes.map((note) => {
-                              const topicName = getFormattedTopicLabel(note) || `Topic ${group.chapterNo}`;
-                              const topicTest = getTopicPracticeTest(
-                                localStudent.classGrade || note.classGrade || "",
-                                selectedSubject || note.subject || "",
-                                group.chapterNo,
-                                topicName
-                              );
-                              const hasTest = !!(topicTest && topicTest.questions && topicTest.questions.length > 0);
-
-                              return (
-                                <div
-                                  key={note.id}
-                                  onClick={() => handlePreviewPdf(note)}
-                                  className={`p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-150/60 dark:border-slate-800/80 flex items-center justify-between gap-2.5 hover:border-blue-300 dark:hover:border-blue-800 transition-all cursor-pointer group ${
-                                    openingNoteId === note.id ? "ring-2 ring-blue-500/50 pointer-events-none" : openingNoteId ? "pointer-events-none opacity-80" : ""
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2.5 min-w-0">
-                                    {openingNoteId === note.id ? (
-                                      <RefreshCw className="w-4 h-4 text-blue-600 dark:text-blue-400 animate-spin shrink-0" />
-                                    ) : (
-                                      <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                                    )}
-                                    <div className="flex flex-col min-w-0">
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="text-xs font-bold text-slate-800 dark:text-slate-100 break-words group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                          {getFormattedTopicLabel(note)}
-                                        </span>
-                                        {openingNoteId === note.id && (
-                                          <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 animate-pulse">
-                                            Opening...
-                                          </span>
-                                        )}
-                                      </div>
-                                      {!isFileNameRedundant(getFormattedTopicLabel(note), note.pdfFileName) && note.pdfFileName ? (
-                                        <span className="text-[10px] text-slate-400 dark:text-slate-500 truncate">
-                                          {note.pdfFileName} {note.createdAt ? `• Added ${formatDate(note.createdAt)}` : ""}
-                                        </span>
-                                      ) : note.createdAt ? (
-                                        <span className="text-[10px] text-slate-400 dark:text-slate-500 truncate">
-                                          Added {formatDate(note.createdAt)}
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                  </div>
-
-                                  <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                    {hasTest && (() => {
-                                      const studentClass = localStudent.classGrade || note.classGrade || "";
-                                      const studentSubj = selectedSubject || note.subject || "";
-                                      const allAttempts = getStudentTestAttempts(localStudent.id || localStudent.name || "");
-                                      const normTopic = (topicName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                                      const attempts = allAttempts.filter(a => {
-                                        if (a.chapterNo !== group.chapterNo) return false;
-                                        if ((a.classGrade || "").toLowerCase().trim() !== (studentClass || "").toLowerCase().trim()) return false;
-                                        if ((a.subject || "").toLowerCase().trim() !== (studentSubj || "").toLowerCase().trim()) return false;
-                                        const aNorm = (a.topicName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                                        return aNorm === normTopic || aNorm.includes(normTopic) || normTopic.includes(aNorm);
-                                      });
-                                      const bestScore = attempts.length > 0 ? Math.max(...attempts.map(a => a.score)) : null;
-                                      const bestAttempt = attempts.find(a => a.score === bestScore);
-                                      const totalQ = bestAttempt?.totalQuestions || topicTest?.questions?.length || 0;
-                                      const isAttempted = bestScore !== null;
-                                      const pct = isAttempted && totalQ > 0 ? Math.round((bestScore / totalQ) * 100) : null;
-                                      const btnStyles = getScoreButtonStyles(isAttempted, pct);
-
-                                      return (
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setStudentTestTarget({
-                                              classGrade: studentClass,
-                                              subject: studentSubj,
-                                              chapterNo: group.chapterNo,
-                                              chapterName: group.chapterName,
-                                              topicName,
-                                              testType: "topic"
-                                            });
-                                          }}
-                                          className={`px-3 py-1 rounded-xl border transition-all cursor-pointer shadow-2xs shrink-0 flex items-center gap-2 min-h-[38px] ${btnStyles.container}`}
-                                          title={isAttempted ? `Highest Score: ${bestScore}/${totalQ}` : "Take Practice Test"}
-                                        >
-                                          <FileCheck className={`w-4 h-4 shrink-0 ${btnStyles.icon}`} />
-                                          {isAttempted ? (
-                                            <div className="flex flex-col items-center justify-center text-center leading-none">
-                                              <span className={`text-xs font-extrabold ${btnStyles.scoreText}`}>
-                                                {bestScore}/{totalQ}
-                                              </span>
-                                              <span className={`text-[10px] font-bold mt-0.5 ${btnStyles.labelText}`}>
-                                                Test
-                                              </span>
-                                            </div>
-                                          ) : (
-                                            <span className={`text-xs font-bold ${btnStyles.labelText}`}>
-                                              Test
-                                            </span>
-                                          )}
-                                        </button>
-                                      );
-                                    })()}
-
-                                    {isAdmin && onDeleteNote && selectedSubject && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setDeleteNoteTarget({ subject: selectedSubject, noteId: note.id });
-                                        }}
-                                        className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200/60 dark:border-rose-800/60 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
-                                        title="Delete Note"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </>
+            </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-sm text-slate-500 dark:text-slate-400">
-              {sortedSubjects.length === 0 ? "No enrolled subjects assigned yet." : "Choose a subject to view chapter-wise notes."}
+              {schoolSubjects.length === 0 ? "No enrolled subjects assigned yet." : "Choose a subject to view modules and topic notes."}
             </div>
           )}
         </div>
