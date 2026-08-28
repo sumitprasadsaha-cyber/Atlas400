@@ -93,7 +93,7 @@ import { filterNotesForStudent, filterSubjectsForStudent } from "../utils/noteAc
 import { filterClassNotesForStudent, getStudentSubjects, isSubjectMatching, inferGSPaperFromSubject } from "../utils/classNoteHelper";
 import { isUPSCClass } from "../utils/upscHierarchyHelper";
 import { buildStudentUPSCHierarchy, StudentUPSCGSPaper } from "../utils/studentUPSCHierarchyHelper";
-import { buildStudentSchoolHierarchy, StudentSchoolSubject, StudentSchoolClassHierarchy } from "../utils/studentSchoolHierarchyHelper";
+import { buildStudentSchoolHierarchy, StudentSchoolSubject, StudentSchoolClassHierarchy, StudentSchoolModule } from "../utils/studentSchoolHierarchyHelper";
 import StudentUPSCTree from "./StudentUPSCTree";
 import StudentSchoolTree from "./StudentSchoolTree";
 import { subscribeToCurriculumHierarchy } from "../lib/curriculumService";
@@ -1340,14 +1340,12 @@ interface SubjectProgressCardProps {
   subject: {
     name?: string;
     subject?: string;
-    total?: number;
     totalModules?: number;
     totalTopics?: number;
-    completed?: number;
     completedTopics?: number;
-    rate?: number;
     progressPercent?: number;
-    notes?: ChapterNote[];
+    rate?: number;
+    modules?: StudentSchoolModule[];
   };
   index: number;
   onSelectSubject: (subject: string) => void;
@@ -1357,9 +1355,9 @@ interface SubjectProgressCardProps {
 function SubjectProgressCard({ subject, index, onSelectSubject, student }: SubjectProgressCardProps) {
   const subjectName = subject.subject || subject.name || "Subject";
   const totalModules = subject.totalModules ?? 0;
-  const totalTopics = subject.totalTopics ?? subject.total ?? 0;
-  const completedTopics = subject.completedTopics ?? subject.completed ?? 0;
-  const progressPercent = subject.progressPercent ?? subject.rate ?? (totalTopics > 0 ? Math.round((completedTopics / totalTopics) * 100) : 0);
+  const totalTopics = subject.totalTopics ?? 0;
+  const completedTopics = subject.completedTopics ?? 0;
+  const progressPercent = totalTopics > 0 ? Math.round((completedTopics / totalTopics) * 100) : 0;
 
   const palette = getSubjectCardPalette(subjectName, index);
   const IconComponent = getSubjectIcon(subjectName, index);
@@ -1399,10 +1397,10 @@ function SubjectProgressCard({ subject, index, onSelectSubject, student }: Subje
           </div>
         </div>
 
-        {/* Bottom Metadata: Modules & Topic Notes */}
+        {/* Bottom Metadata: Chapters & Topic Notes */}
         <div className="relative mt-3.5 pt-3 border-t border-white/15 w-full">
           <div className="flex items-center justify-between text-[11px] font-bold text-white/85 mb-1.5">
-            {totalModules > 0 && <span>Modules: {totalModules}</span>}
+            {totalModules > 0 && <span>Chapters: {totalModules}</span>}
             <span>Topic Notes: {totalTopics}</span>
           </div>
 
@@ -2045,8 +2043,15 @@ export function StudentMyTab({
     const unsub = subscribeToCurriculumHierarchy(() => {
       setCurriculumVersion((v) => v + 1);
     });
+    const handleCurriculumEvent = () => {
+      setCurriculumVersion((v) => v + 1);
+    };
+    window.addEventListener("curriculum-hierarchy-updated", handleCurriculumEvent);
+    window.addEventListener("notes-progress-updated", handleCurriculumEvent);
     return () => {
       if (unsub) unsub();
+      window.removeEventListener("curriculum-hierarchy-updated", handleCurriculumEvent);
+      window.removeEventListener("notes-progress-updated", handleCurriculumEvent);
     };
   }, []);
 
@@ -2235,7 +2240,7 @@ export function StudentMyTab({
                       <div className="min-w-0 truncate">
                         <span className="truncate block font-bold text-slate-800 dark:text-slate-200">{sub.subject}</span>
                         <span className="text-[10px] text-slate-400 font-medium block">
-                          {sub.totalModules} Modules • {sub.totalTopics} Topics
+                          {sub.totalModules} Chapters • {sub.totalTopics} Topics
                         </span>
                       </div>
                     </div>
@@ -2317,7 +2322,7 @@ export function StudentMyTab({
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                    {activeSchoolSubject.totalModules} Modules
+                    {activeSchoolSubject.totalModules} Chapters
                   </span>
                   <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                     {activeSchoolSubject.totalTopics} Topic Notes
@@ -2594,6 +2599,24 @@ export default function StudentDashboard({
     return { presents, total, rate };
   }, [student.attendance]);
 
+  const [curriculumVersion, setCurriculumVersion] = useState(0);
+
+  useEffect(() => {
+    const unsubCurriculum = subscribeToCurriculumHierarchy(() => {
+      setCurriculumVersion((v) => v + 1);
+    });
+    const handleCurriculumUpdate = () => {
+      setCurriculumVersion((v) => v + 1);
+    };
+    window.addEventListener("curriculum-hierarchy-updated", handleCurriculumUpdate);
+    window.addEventListener("notes-progress-updated", handleCurriculumUpdate);
+    return () => {
+      if (unsubCurriculum) unsubCurriculum();
+      window.removeEventListener("curriculum-hierarchy-updated", handleCurriculumUpdate);
+      window.removeEventListener("notes-progress-updated", handleCurriculumUpdate);
+    };
+  }, []);
+
   const studentSubjects = useMemo(() => {
     return getStudentSubjects(student, allClassNotes);
   }, [student, allClassNotes]);
@@ -2603,23 +2626,28 @@ export default function StudentDashboard({
   const upscPapers = useMemo(() => {
     if (!isUPSC) return [];
     return buildStudentUPSCHierarchy(student, allClassNotes);
-  }, [isUPSC, student, allClassNotes, testBankVersion]);
+  }, [isUPSC, student, allClassNotes, curriculumVersion, testBankVersion]);
+
+  const schoolHierarchy = useMemo(() => {
+    if (isUPSC) return null;
+    return buildStudentSchoolHierarchy(student, allClassNotes);
+  }, [isUPSC, student, allClassNotes, curriculumVersion, testBankVersion]);
 
   const subjectProgress = useMemo(() => {
-    const allStudentAttempts = getAllTestAttempts();
-    return studentSubjects
-      .map((sub) => {
-        const weighted = calculateSubjectWeightedProgress(sub, student, allClassNotes, allStudentAttempts, isAdmin);
-        return {
-          name: sub,
-          total: weighted.total,
-          completed: weighted.completed,
-          rate: weighted.rate,
-          notes: weighted.notes,
-        };
-      })
+    if (isUPSC || !schoolHierarchy) return [];
+    return schoolHierarchy.subjects
+      .map((sub) => ({
+        name: sub.subject,
+        subject: sub.subject,
+        totalModules: sub.totalModules,
+        totalTopics: sub.totalTopics,
+        completedTopics: sub.completedTopics,
+        progressPercent: sub.progressPercent,
+        rate: sub.progressPercent,
+        modules: sub.modules,
+      }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [studentSubjects, student, allClassNotes, isAdmin, testBankVersion]);
+  }, [isUPSC, schoolHierarchy]);
 
   const recentAttendance = useMemo(() => {
     const dates = ["2026-07-14", "2026-07-13", "2026-07-12", "2026-07-11", "2026-07-10", "2026-07-09", "2026-07-08"];

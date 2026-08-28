@@ -1316,14 +1316,14 @@ export function areClassNotesEqual(
 }
 
 export function getLocalClassNotes(): ClassNote[] {
-  if (inMemoryClassNotesCache && inMemoryClassNotesCache.length > 0) {
+  if (inMemoryClassNotesCache !== null) {
     return inMemoryClassNotesCache;
   }
   if (typeof window === "undefined") return inMemoryClassNotesCache || [];
 
   // Try local memory/storage first
   const cached = localStorage.getItem(STORAGE_KEY_CLASS_NOTES);
-  if (cached) {
+  if (cached !== null) {
     try {
       const parsed = JSON.parse(cached);
       if (Array.isArray(parsed)) {
@@ -1338,13 +1338,14 @@ export function getLocalClassNotes(): ClassNote[] {
   // Background hydrate from IndexedDB cache
   notesCacheService.getCachedNotes().then((idbNotes) => {
     if (idbNotes && Array.isArray(idbNotes) && idbNotes.length > 0) {
-      if (!inMemoryClassNotesCache || inMemoryClassNotesCache.length === 0) {
+      if (inMemoryClassNotesCache === null) {
         saveLocalClassNotes(idbNotes);
       }
     }
   }).catch(() => {});
 
-  return inMemoryClassNotesCache || [];
+  inMemoryClassNotesCache = [];
+  return inMemoryClassNotesCache;
 }
 
 export function saveLocalClassNotes(notes: ClassNote[]) {
@@ -1353,7 +1354,7 @@ export function saveLocalClassNotes(notes: ClassNote[]) {
   const migratedNotes = notes.map(migrateNoteToHierarchy).sort(sortNotesByTopicNumber);
 
   // Prevent duplicate state emissions if the dataset is unchanged
-  if (areClassNotesEqual(inMemoryClassNotesCache, migratedNotes)) {
+  if (inMemoryClassNotesCache !== null && areClassNotesEqual(inMemoryClassNotesCache, migratedNotes)) {
     return;
   }
 
@@ -1370,6 +1371,10 @@ export function saveLocalClassNotes(notes: ClassNote[]) {
       console.warn("[ClassNotesListener] callback warning:", err);
     }
   });
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("notes-progress-updated"));
+  }
 }
 
 function ensureSingleFirestoreNotesSubscription() {
@@ -1398,25 +1403,8 @@ function ensureSingleFirestoreNotesSubscription() {
           if (n && n.id) mergedMap.set(n.id, n);
         }
 
-        // Preserve recently created/updated optimistic local notes that might still be in-flight
-        const currentLocal = inMemoryClassNotesCache || getLocalClassNotes();
-        const now = Date.now();
-        for (const localNote of currentLocal) {
-          if (localNote && localNote.id && !mergedMap.has(localNote.id)) {
-            const updatedAtMs = new Date(localNote.updatedAt || localNote.createdAt || 0).getTime();
-            // Preserve optimistic writes within the last 30 seconds
-            if (now - updatedAtMs < 30000) {
-              mergedMap.set(localNote.id, localNote);
-            }
-          }
-        }
-
         const mergedList = Array.from(mergedMap.values());
-        if (mergedList.length > 0) {
-          saveLocalClassNotes(mergedList);
-        } else if (currentLocal.length === 0) {
-          saveLocalClassNotes([]);
-        }
+        saveLocalClassNotes(mergedList);
       };
 
       const classColRef = collection(db, "class_notes");

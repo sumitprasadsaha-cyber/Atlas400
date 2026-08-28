@@ -77,6 +77,11 @@ function notifyHierarchyListeners() {
       console.warn("[CurriculumService] Listener callback error:", err);
     }
   });
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("curriculum-hierarchy-updated"));
+    window.dispatchEvent(new CustomEvent("notes-progress-updated"));
+  }
 }
 
 function safeParseJson<T>(jsonStr: string | null, fallback: T): T {
@@ -369,7 +374,7 @@ export async function saveSchoolHierarchy(data: SchoolHierarchyData): Promise<vo
     const db = await getFirebaseDb();
     if (db) {
       const docRef = doc(db, "curriculum_hierarchy", "school_hierarchy");
-      await setDoc(docRef, updatedData, { merge: true });
+      await setDoc(docRef, updatedData);
     }
   } catch (err) {
     console.warn("[CurriculumService] Failed saving school hierarchy to Firestore:", err);
@@ -390,7 +395,7 @@ export async function saveUpscHierarchy(data: UpscHierarchyData): Promise<void> 
     const db = await getFirebaseDb();
     if (db) {
       const docRef = doc(db, "curriculum_hierarchy", "upsc_hierarchy");
-      await setDoc(docRef, updatedData, { merge: true });
+      await setDoc(docRef, updatedData);
     }
   } catch (err) {
     console.warn("[CurriculumService] Failed saving UPSC hierarchy to Firestore:", err);
@@ -431,16 +436,14 @@ export function subscribeToCurriculumHierarchy(
         activeSchoolUnsub = onSnapshot(schoolDocRef, (snap) => {
           if (snap.exists()) {
             const remote = snap.data() as SchoolHierarchyData;
-            const current = getSchoolHierarchy();
-            const merged = mergeSchoolHierarchies(current, remote);
-            inMemorySchoolHierarchy = merged;
-            safeLocalStorageSetItem(STORAGE_KEY_SCHOOL_HIERARCHY, JSON.stringify(merged));
+            inMemorySchoolHierarchy = remote;
+            safeLocalStorageSetItem(STORAGE_KEY_SCHOOL_HIERARCHY, JSON.stringify(remote));
             notifyHierarchyListeners();
           } else {
             // Document doesn't exist yet on remote, persist current local
             const current = getSchoolHierarchy();
             if (current.classes.length > 0) {
-              setDoc(schoolDocRef, current, { merge: true }).catch(() => {});
+              setDoc(schoolDocRef, current).catch(() => {});
             }
           }
         });
@@ -450,15 +453,13 @@ export function subscribeToCurriculumHierarchy(
         activeUpscUnsub = onSnapshot(upscDocRef, (snap) => {
           if (snap.exists()) {
             const remote = snap.data() as UpscHierarchyData;
-            const current = getUpscHierarchy();
-            const merged = mergeUpscHierarchies(current, remote);
-            inMemoryUpscHierarchy = merged;
-            safeLocalStorageSetItem(STORAGE_KEY_UPSC_HIERARCHY, JSON.stringify(merged));
+            inMemoryUpscHierarchy = remote;
+            safeLocalStorageSetItem(STORAGE_KEY_UPSC_HIERARCHY, JSON.stringify(remote));
             notifyHierarchyListeners();
           } else {
             const current = getUpscHierarchy();
             if (current.papers.length > 0) {
-              setDoc(upscDocRef, current, { merge: true }).catch(() => {});
+              setDoc(upscDocRef, current).catch(() => {});
             }
           }
         });
