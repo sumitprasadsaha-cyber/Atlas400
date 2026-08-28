@@ -314,14 +314,19 @@ export interface UploadPayload {
  * (multipart/form-data, raw binary buffer, base64 in JSON, or streaming requests).
  */
 export async function extractUploadPayload(req: any): Promise<UploadPayload> {
-  const reqContentType = (req.headers?.["content-type"] || req.headers?.["Content-Type"] || "").toLowerCase();
+  const rawContentType = String(req.headers?.["content-type"] || req.headers?.["Content-Type"] || "");
+  const reqContentType = rawContentType.toLowerCase();
   
   let rawBuffer: Buffer = Buffer.alloc(0);
   if (Buffer.isBuffer(req.body)) {
     rawBuffer = req.body;
+  } else if (typeof req.body === "string") {
+    rawBuffer = Buffer.from(req.body, "latin1");
   } else if (req.body?.rawBuffer && Buffer.isBuffer(req.body.rawBuffer)) {
     rawBuffer = req.body.rawBuffer;
-  } else if (typeof req.on === "function" && req.readable) {
+  } else if (req.body?.buffer && Buffer.isBuffer(req.body.buffer)) {
+    rawBuffer = req.body.buffer;
+  } else if (typeof req.on === "function" && req.readable && !req.readableEnded) {
     rawBuffer = await streamToBuffer(req);
   }
 
@@ -340,9 +345,9 @@ export async function extractUploadPayload(req: any): Promise<UploadPayload> {
     }
   }
 
-  // 1. Handle multipart/form-data
+  // 1. Handle multipart/form-data (Preserve original boundary case)
   if (reqContentType.includes("multipart/form-data")) {
-    const boundaryMatch = reqContentType.match(/boundary=([^;]+)/i);
+    const boundaryMatch = rawContentType.match(/boundary=([^;]+)/i);
     const boundary = boundaryMatch ? boundaryMatch[1].trim().replace(/^["']|["']$/g, "") : "";
     if (boundary && rawBuffer.length > 0) {
       const parsed = parseMultipartFormData(rawBuffer, boundary);

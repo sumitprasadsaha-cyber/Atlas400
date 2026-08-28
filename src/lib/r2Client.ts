@@ -287,7 +287,7 @@ export async function uploadToR2(params: {
     errors.push(formDataError?.message || String(formDataError));
   }
 
-  // Step 2: Upload directly via binary body
+  // Step 2: Upload directly via binary body / stream (Fetch or XHR)
   try {
     const uploadApiUrl = `${baseUrl}/api/storage?action=upload&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}&mimeType=${encodeURIComponent(mimeType)}`;
 
@@ -338,15 +338,15 @@ export async function uploadToR2(params: {
               } catch {
                 // Keep default
               }
-              reject(new Error(`Binary Proxy: ${errDetail}`));
+              reject(new Error(`Binary Stream Upload: ${errDetail}`));
             }
           };
 
-          xhr.onerror = () => reject(new Error("Binary Proxy: Network Error"));
-          xhr.ontimeout = () => reject(new Error("Binary Proxy: Timeout"));
+          xhr.onerror = () => reject(new Error("Binary Stream Upload: Network Error"));
+          xhr.ontimeout = () => reject(new Error("Binary Stream Upload: Timeout"));
           xhr.send(params.file);
         } catch (err: any) {
-          reject(new Error(`Binary Proxy Exception: ${err?.message || err}`));
+          reject(new Error(`Binary Stream Exception: ${err?.message || err}`));
         }
       });
 
@@ -375,64 +375,12 @@ export async function uploadToR2(params: {
         };
       } else {
         const text = await res.text();
-        errors.push(`Binary Fetch HTTP ${res.status}: ${text}`);
+        errors.push(`Binary Stream HTTP ${res.status}: ${text}`);
       }
     }
   } catch (proxyError: any) {
-    console.warn("[R2Client] Binary proxy upload attempt encountered an issue:", proxyError);
+    console.warn("[R2Client] Binary stream upload attempt encountered an issue:", proxyError);
     errors.push(proxyError?.message || String(proxyError));
-  }
-
-  // Step 2: Fallback to Base64 JSON Upload via Backend Proxy
-  try {
-    let base64Data = "";
-    if (typeof FileReader !== "undefined") {
-      base64Data = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          const base64 = result.includes(",") ? result.split(",")[1] : result;
-          resolve(base64);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(params.file);
-      });
-    } else if (typeof Buffer !== "undefined") {
-      const arrayBuffer = await params.file.arrayBuffer();
-      base64Data = Buffer.from(arrayBuffer).toString("base64");
-    }
-
-    if (base64Data) {
-      const res = await fetch(`${baseUrl}/api/storage?action=upload&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}&mimeType=${encodeURIComponent(mimeType)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bucket,
-          key: cleanKey,
-          base64: base64Data,
-          mimeType,
-        }),
-      });
-
-      if (res.ok) {
-        const json = await res.json();
-        if (params.onProgress) params.onProgress(100);
-        return {
-          bucket,
-          key: cleanKey,
-          url: json.url || getR2PublicUrl(bucket, cleanKey),
-          size: params.file.size,
-          mimeType,
-          etag: json.etag,
-        };
-      } else {
-        const text = await res.text();
-        errors.push(`Base64 Proxy HTTP ${res.status}: ${text}`);
-      }
-    }
-  } catch (base64Err: any) {
-    console.warn("[R2Client] Base64 fallback error:", base64Err);
-    errors.push(`Base64 Fallback: ${base64Err?.message || base64Err}`);
   }
 
   // Step 3: Presigned URL Fallback

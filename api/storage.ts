@@ -87,45 +87,81 @@ export default async function handler(req: any, res: any) {
 
       // 2. UPLOAD FILE
       case "upload": {
-        const payload = await extractUploadPayload(req);
+        let payload;
+        try {
+          payload = await extractUploadPayload(req);
+        } catch (extractErr: any) {
+          console.error("[Storage API] Error extracting upload payload:", extractErr);
+          return res.status(400).json({
+            success: false,
+            error: "Failed to parse upload request body or multipart data.",
+            details: extractErr?.message,
+          });
+        }
+
         const bucket = (req.query.bucket as string) || (parsedBody?.bucket as string) || payload.bucket;
         const key = (req.query.key as string) || (parsedBody?.key as string) || payload.key;
         const contentType = payload.contentType || (req.query.mimeType as string) || (parsedBody?.mimeType as string) || getMimeType(key || payload.fileName || "file.pdf");
 
         if (!key) {
-          return res.status(400).json({ error: "Missing required 'key' query parameter, form field, or body property." });
+          return res.status(400).json({
+            success: false,
+            error: "Missing required 'key' query parameter, form field, or body property.",
+          });
         }
 
         if (!payload.buffer || payload.buffer.length === 0) {
-          return res.status(400).json({ error: "Upload buffer is empty or no valid file/body data received." });
+          return res.status(400).json({
+            success: false,
+            error: "Upload buffer is empty or no valid file data received. Please select a file to upload.",
+          });
+        }
+
+        // File size limit (50MB)
+        const MAX_STORAGE_SIZE = 50 * 1024 * 1024;
+        if (payload.buffer.length > MAX_STORAGE_SIZE) {
+          return res.status(400).json({
+            success: false,
+            error: "File size exceeds limit. Maximum allowed size is 50 MB.",
+          });
         }
 
         const config = getR2ServerConfig();
         const actualBucket = (bucket || config.bucket || "academy-connect-files").trim();
         const cleanKey = sanitizeKey(key, actualBucket);
 
-        const result = await uploadObjectToR2({
-          bucket: actualBucket,
-          key: cleanKey,
-          body: payload.buffer,
-          contentType,
-        });
+        try {
+          const result = await uploadObjectToR2({
+            bucket: actualBucket,
+            key: cleanKey,
+            body: payload.buffer,
+            contentType,
+          });
 
-        const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(result.bucket)}&key=${encodeURIComponent(cleanKey)}`;
-        const publicUrl = config.publicUrl
-          ? `${config.publicUrl}/${cleanKey}`
-          : downloadUrl;
+          const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(result.bucket)}&key=${encodeURIComponent(cleanKey)}`;
+          const publicUrl = config.publicUrl
+            ? `${config.publicUrl}/${cleanKey}`
+            : downloadUrl;
 
-        return sendSuccess(res, {
-          bucket: result.bucket,
-          key: result.key,
-          etag: result.etag,
-          url: downloadUrl,
-          publicUrl: publicUrl,
-          size: payload.buffer.length,
-          mimeType: contentType,
-          filename: payload.fileName,
-        });
+          return sendSuccess(res, {
+            bucket: result.bucket,
+            key: result.key,
+            etag: result.etag,
+            url: downloadUrl,
+            publicUrl: publicUrl,
+            size: payload.buffer.length,
+            mimeType: contentType,
+            filename: payload.fileName,
+          });
+        } catch (uploadErr: any) {
+          console.error("[Storage API] Upload execution error:", uploadErr);
+          return res.status(500).json({
+            success: false,
+            error: "Cloudflare R2 bucket upload failed.",
+            details: uploadErr?.message || String(uploadErr),
+            stack: process.env.NODE_ENV !== "production" ? uploadErr?.stack : undefined,
+          });
+        }
       }
 
       // 3. DOWNLOAD / STREAM FILE
