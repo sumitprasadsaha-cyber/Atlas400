@@ -266,6 +266,12 @@ export default function App() {
   useEffect(() => {
     if (!auth.isAuthenticated) return;
 
+    // Refresh and subscribe to practice tests with active auth credentials
+    initPracticeTestsRealtimeSync();
+    fetchAllPracticeTests().catch((err) => {
+      console.warn("[App] Auth-triggered practice tests fetch notice:", err);
+    });
+
     if (auth.role === "admin") {
       const unsubscribe = subscribeToStudents((updatedStudents) => {
         setStudents((updatedStudents || []).map(normalizeStudent));

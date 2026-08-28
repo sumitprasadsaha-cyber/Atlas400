@@ -26,7 +26,8 @@ const MAX_LOCAL_STORAGE_ITEM_BYTES = 50 * 1024;
 
 let memoryTestBank: Record<string, TopicPracticeTest> = {};
 let memorySyncQueue: SyncQueueItem[] = [];
-let isRealtimeInitialized = false;
+let activeFirestoreTestsUnsub: Unsubscribe | null = null;
+let activeFirestoreSyncUnsub: Unsubscribe | null = null;
 
 export interface TopicPracticeTestMetadata {
   id: string;
@@ -218,8 +219,6 @@ export function subscribeToPracticeTests(
 
 export function initPracticeTestsRealtimeSync(): void {
   if (typeof window === "undefined") return;
-  if (isRealtimeInitialized) return;
-  isRealtimeInitialized = true;
 
   // A. BroadcastChannel for same-origin multi-tab sync
   try {
@@ -240,10 +239,25 @@ export function initPracticeTestsRealtimeSync(): void {
   // B. Firestore Realtime Listeners for instant cross-device sync
   getFirebaseDb().then((db) => {
     if (!db) return;
+
+    // Clean up any previous dead or stale subscriptions
+    if (activeFirestoreTestsUnsub) {
+      try {
+        activeFirestoreTestsUnsub();
+      } catch {}
+      activeFirestoreTestsUnsub = null;
+    }
+    if (activeFirestoreSyncUnsub) {
+      try {
+        activeFirestoreSyncUnsub();
+      } catch {}
+      activeFirestoreSyncUnsub = null;
+    }
+
     try {
       // 1. Listen directly to topic_practice_tests collection for immediate real-time updates
       const testsColRef = collection(db, "topic_practice_tests");
-      onSnapshot(
+      activeFirestoreTestsUnsub = onSnapshot(
         testsColRef,
         (snap) => {
           const freshBank: Record<string, TopicPracticeTest> = {};
@@ -254,15 +268,34 @@ export function initPracticeTestsRealtimeSync(): void {
               freshBank[testId] = { ...test, id: testId };
             }
           });
-          memoryTestBank = freshBank;
-          saveLocalTestBank(freshBank, { silent: true });
+
+          // Non-destructive update: keep valid in-memory entries while merging fresh data
+          if (Object.keys(freshBank).length > 0 || snap.metadata.hasPendingWrites) {
+            memoryTestBank = { ...memoryTestBank, ...freshBank };
+          } else {
+            memoryTestBank = freshBank;
+          }
+
+          saveLocalTestBank(memoryTestBank, { silent: true });
           notifyTestBankSubscribers();
           if (typeof window !== "undefined") {
             window.dispatchEvent(new CustomEvent("practice-tests-updated"));
           }
+
+          // Non-destructive backup to secondary R2 storage
+          if (Object.keys(memoryTestBank).length > 0) {
+            syncTestBankToStorage(memoryTestBank).catch(() => {});
+          }
         },
         (err) => {
           console.warn("[PracticeTestService] topic_practice_tests subscription error:", err);
+          // If Firestore is temporarily unavailable, fall back to R2 backup
+          fetchTestBankFromStorage().then((backup) => {
+            if (backup && Object.keys(backup).length > 0) {
+              memoryTestBank = { ...backup, ...memoryTestBank };
+              notifyTestBankSubscribers();
+            }
+          }).catch(() => {});
         }
       );
 
@@ -270,7 +303,7 @@ export function initPracticeTestsRealtimeSync(): void {
       const syncDocRef = doc(db, "practice_tests_sync", "latest");
       let lastProcessedTs = 0;
 
-      onSnapshot(
+      activeFirestoreSyncUnsub = onSnapshot(
         syncDocRef,
         async (snap) => {
           if (snap.exists()) {
@@ -445,8 +478,18 @@ export function getScoreButtonStyles(isAttempted: boolean, percentage?: number |
   }
 }
 
-export async function syncTestBankToStorage(bank: Record<string, TopicPracticeTest>): Promise<boolean> {
+export async function syncTestBankToStorage(
+  bank: Record<string, TopicPracticeTest>,
+  options?: { allowEmpty?: boolean }
+): Promise<boolean> {
   try {
+    // CRITICAL DATA PROTECTION:
+    // Never overwrite the R2 secondary backup with an empty object on startup or unhydrated memory bank!
+    // Only allow empty upload if explicitly confirmed (e.g. from deleteAllPracticeTestsFromDatabase).
+    if ((!bank || Object.keys(bank).length === 0) && !options?.allowEmpty) {
+      return false;
+    }
+
     const jsonString = JSON.stringify(bank, null, 2);
     const blob = new Blob([jsonString], { type: "application/json" });
     await uploadToR2({
@@ -630,26 +673,44 @@ export async function fetchAllPracticeTests(): Promise<Record<string, TopicPract
           }
         });
 
-        // Always update memory bank with authoritative Firestore data
-        memoryTestBank = firestoreBank;
-        saveLocalTestBank(firestoreBank, { silent: true });
-        notifyTestBankSubscribers();
-        
-        // Backup to secondary storage in background if needed
-        syncTestBankToStorage(firestoreBank).catch(() => {});
-        return firestoreBank;
+        if (Object.keys(firestoreBank).length > 0) {
+          // Always update memory bank with authoritative Firestore data
+          memoryTestBank = { ...memoryTestBank, ...firestoreBank };
+          saveLocalTestBank(memoryTestBank, { silent: true });
+          notifyTestBankSubscribers();
+          
+          // Non-destructive backup to secondary storage
+          syncTestBankToStorage(memoryTestBank).catch(() => {});
+          return memoryTestBank;
+        }
       }
     } catch (err) {
       console.warn("[PracticeTestService] Error fetching tests from Firestore topic_practice_tests:", err);
     }
 
-    // 2. Secondary fallback if Firestore is temporarily offline
+    // 2. Secondary fallback and self-heal if Firestore was empty or offline
     try {
       const storageBank = await fetchTestBankFromStorage();
       if (storageBank && typeof storageBank === "object" && Object.keys(storageBank).length > 0) {
         memoryTestBank = { ...storageBank, ...memoryTestBank };
         saveLocalTestBank(memoryTestBank, { silent: true });
         notifyTestBankSubscribers();
+
+        // Self-heal: restore tests to Firestore if accessible
+        try {
+          const db = await getFirebaseDb();
+          if (db) {
+            for (const [testId, testDocData] of Object.entries(storageBank)) {
+              if (testDocData && Array.isArray(testDocData.questions) && testDocData.questions.length > 0) {
+                const docRef = doc(db, "topic_practice_tests", testId);
+                await setDoc(docRef, testDocData, { merge: true }).catch(() => {});
+              }
+            }
+          }
+        } catch (healErr) {
+          console.warn("[PracticeTestService] Firestore self-heal restore warning:", healErr);
+        }
+
         return memoryTestBank;
       }
     } catch (err) {
@@ -1197,15 +1258,28 @@ export async function deleteClassPracticeTests(classGrade: string): Promise<void
 
   const bank = getLocalTestBank();
   let changed = false;
+  const deletedKeys: string[] = [];
 
   Object.keys(bank).forEach((k) => {
     const t = bank[k];
     if (t && String(t.classGrade || "").toLowerCase().trim() === normClass) {
       delete bank[k];
+      deletedKeys.push(k);
       removeLocalTopicCache(k);
       changed = true;
     }
   });
+
+  try {
+    const db = await getFirebaseDb();
+    if (db) {
+      for (const k of deletedKeys) {
+        await deleteDoc(doc(db, "topic_practice_tests", k)).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn("[PracticeTestService] Error deleting class tests from Firestore:", err);
+  }
 
   if (changed) {
     saveLocalTestBank(bank);
@@ -1245,8 +1319,20 @@ export async function deleteAllPracticeTestsFromDatabase(): Promise<{
     safeLocalStorageRemoveItem("tuition_test_attempts_cache");
   } catch (e) {}
 
+  try {
+    const db = await getFirebaseDb();
+    if (db) {
+      const snap = await getDocs(collection(db, "topic_practice_tests"));
+      for (const docSnap of snap.docs) {
+        await deleteDoc(docSnap.ref).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn("[PracticeTestService] Firestore delete all warning:", err);
+  }
+
   await deleteAllAttemptsAndScoresFromPersistence().catch(() => {});
-  await syncTestBankToStorage({}).catch(() => {});
+  await syncTestBankToStorage({}, { allowEmpty: true }).catch(() => {});
   await notifyPracticeTestRealtimeSync({ action: "delete_all" });
 
   if (typeof window !== "undefined") {

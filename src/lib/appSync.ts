@@ -17,7 +17,7 @@ import {
   subscribeToAnnouncements,
   cleanupAllFirestoreListeners
 } from "./firestoreService";
-import { initPracticeTestsRealtimeSync } from "./practiceTestService";
+import { initPracticeTestsRealtimeSync, fetchAllPracticeTests } from "./practiceTestService";
 import { cleanupAllListeners } from "./realtimeSync";
 import { subscribeToCurriculumHierarchy } from "./curriculumService";
 import { runDatabaseMigrationsIfNeeded } from "./schemaMigrationService";
@@ -96,6 +96,9 @@ export function initializeAdminSync(): void {
 
     // 5. Initialize practice tests real-time sync
     initPracticeTestsRealtimeSync();
+    fetchAllPracticeTests().catch((err) => {
+      console.warn("[AppSync] Admin practice tests fetch warning:", err);
+    });
 
     // 6. Subscribe to curriculum hierarchy (Classes, GS Papers, Subjects, Chapters, Modules)
     const unsubCurriculum = subscribeToCurriculumHierarchy();
@@ -176,6 +179,9 @@ export function initializeStudentSync(studentId: string): void {
 
     // 5. Initialize practice tests real-time sync
     initPracticeTestsRealtimeSync();
+    fetchAllPracticeTests().catch((err) => {
+      console.warn("[AppSync] Student practice tests fetch warning:", err);
+    });
 
     // 6. Subscribe to curriculum hierarchy
     const unsubCurriculum = subscribeToCurriculumHierarchy();
