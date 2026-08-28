@@ -969,6 +969,157 @@ export async function fetchQuestions(
   return list;
 }
 
+/**
+ * Recursively removes undefined fields and cleans properties for safe Firestore persistence.
+ * Guarantees that zero undefined values are sent to Firestore.
+ */
+export function sanitizeFirestoreData<T>(data: T): T {
+  if (data === null || data === undefined) {
+    return null as unknown as T;
+  }
+
+  // Preserve Date instances
+  if (data instanceof Date) {
+    return data;
+  }
+
+  // Preserve Firestore Timestamp, DocumentReference, GeoPoint, FieldValue objects
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    (
+      (data as any)._methodName ||
+      typeof (data as any).toDate === "function" ||
+      (data as any).firestore ||
+      typeof (data as any).isEqual === "function" ||
+      (data as any).constructor?.name === "Timestamp" ||
+      (data as any).constructor?.name === "DocumentReference" ||
+      (data as any).constructor?.name === "GeoPoint" ||
+      (data as any).constructor?.name === "FieldValue"
+    )
+  ) {
+    return data;
+  }
+
+  // Arrays: recursively sanitize elements, filtering out undefined
+  if (Array.isArray(data)) {
+    return data
+      .filter((item) => item !== undefined)
+      .map((item) => sanitizeFirestoreData(item)) as unknown as T;
+  }
+
+  // Objects: recursively sanitize entries, completely omitting undefined keys
+  if (typeof data === "object" && data !== null) {
+    const sanitized: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== undefined) {
+        sanitized[key] = sanitizeFirestoreData(value);
+      }
+    }
+    return sanitized as T;
+  }
+
+  // Primitives
+  return data;
+}
+
+/**
+ * Validates all required fields of a TopicPracticeTest document prior to Firestore persistence.
+ */
+export function validatePracticeTestDocument(docData: TopicPracticeTest): { valid: boolean; error?: string } {
+  if (!docData.id || typeof docData.id !== "string" || !docData.id.trim()) {
+    return { valid: false, error: "Missing required field: id" };
+  }
+  if (!docData.noteId || typeof docData.noteId !== "string" || !docData.noteId.trim()) {
+    return { valid: false, error: "Missing required field: noteId" };
+  }
+  if (!docData.topicNoteId || typeof docData.topicNoteId !== "string" || !docData.topicNoteId.trim()) {
+    return { valid: false, error: "Missing required field: topicNoteId" };
+  }
+  if (!docData.classGrade || typeof docData.classGrade !== "string" || !docData.classGrade.trim()) {
+    return { valid: false, error: "Missing required field: classGrade" };
+  }
+  if (!docData.subject || typeof docData.subject !== "string" || !docData.subject.trim()) {
+    return { valid: false, error: "Missing required field: subject" };
+  }
+  if (docData.chapterNo === undefined || docData.chapterNo === null || isNaN(Number(docData.chapterNo))) {
+    return { valid: false, error: "Missing required field: chapterNo" };
+  }
+  if (!docData.chapterName || typeof docData.chapterName !== "string" || !docData.chapterName.trim()) {
+    return { valid: false, error: "Missing required field: chapterName" };
+  }
+  if (!docData.topicName || typeof docData.topicName !== "string" || !docData.topicName.trim()) {
+    return { valid: false, error: "Missing required field: topicName" };
+  }
+  if (!Array.isArray(docData.questions) || docData.questions.length === 0) {
+    return { valid: false, error: "Missing required field: questions (questions array is empty)" };
+  }
+  if (typeof docData.questionCount !== "number" || docData.questionCount <= 0 || docData.questionCount !== docData.questions.length) {
+    return { valid: false, error: `Invalid questionCount: expected ${docData.questions.length}, received ${docData.questionCount}` };
+  }
+  if (docData.rawText === undefined || docData.rawText === null) {
+    return { valid: false, error: "Missing required field: rawText" };
+  }
+  if (docData.hasTest !== true && docData.hasPracticeTest !== true) {
+    return { valid: false, error: "Missing required field: hasTest / hasPracticeTest must be true" };
+  }
+  if (!docData.createdAt || typeof docData.createdAt !== "string") {
+    return { valid: false, error: "Missing required field: createdAt" };
+  }
+  if (!docData.updatedAt || typeof docData.updatedAt !== "string") {
+    return { valid: false, error: "Missing required field: updatedAt" };
+  }
+  return { valid: true };
+}
+
+/**
+ * Creates and formats a sanitized single question object for Practice Test storage.
+ */
+export function createPracticeTestQuestion(
+  q: Partial<ParsedAssessmentQuestion>,
+  context: {
+    classGrade: string;
+    subject: string;
+    chapterNo: number;
+    chapterName: string;
+    topicName: string;
+    rawText: string;
+  },
+  idx: number
+): ParsedAssessmentQuestion {
+  const qId = q.id && String(q.id).trim() !== ""
+    ? String(q.id).trim()
+    : typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `q_${Date.now()}_${idx + 1}_${Math.random().toString(36).substring(2, 7)}`;
+
+  const cleanOptions = Array.isArray(q.options)
+    ? q.options.filter((o) => typeof o === "string" && o.trim() !== "").map((o) => o.trim())
+    : [];
+
+  return {
+    id: qId,
+    classGrade: String(context.classGrade || "").trim(),
+    subject: String(context.subject || "").trim(),
+    chapterNo: Number(context.chapterNo) || 1,
+    chapterName: String(context.chapterName || `Chapter ${context.chapterNo || 1}`).trim(),
+    topicName: String(context.topicName || "").trim(),
+    type: q.type === "true_false" || q.type === "assertion_reason" ? q.type : "mcq",
+    question: String(q.question || "").trim(),
+    options: cleanOptions,
+    correctAnswer: String(q.correctAnswer || "A").trim(),
+    explanation: typeof q.explanation === "string" ? q.explanation.trim() : "",
+    imageUrl: typeof q.imageUrl === "string" ? q.imageUrl.trim() : "",
+    imageLabel: typeof q.imageLabel === "string" ? q.imageLabel.trim() : "",
+    imagePosition: q.imagePosition === "above" || q.imagePosition === "below" ? q.imagePosition : "below",
+    rawText: String(q.rawText || context.rawText || "").trim(),
+    published: q.published !== false,
+    orderIndex: Number(q.orderIndex) || idx + 1,
+    createdAt: q.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export async function saveTopicPracticeTest(
   context: {
     classGrade: string;
@@ -977,6 +1128,8 @@ export async function saveTopicPracticeTest(
     chapterName: string;
     topicName: string;
     rawText: string;
+    noteId?: string;
+    topicNoteId?: string;
   },
   questions: ParsedAssessmentQuestion[]
 ): Promise<SaveTopicResult> {
@@ -996,6 +1149,9 @@ export async function saveTopicPracticeTest(
     context.topicName
   );
 
+  const canonicalNoteId = String(context.noteId || context.topicNoteId || topicTestId).trim();
+  const canonicalTopicNoteId = String(context.topicNoteId || context.noteId || topicTestId).trim();
+
   // Clear previous attempts for topic
   await deleteTopicAttemptsFromPersistence(
     context.classGrade,
@@ -1005,40 +1161,22 @@ export async function saveTopicPracticeTest(
   ).catch(() => {});
 
   const formattedQuestions: ParsedAssessmentQuestion[] = questions.map((q, idx) => {
-    let qId = q.id;
-    if (!qId) {
-      qId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `q_${Date.now()}_${idx + 1}_${Math.random().toString(36).substring(2, 7)}`;
-    }
-
-    return {
-      ...q,
-      id: qId,
-      classGrade: context.classGrade,
-      subject: context.subject,
-      chapterNo: context.chapterNo,
-      chapterName: context.chapterName,
-      topicName: context.topicName,
-      published: q.published !== false,
-      orderIndex: idx + 1,
-      rawText: context.rawText,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    return createPracticeTestQuestion(q, context, idx);
   });
 
   const topicTest: TopicPracticeTest = {
     id: topicTestId,
     testId: topicTestId,
+    noteId: canonicalNoteId,
+    topicNoteId: canonicalTopicNoteId,
     hasTest: true,
     hasPracticeTest: true,
-    classGrade: context.classGrade,
-    subject: context.subject,
-    chapterNo: context.chapterNo,
-    chapterName: context.chapterName,
-    topicName: context.topicName,
-    rawText: context.rawText,
+    classGrade: String(context.classGrade || "").trim(),
+    subject: String(context.subject || "").trim(),
+    chapterNo: Number(context.chapterNo) || 1,
+    chapterName: String(context.chapterName || `Chapter ${context.chapterNo || 1}`).trim(),
+    topicName: String(context.topicName || "").trim(),
+    rawText: String(context.rawText || "").trim(),
     questions: formattedQuestions,
     questionCount: formattedQuestions.length,
     createdAt: new Date().toISOString(),
@@ -1046,11 +1184,32 @@ export async function saveTopicPracticeTest(
     uploadedBy: "Admin",
   };
 
-  updateLocalTopicCache(topicTest);
+  // Step 4: Validate required fields before proceeding to write
+  const validationResult = validatePracticeTestDocument(topicTest);
+  if (!validationResult.valid) {
+    console.error("[PracticeTestService] Validation failed before Firestore save:", validationResult.error);
+    return {
+      success: false,
+      count: 0,
+      message: "Practice Test validation failed.",
+      error: validationResult.error || "Document failed required field validation."
+    };
+  }
+
+  // Step 3: Sanitize data - recursively remove all undefined properties
+  const sanitizedTopicTest = sanitizeFirestoreData(topicTest);
+
+  // Step 2: Log complete sanitized document before Firestore write
+  console.log(
+    "Practice Test Document",
+    JSON.stringify(sanitizedTopicTest, null, 2)
+  );
+
+  updateLocalTopicCache(sanitizedTopicTest);
   clearAllQuestionCaches();
   notifyTestBankSubscribers();
 
-  // 1. Mandatory Firestore write & immediate read-back verification (Single Source of Truth)
+  // Step 5 & 6: Write to Firestore topic_practice_tests & immediately verify persistence
   try {
     const db = await getFirebaseDb();
     if (!db) {
@@ -1061,10 +1220,10 @@ export async function saveTopicPracticeTest(
     const aliasDocRef = doc(db, "practice_tests", topicTestId);
 
     // Primary write to topic_practice_tests and mirror write to practice_tests
-    await setDoc(testDocRef, topicTest, { merge: true });
-    await setDoc(aliasDocRef, topicTest, { merge: true }).catch(() => {});
+    await setDoc(testDocRef, sanitizedTopicTest, { merge: true });
+    await setDoc(aliasDocRef, sanitizedTopicTest, { merge: true }).catch(() => {});
 
-    // Step 2: Read back the document immediately to verify persistence
+    // Step 6: Read back the document immediately to verify persistence
     const verifySnap = await getDoc(testDocRef);
     if (!verifySnap.exists()) {
       throw new Error(`Firestore persistence verification failed: Document ${topicTestId} was not found after save.`);
@@ -1075,9 +1234,23 @@ export async function saveTopicPracticeTest(
       throw new Error(`Firestore persistence verification failed: Questions array in ${topicTestId} is empty.`);
     }
 
+    if (savedData.questionCount !== savedData.questions.length) {
+      throw new Error(`Firestore persistence verification failed: questionCount (${savedData.questionCount}) does not match questions length (${savedData.questions.length}).`);
+    }
+
     if (!savedData.hasTest && !savedData.hasPracticeTest) {
       throw new Error(`Firestore persistence verification failed: hasTest/hasPracticeTest flag is false in ${topicTestId}.`);
     }
+
+    if (!savedData.noteId) {
+      throw new Error(`Firestore persistence verification failed: noteId is missing in ${topicTestId}.`);
+    }
+
+    if (!savedData.topicNoteId) {
+      throw new Error(`Firestore persistence verification failed: topicNoteId is missing in ${topicTestId}.`);
+    }
+
+    console.log(`[PracticeTestService] Firestore write verified successfully for ${topicTestId}: ${savedData.questions.length} questions.`);
 
     // Also mirror/link hasPracticeTest to class_notes & upsc_notes documents
     try {
@@ -1109,7 +1282,7 @@ export async function saveTopicPracticeTest(
     };
   }
 
-  // 2. Sync to R2 backup and send realtime signal
+  // Sync to secondary R2 backup and send realtime broadcast
   await syncTestBankToStorage(getLocalTestBank()).catch(() => false);
   await notifyPracticeTestRealtimeSync({ testId: topicTestId, action: "save_topic" });
 

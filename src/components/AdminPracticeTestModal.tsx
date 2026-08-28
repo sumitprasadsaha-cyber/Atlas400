@@ -53,6 +53,8 @@ interface AdminPracticeTestModalProps {
   chapterNo: number;
   chapterName: string;
   topicName: string;
+  noteId?: string;
+  topicNoteId?: string;
   onPracticeTestChanged?: () => void;
 }
 
@@ -170,6 +172,8 @@ export default function AdminPracticeTestModal({
   chapterNo,
   chapterName,
   topicName,
+  noteId,
+  topicNoteId,
   onPracticeTestChanged
 }: AdminPracticeTestModalProps) {
   const [activeTab, setActiveTab] = useState<"editor" | "preview" | "attempts">("editor");
@@ -210,7 +214,7 @@ export default function AdminPracticeTestModal({
 
     const loadData = async () => {
       try {
-        const testFromDb = await getTopicPracticeTest(classGrade, subject, chapterNo, topicName);
+        const testFromDb = await getTopicPracticeTest(classGrade, subject, chapterNo, topicName, { forceFresh: true });
         if (isMounted && testFromDb) {
           setSavedTest(testFromDb);
           setRawText(testFromDb.rawText || "");
@@ -419,7 +423,9 @@ export default function AdminPracticeTestModal({
           chapterNo,
           chapterName,
           topicName,
-          rawText
+          rawText,
+          noteId,
+          topicNoteId
         },
         parseRes.questions
       );

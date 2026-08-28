@@ -254,6 +254,7 @@ export default function AdminNotesDashboard({
     chapterNo: number;
     chapterName: string;
     topicName: string;
+    noteId?: string;
   } | null>(null);
 
   // Toast feedback
@@ -1173,6 +1174,7 @@ export default function AdminNotesDashboard({
       chapterNo: Number(chapterNo),
       chapterName,
       topicName,
+      noteId: note.id
     });
   };
 
@@ -2493,6 +2495,8 @@ export default function AdminNotesDashboard({
           chapterNo={practiceTestTarget.chapterNo}
           chapterName={practiceTestTarget.chapterName}
           topicName={practiceTestTarget.topicName}
+          noteId={practiceTestTarget.noteId}
+          topicNoteId={practiceTestTarget.noteId}
           onPracticeTestChanged={() => {
             loadPracticeTests();
             if (onRefresh) onRefresh();
