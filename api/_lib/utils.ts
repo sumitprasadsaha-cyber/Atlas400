@@ -403,6 +403,7 @@ export interface ParsedMultipartResult {
 
 /**
  * High-performance, zero-dependency multipart/form-data buffer parser.
+ * Supports CRLF (\r\n\r\n), LF (\n\n), quoted/unquoted boundaries, and mixed stream formats.
  */
 export function parseMultipartFormData(buffer: Buffer, boundary: string): ParsedMultipartResult {
   const result: ParsedMultipartResult = {
@@ -414,32 +415,44 @@ export function parseMultipartFormData(buffer: Buffer, boundary: string): Parsed
     return result;
   }
 
-  const boundaryBuffer = Buffer.from(`--${boundary}`);
+  // Clean boundary: remove quotes and leading dashes if already present
+  const cleanBoundary = boundary.replace(/^["']|["']$/g, "").replace(/^--+/, "");
+  const boundaryBuffer = Buffer.from(`--${cleanBoundary}`);
   const crlfcrlf = Buffer.from("\r\n\r\n");
+  const lflf = Buffer.from("\n\n");
 
   let start = buffer.indexOf(boundaryBuffer);
   while (start !== -1) {
     const nextStart = buffer.indexOf(boundaryBuffer, start + boundaryBuffer.length);
     if (nextStart === -1) break;
 
-    // Slice part data including headers and trailing CRLF
+    // Slice part data including headers and trailing delimiter
     const partBuffer = buffer.subarray(start + boundaryBuffer.length, nextStart);
-    const headerEndIndex = partBuffer.indexOf(crlfcrlf);
+    
+    // Find delimiter between headers and body: try \r\n\r\n then \n\n
+    let headerEndIndex = partBuffer.indexOf(crlfcrlf);
+    let delimiterLength = crlfcrlf.length;
+    if (headerEndIndex === -1) {
+      headerEndIndex = partBuffer.indexOf(lflf);
+      delimiterLength = lflf.length;
+    }
 
     if (headerEndIndex !== -1) {
       const headerText = partBuffer.subarray(0, headerEndIndex).toString("utf-8");
-      // Strip leading \r\n from headers if present
-      const cleanHeaders = headerText.replace(/^\r\n/, "");
+      // Strip leading \r\n or \n from headers if present
+      const cleanHeaders = headerText.replace(/^[\r\n]+/, "");
       
-      // Data is after \r\n\r\n, and before the trailing \r\n
-      let bodyData = partBuffer.subarray(headerEndIndex + crlfcrlf.length);
+      // Body is after headers delimiter and before trailing \r\n or \n
+      let bodyData = partBuffer.subarray(headerEndIndex + delimiterLength);
       if (bodyData.length >= 2 && bodyData[bodyData.length - 2] === 0x0d && bodyData[bodyData.length - 1] === 0x0a) {
         bodyData = bodyData.subarray(0, bodyData.length - 2);
+      } else if (bodyData.length >= 1 && bodyData[bodyData.length - 1] === 0x0a) {
+        bodyData = bodyData.subarray(0, bodyData.length - 1);
       }
 
       // Parse headers
-      const nameMatch = cleanHeaders.match(/name="([^"]+)"/i);
-      const filenameMatch = cleanHeaders.match(/filename="([^"]+)"/i);
+      const nameMatch = cleanHeaders.match(/name="([^"]+)"/i) || cleanHeaders.match(/name=([^\r\n;\s]+)/i);
+      const filenameMatch = cleanHeaders.match(/filename="([^"]+)"/i) || cleanHeaders.match(/filename=([^\r\n;\s]+)/i);
       const contentTypeMatch = cleanHeaders.match(/Content-Type:\s*([^\r\n;]+)/i);
 
       const fieldName = nameMatch ? nameMatch[1] : "";
@@ -498,10 +511,10 @@ export async function extractUploadPayload(req: any): Promise<UploadPayload> {
   }
 
   let resolvedBuffer: Buffer = Buffer.alloc(0);
-  let resolvedKey = (req.query?.key as string) || (req.body?.key as string) || "";
+  let resolvedKey = (req.query?.key as string) || (req.query?.storageKey as string) || (req.query?.objectKey as string) || (req.body?.key as string) || (req.body?.storageKey as string) || (req.body?.objectKey as string) || "";
   let resolvedBucket = (req.query?.bucket as string) || (req.body?.bucket as string) || "";
-  let resolvedContentType = (req.query?.mimeType as string) || (req.body?.mimeType as string) || "";
-  let resolvedFileName = (req.query?.filename as string) || (req.body?.filename as string) || "";
+  let resolvedContentType = (req.query?.mimeType as string) || (req.query?.contentType as string) || (req.body?.mimeType as string) || (req.body?.contentType as string) || "";
+  let resolvedFileName = (req.query?.filename as string) || (req.query?.fileName as string) || (req.body?.filename as string) || (req.body?.fileName as string) || "";
   let extractedFields: Record<string, string> = {};
 
   if (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) {
@@ -512,7 +525,7 @@ export async function extractUploadPayload(req: any): Promise<UploadPayload> {
     }
   }
 
-  // 1. Handle multipart/form-data (Preserve original boundary case)
+  // 1. Handle multipart/form-data
   if (reqContentType.includes("multipart/form-data")) {
     const boundaryMatch = rawContentType.match(/boundary=([^;]+)/i);
     const boundary = boundaryMatch ? boundaryMatch[1].trim().replace(/^["']|["']$/g, "") : "";
@@ -525,9 +538,9 @@ export async function extractUploadPayload(req: any): Promise<UploadPayload> {
         resolvedFileName = resolvedFileName || filePart.filename || "";
         resolvedContentType = resolvedContentType || filePart.contentType || getMimeType(resolvedFileName);
       }
-      resolvedKey = resolvedKey || parsed.fields.key || parsed.fields.storagePath || parsed.fields.path || "";
+      resolvedKey = resolvedKey || parsed.fields.key || parsed.fields.storageKey || parsed.fields.objectKey || parsed.fields.storagePath || parsed.fields.path || "";
       resolvedBucket = resolvedBucket || parsed.fields.bucket || "";
-      resolvedContentType = resolvedContentType || parsed.fields.mimeType || "";
+      resolvedContentType = resolvedContentType || parsed.fields.mimeType || parsed.fields.contentType || "";
     }
   }
 
@@ -535,17 +548,17 @@ export async function extractUploadPayload(req: any): Promise<UploadPayload> {
   if (resolvedBuffer.length === 0) {
     if (req.body && typeof req.body === "object" && req.body.base64) {
       resolvedBuffer = Buffer.from(req.body.base64, "base64");
-      resolvedKey = resolvedKey || req.body.key || req.body.storagePath || "";
+      resolvedKey = resolvedKey || req.body.key || req.body.storageKey || req.body.objectKey || req.body.storagePath || "";
       resolvedBucket = resolvedBucket || req.body.bucket || "";
-      resolvedContentType = resolvedContentType || req.body.mimeType || "";
+      resolvedContentType = resolvedContentType || req.body.mimeType || req.body.contentType || "";
     } else if (rawBuffer.length > 0 && reqContentType.includes("application/json")) {
       try {
         const parsed = JSON.parse(rawBuffer.toString("utf-8"));
         if (parsed.base64) {
           resolvedBuffer = Buffer.from(parsed.base64, "base64");
-          resolvedKey = resolvedKey || parsed.key || parsed.storagePath || "";
+          resolvedKey = resolvedKey || parsed.key || parsed.storageKey || parsed.objectKey || parsed.storagePath || "";
           resolvedBucket = resolvedBucket || parsed.bucket || "";
-          resolvedContentType = resolvedContentType || parsed.mimeType || "";
+          resolvedContentType = resolvedContentType || parsed.mimeType || parsed.contentType || "";
           for (const [k, v] of Object.entries(parsed)) {
             if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
               extractedFields[k] = String(v);

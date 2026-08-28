@@ -16,10 +16,450 @@ import {
   deleteFromR2,
   deleteMultipleFromR2,
   listFromR2,
+  verifyR2ObjectExists,
   type R2UploadResult,
   type R2ObjectInfo,
 } from "./r2Client";
 import { safeLocalStorageSetItem } from "./safeStorage";
+import {
+  generateTopicNoteKey,
+  buildCanonicalStorageKey,
+  getCanonicalFileName,
+  getFileExtension,
+  type CanonicalStorageKeyParams,
+} from "../utils/canonicalStorageKey";
+import { saveClassNoteDoc, deleteClassNoteDoc, getLocalClassNotes } from "./firestoreService";
+import { notesCacheService } from "./notesCacheService";
+import { notesLogger } from "./notesLogger";
+import { deleteTopicPracticeTest } from "./practiceTestService";
+import type { ClassNote } from "../types";
+import { buildCanonicalNoteMetadata, validateCanonicalNoteMetadata } from "../domain/notes/types";
+
+// Re-export canonical key generator as single source of truth
+export { generateTopicNoteKey, buildCanonicalStorageKey };
+
+export interface UploadTopicNoteParams {
+  file: File | Blob;
+  metadata: {
+    id?: string;
+    type?: "school" | "upsc";
+    noteType?: "school" | "upsc";
+    className?: string;
+    classGrade?: string;
+    subject?: string;
+    subjectName?: string;
+    gsPaper?: string;
+    generalStudiesPaper?: string;
+    chapterNumber?: number | string;
+    chapterNo?: number | string;
+    chapterName?: string;
+    chapterTitle?: string;
+    moduleNumber?: number | string;
+    moduleNo?: number | string;
+    moduleName?: string;
+    moduleTitle?: string;
+    topicNumber?: number | string;
+    topicNo?: number | string;
+    topicName?: string;
+    topicTitle?: string;
+    partLabel?: string;
+    title?: string;
+    visibility?: "all" | "selected" | "hidden";
+    allowedStudentIds?: string[];
+    allowedClasses?: string[];
+    uploadedBy?: string;
+    isDownloadable?: boolean;
+  };
+  onProgress?: (percent: number) => void;
+}
+
+export interface ReplaceTopicNoteParams {
+  noteId: string;
+  currentNote: ClassNote;
+  newFile: File;
+  onProgress?: (percent: number) => void;
+}
+
+export interface DeleteTopicNoteParams {
+  noteId: string;
+  note?: ClassNote;
+  objectKey?: string;
+}
+
+export interface GetTopicNoteParams {
+  noteId?: string;
+  note?: ClassNote;
+  objectKey?: string;
+}
+
+/**
+ * 1. Single Upload Pipeline
+ * Converts File -> ArrayBuffer only once, validates size > 0, uploads to Cloudflare R2,
+ * verifies object existence, and persists to Firestore.
+ */
+export async function uploadTopicNote(params: UploadTopicNoteParams): Promise<ClassNote> {
+  const { file, metadata, onProgress } = params;
+
+  if (!file || file.size <= 0) {
+    throw new Error("Invalid file. File size must be greater than 0 bytes.");
+  }
+
+  const rawFileName = (file as File)?.name || "note.pdf";
+  const canonicalFileName = getCanonicalFileName(rawFileName);
+  const cleanExt = getFileExtension(rawFileName);
+  const mimeType = (file as any).type || (cleanExt === "pdf" ? "application/pdf" : `image/${cleanExt}`);
+
+  // 1. Generate ONE canonical storage key
+  const canonicalStorageKey = generateTopicNoteKey({
+    className: metadata.classGrade || metadata.className || "Class 10",
+    subject: metadata.subject || metadata.subjectName || "General",
+    gsPaper: metadata.gsPaper || metadata.generalStudiesPaper,
+    chapterNumber: metadata.chapterNumber ?? metadata.chapterNo,
+    chapterName: metadata.chapterName || metadata.chapterTitle,
+    moduleNumber: metadata.moduleNumber ?? metadata.moduleNo,
+    moduleName: metadata.moduleName || metadata.moduleTitle,
+    topicNumber: metadata.topicNumber ?? metadata.topicNo ?? metadata.partLabel,
+    topicName: metadata.topicName || metadata.topicTitle || metadata.title,
+    partLabel: metadata.partLabel,
+    fileName: canonicalFileName,
+  });
+
+  // 2. Logging: Generated Key, Received File Name, Buffer Size
+  console.log(`[StorageService] Upload Pipeline Started:`);
+  console.log(`  - Generated Key: "${canonicalStorageKey}"`);
+  console.log(`  - Received File Name: "${rawFileName}" -> Canonical: "${canonicalFileName}"`);
+  console.log(`  - Buffer Size: ${file.size} bytes`);
+  notesLogger.info("UPLOAD_START", {
+    storageKey: canonicalStorageKey,
+    fileName: canonicalFileName,
+    fileSize: file.size,
+  });
+
+  const bucket = getR2BucketName();
+
+  // 3. Upload to Cloudflare R2
+  const uploadResult = await uploadToR2({
+    bucket,
+    key: canonicalStorageKey,
+    file,
+    mimeType,
+    onProgress: (pct) => {
+      if (onProgress) onProgress(Math.min(95, pct));
+    },
+  });
+
+  // 4. Verify object existence in R2 before writing database record
+  const verifyCheck = await verifyR2ObjectExists({ bucket, key: canonicalStorageKey });
+  if (!verifyCheck || !verifyCheck.exists) {
+    await deleteFromR2({ bucket, key: canonicalStorageKey }).catch(() => {});
+    throw new Error(`Upload verification failed: HeadObject confirmed object does not exist in R2 for key "${canonicalStorageKey}".`);
+  }
+
+  // 5. Logging: Upload Success
+  console.log(`[StorageService] Upload Success for key: "${canonicalStorageKey}"`);
+  notesLogger.info("UPLOAD_SUCCESS", {
+    storageKey: canonicalStorageKey,
+    durationMs: Date.now(),
+  });
+
+  const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(canonicalStorageKey)}`;
+  const publicUrl = uploadResult.url || getR2PublicUrl(bucket, canonicalStorageKey);
+
+  const isUPSC = metadata.type === "upsc" || metadata.noteType === "upsc" || metadata.classGrade === "UPSC";
+  const chapterNo = isUPSC ? metadata.moduleNumber : metadata.chapterNumber;
+  const chapterName = isUPSC ? metadata.moduleName : metadata.chapterName;
+
+  const noteId = metadata.id || `note_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+  const createdNote: ClassNote = {
+    id: noteId,
+    classGrade: metadata.classGrade || metadata.className || "Class 10",
+    subject: metadata.subject || metadata.subjectName || "General",
+    chapterNo: Number(chapterNo) || 1,
+    chapterName: String(chapterName || "Chapter 1"),
+    topicNo: metadata.topicNumber ?? metadata.topicNo,
+    topicName: metadata.topicName || metadata.topicTitle || metadata.title || "Topic Note",
+    partLabel: metadata.partLabel,
+    fileName: canonicalFileName,
+    originalFilename: rawFileName,
+    pdfFileName: canonicalFileName,
+    objectKey: canonicalStorageKey,
+    storageKey: canonicalStorageKey,
+    storagePath: canonicalStorageKey,
+    r2Key: canonicalStorageKey,
+    downloadKey: canonicalStorageKey,
+    pdfUrl: downloadUrl,
+    publicUrl,
+    downloadUrl,
+    fileSize: file.size,
+    mimeType,
+    visibility: metadata.visibility || "all",
+    allowedStudentIds: metadata.allowedStudentIds,
+    allowedClasses: metadata.allowedClasses,
+    uploadedBy: metadata.uploadedBy || "Admin",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  // 6. Persist to Firestore database
+  await saveClassNoteDoc(createdNote);
+
+  // 7. Logging: Database Update
+  console.log(`[StorageService] Database Update Success: noteId="${createdNote.id}", objectKey="${canonicalStorageKey}"`);
+  notesLogger.info("UPLOAD_SUCCESS", {
+    noteId: createdNote.id,
+    storageKey: canonicalStorageKey,
+  });
+
+  // 8. Purge caches
+  await notesCacheService.invalidateMetadataCache();
+  await notesCacheService.invalidateBlobCache(canonicalStorageKey);
+
+  if (onProgress) onProgress(100);
+  return createdNote;
+}
+
+/**
+ * 2. Replace Pipeline
+ * Generates canonical key, uploads new file, verifies HEAD check,
+ * removes old storage key (if changed), and updates Firestore document.
+ */
+export async function replaceTopicNote(params: ReplaceTopicNoteParams): Promise<ClassNote> {
+  const { noteId, currentNote, newFile, onProgress } = params;
+
+  if (!newFile || newFile.size <= 0) {
+    throw new Error("Invalid replacement file. File size must be greater than 0 bytes.");
+  }
+
+  const existingObjectKey =
+    currentNote.objectKey ||
+    currentNote.storageKey ||
+    currentNote.storagePath ||
+    currentNote.r2Key ||
+    "";
+
+  const rawFileName = newFile.name || "note.pdf";
+  const canonicalFileName = getCanonicalFileName(rawFileName);
+  const cleanExt = getFileExtension(rawFileName);
+  const mimeType = newFile.type || (cleanExt === "pdf" ? "application/pdf" : `image/${cleanExt}`);
+
+  // Generate canonical key for replacement
+  const newStorageKey = generateTopicNoteKey({
+    className: (currentNote as any).classGrade || (currentNote as any).className || "Class 10",
+    subject: (currentNote as any).subject || (currentNote as any).subjectName || "General",
+    gsPaper: (currentNote as any).gsPaper || (currentNote as any).generalStudiesPaper,
+    chapterNumber: (currentNote as any).chapterNumber ?? (currentNote as any).chapterNo ?? 1,
+    chapterName: (currentNote as any).chapterName ?? (currentNote as any).chapterTitle ?? "Chapter 1",
+    moduleNumber: (currentNote as any).moduleNumber ?? (currentNote as any).moduleNo ?? 1,
+    moduleName: (currentNote as any).moduleName ?? (currentNote as any).moduleTitle ?? "Module 1",
+    topicNumber: (currentNote as any).topicNumber ?? (currentNote as any).topicNo,
+    topicName: (currentNote as any).topicName ?? (currentNote as any).topicTitle,
+    partLabel: (currentNote as any).partLabel,
+    fileName: canonicalFileName,
+  });
+
+  // Logging: Generated Key, Received File Name, Buffer Size
+  console.log(`[StorageService] Replace Pipeline Started:`);
+  console.log(`  - Note ID: "${noteId}"`);
+  console.log(`  - Old Object Key: "${existingObjectKey}"`);
+  console.log(`  - New Object Key: "${newStorageKey}"`);
+  console.log(`  - Received File: "${rawFileName}" (${newFile.size} bytes)`);
+  notesLogger.info("REPLACE_START", {
+    noteId,
+    storageKey: newStorageKey,
+    fileSize: newFile.size,
+  });
+
+  const bucket = getR2BucketName();
+
+  // If old key differs from new key, clean up old object in R2
+  if (existingObjectKey && existingObjectKey !== newStorageKey) {
+    await deleteFromR2({ bucket, key: existingObjectKey }).catch((delErr) => {
+      console.warn(`[StorageService] Note: could not delete old key "${existingObjectKey}":`, delErr);
+    });
+  }
+
+  // Upload new file to R2
+  const uploadRes = await uploadToR2({
+    bucket,
+    key: newStorageKey,
+    file: newFile,
+    mimeType,
+    onProgress: (pct) => {
+      if (onProgress) onProgress(Math.min(95, pct));
+    },
+  });
+
+  // Verify object existence via HeadObject
+  const headCheck = await verifyR2ObjectExists({ bucket, key: newStorageKey });
+  if (!headCheck || !headCheck.exists) {
+    throw new Error(`Replacement verification failed: HeadObject confirmed object does not exist for key "${newStorageKey}".`);
+  }
+
+  // Logging: Upload Success
+  console.log(`[StorageService] Replace Upload Success: "${newStorageKey}"`);
+  notesLogger.info("REPLACE_SUCCESS", {
+    noteId,
+    storageKey: newStorageKey,
+  });
+
+  const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(newStorageKey)}`;
+  const publicUrl = uploadRes.url || getR2PublicUrl(bucket, newStorageKey);
+
+  const updatedNote: ClassNote = {
+    ...currentNote,
+    originalFilename: rawFileName,
+    fileName: canonicalFileName,
+    pdfFileName: canonicalFileName,
+    objectKey: newStorageKey,
+    r2Key: newStorageKey,
+    storageKey: newStorageKey,
+    storagePath: newStorageKey,
+    downloadKey: newStorageKey,
+    pdfUrl: downloadUrl,
+    publicUrl,
+    downloadUrl,
+    fileSize: newFile.size,
+    mimeType,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // Update Firestore record
+  await saveClassNoteDoc(updatedNote);
+
+  // Logging: Database Update
+  console.log(`[StorageService] Database Update Success for Replaced Note: noteId="${noteId}"`);
+  notesLogger.info("REPLACE_SUCCESS", {
+    noteId,
+    storageKey: newStorageKey,
+    fileSize: updatedNote.fileSize,
+  });
+
+  // Invalidate caches
+  await notesCacheService.invalidateMetadataCache();
+  if (existingObjectKey) {
+    await notesCacheService.invalidateBlobCache(existingObjectKey);
+  }
+  await notesCacheService.invalidateBlobCache(newStorageKey);
+
+  if (onProgress) onProgress(100);
+  return updatedNote;
+}
+
+/**
+ * 3. Delete Pipeline
+ * Reads database objectKey, deletes object from R2, deletes Firestore document,
+ * cleans up practice tests, and invalidates cache.
+ */
+export async function deleteTopicNote(params: DeleteTopicNoteParams): Promise<{ success: boolean; deletedKey: string }> {
+  const { noteId, note } = params;
+  const targetKey =
+    note?.objectKey ||
+    note?.storageKey ||
+    note?.storagePath ||
+    note?.r2Key ||
+    params.objectKey ||
+    "";
+
+  console.log(`[StorageService] Delete Pipeline Started: noteId="${noteId}", targetKey="${targetKey}"`);
+  notesLogger.info("DELETE_START", { noteId, storageKey: targetKey });
+
+  const bucket = getR2BucketName();
+
+  // 1. Delete object from R2 if key is present
+  if (targetKey) {
+    await deleteFromR2({ bucket, key: targetKey }).catch((err) => {
+      console.warn(`[StorageService] R2 delete notice for key "${targetKey}":`, err);
+    });
+    console.log(`[StorageService] Delete Success for R2 Key: "${targetKey}"`);
+    notesLogger.info("DELETE_SUCCESS", { noteId, storageKey: targetKey });
+  }
+
+  // 2. Delete Firestore database record
+  await deleteClassNoteDoc(noteId);
+  console.log(`[StorageService] Database Record Deleted: noteId="${noteId}"`);
+  notesLogger.info("DELETE_SUCCESS", { noteId });
+
+  // 3. Clean up associated practice tests
+  if (note) {
+    const isUpsc = note.isUPSC || (note as any).type === "upsc" || (note as any).noteType === "upsc" || note.classGrade === "UPSC";
+    const classGrade = isUpsc ? "UPSC" : ((note as any).className || note.classGrade || "Class 10");
+    const subject = (note as any).subjectName || note.subject || "";
+    const rawChNo = (note as any).chapterNumber ?? note.chapterNo ?? (note as any).moduleNumber ?? 1;
+    const chapterNo = typeof rawChNo === "number" ? rawChNo : parseInt(String(rawChNo).replace(/\D/g, ""), 10) || 1;
+    const topicName = ((note as any).topicTitle || (note as any).topicName || note.partLabel || "").trim();
+
+    if (subject && topicName) {
+      await deleteTopicPracticeTest(classGrade, subject, chapterNo, topicName).catch(() => {});
+    }
+  }
+
+  // 4. Invalidate caches
+  await notesCacheService.invalidateMetadataCache();
+  if (targetKey) {
+    await notesCacheService.invalidateBlobCache(targetKey);
+  }
+
+  return { success: true, deletedKey: targetKey };
+}
+
+/**
+ * 4. Retrieval Pipeline
+ * Uses database.objectKey directly as single source of truth.
+ * Never guesses filenames or reconstructs paths.
+ */
+export async function getTopicNote(params: GetTopicNoteParams): Promise<(ClassNote & { viewUrl: string; downloadUrl: string }) | null> {
+  const { noteId, objectKey } = params;
+
+  let resolvedNote = params.note;
+  if (!resolvedNote && noteId) {
+    const allNotes = getLocalClassNotes();
+    resolvedNote = allNotes.find((n) => n.id === noteId);
+  }
+
+  const targetKey =
+    resolvedNote?.objectKey ||
+    resolvedNote?.storageKey ||
+    resolvedNote?.storagePath ||
+    resolvedNote?.r2Key ||
+    objectKey ||
+    "";
+
+  if (!resolvedNote && !targetKey) {
+    return null;
+  }
+
+  const bucket = getR2BucketName();
+  const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(targetKey)}`;
+  const viewUrl = getR2PublicUrl(bucket, targetKey) || downloadUrl;
+  const fileName = targetKey.split("/").pop() || "note.pdf";
+
+  const baseNote: ClassNote = resolvedNote || {
+    id: noteId || "unknown",
+    classGrade: "Class 10",
+    subject: "General",
+    chapterNo: 1,
+    chapterName: "Chapter 1",
+    fileName,
+    pdfFileName: fileName,
+    originalFilename: fileName,
+    objectKey: targetKey,
+    storageKey: targetKey,
+    storagePath: targetKey,
+    pdfUrl: downloadUrl,
+    downloadUrl,
+    createdAt: new Date().toISOString(),
+  };
+
+  return {
+    ...baseNote,
+    objectKey: targetKey,
+    storageKey: targetKey,
+    storagePath: targetKey,
+    viewUrl,
+    downloadUrl,
+  };
+}
 
 const PDF_MIME_TYPE = "application/pdf";
 

@@ -979,3 +979,16 @@ export function getFilteredStudentNotes(student: Student, allNotes: ClassNote[])
   if (!student || !Array.isArray(allNotes)) return [];
   return filterClassNotesForStudent(allNotes, student);
 }
+
+// Re-export unified Topic Notes Storage methods as single source of truth
+export {
+  generateTopicNoteKey,
+  uploadTopicNote,
+  replaceTopicNote,
+  deleteTopicNote,
+  getTopicNote,
+  type UploadTopicNoteParams,
+  type ReplaceTopicNoteParams,
+  type DeleteTopicNoteParams,
+  type GetTopicNoteParams,
+} from "./storageService";

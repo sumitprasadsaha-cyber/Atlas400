@@ -44,6 +44,24 @@ export interface CanonicalStorageKeyParams {
   fileName?: string;
   originalFilename?: string;
   pdfFileName?: string;
+  customId?: string;
+  uuid?: string;
+  id?: string;
+}
+
+/**
+ * Generates a standard uppercase UUID v4.
+ */
+export function generateUUID(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID().toUpperCase();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
+    .replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0;
+      const v = c === "x" ? r : (r & 0x3) | 0x8;
+      return v.toString(16).toUpperCase();
+    });
 }
 
 /**
@@ -62,23 +80,31 @@ export function getFileExtension(filename?: string | null): string {
 }
 
 /**
- * Normalizes and sanitizes filename strictly from the input file name.
- * Result format: `${cleanBaseName}.${extension}`
+ * Normalizes and formats filename strictly from the input file extension and UUID.
+ * Result format: `<UUID>.<ext>` or `<cleanBaseName>.<ext>` if UUID already provided.
  * Rule 3: MIME types are never appended or sanitized into filename.
  */
-export function getCanonicalFileName(rawFileName?: string | null, fallbackBase = "note"): string {
-  if (!rawFileName) return `${fallbackBase}_${Date.now()}.pdf`;
-  const clean = String(rawFileName).trim().split("?")[0].split("#")[0].replace(/\\/g, "/").split("/").pop() || "";
-  const ext = getFileExtension(clean);
+export function getCanonicalFileName(rawFileName?: string | null, customUuid?: string): string {
+  const ext = getFileExtension(rawFileName);
+  const clean = String(rawFileName || "").trim().split("?")[0].split("#")[0].replace(/\\/g, "/").split("/").pop() || "";
 
+  // If a custom UUID is provided, use it
+  if (customUuid) {
+    const cleanUuid = customUuid.replace(/[^a-zA-Z0-9-]/g, "");
+    return `${cleanUuid}.${ext}`;
+  }
+
+  // Check if rawFileName base is already a UUID
   const lastDot = clean.lastIndexOf(".");
-  let base = lastDot !== -1 ? clean.substring(0, lastDot) : clean;
+  const base = lastDot !== -1 ? clean.substring(0, lastDot) : clean;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(base);
 
-  // Sanitize base: preserve alphanumeric, hyphens, underscores
-  base = base.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
-  if (!base) base = fallbackBase;
+  if (isUuid) {
+    return `${base.toUpperCase()}.${ext}`;
+  }
 
-  return `${base}.${ext}`;
+  const generated = generateUUID();
+  return `${generated}.${ext}`;
 }
 
 /**
@@ -177,21 +203,26 @@ export function formatTopicSegment(topicNo?: number | string | null, topicName?:
 }
 
 /**
- * Single Canonical Storage Key Builder (Rule 4).
+ * Single Canonical Topic Note Key Builder (Requirement 2 & Rule 4).
  * Generates ONE immutable canonical storage key for Cloudflare R2.
+ * 
+ * Format:
+ * School: class_notes/<Class>/<Subject>/<Chapter>/<Topic>/<UUID>.ext
+ * UPSC: upsc/<GSPaper>/<Subject>/<Module>/<Topic>/<UUID>.ext
  * 
  * Examples:
  * School: class_notes/Class_9/Science/Chapter_06_How_Forces_Affect_Motion/Topic_01_Test/51E04BD5-AF70-42D5-A75D-B08A31A0589F.png
  * UPSC: upsc/GS1/Polity/Module_01_Indian_Constitution/Topic_01_Preamble/51E04BD5-AF70-42D5-A75D-B08A31A0589F.png
  */
-export function buildCanonicalStorageKey(params: CanonicalStorageKeyParams): string {
+export function generateTopicNoteKey(params: CanonicalStorageKeyParams): string {
   const rawFileName = (typeof params.file === "object" && params.file ? params.file.name : null) ||
     params.fileName ||
     params.originalFilename ||
     params.pdfFileName ||
     "note.pdf";
 
-  const canonicalFileName = getCanonicalFileName(rawFileName);
+  const customUuid = params.customId || params.uuid || params.id;
+  const canonicalFileName = getCanonicalFileName(rawFileName, customUuid);
 
   const rawClass = params.className || params.classGrade || params.class || "";
   const isUPSC =
@@ -230,6 +261,13 @@ export function buildCanonicalStorageKey(params: CanonicalStorageKeyParams): str
 
     return `${folderPath}/${canonicalFileName}`;
   }
+}
+
+/**
+ * Backward-compatible alias for generateTopicNoteKey.
+ */
+export function buildCanonicalStorageKey(params: CanonicalStorageKeyParams): string {
+  return generateTopicNoteKey(params);
 }
 
 /**
