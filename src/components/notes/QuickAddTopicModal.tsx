@@ -169,7 +169,7 @@ export default function QuickAddTopicModal({
     setUploadState({
       isOpen: true,
       isUploading: true,
-      progress: 5,
+      progress: 0,
       fileName: selectedFile.name,
       totalBytes,
       uploadedBytes: 0,
