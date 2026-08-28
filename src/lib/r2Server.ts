@@ -568,25 +568,34 @@ export async function getObjectFromR2(params: {
         resolvedKey: cleanKey,
       };
     } catch (err: any) {
-      console.log("[R2Server-Diagnostic] Post-GetObjectCommand RESPONSE/ERROR:", {
-        httpStatus: err?.$metadata?.httpStatusCode || err?.status || 500,
-        requestId: err?.$metadata?.requestId || err?.$metadata?.cfId || "(none)",
-        errorName: err?.name || "Error",
-        errorCode: err?.code || err?.$metadata?.errorCode || err?.name || "(none)",
-        message: err?.message || String(err),
-        exactKey: cleanKey,
-        bucketName,
-      });
-
       const isNotFound =
         err?.name === "NoSuchKey" ||
         err?.name === "NotFound" ||
+        err?.name === "UnknownError" ||
         err?.$metadata?.httpStatusCode === 404 ||
         err?.code === "NoSuchKey" ||
-        err?.code === "NotFound";
+        err?.code === "NotFound" ||
+        (err?.message && (err.message.includes("NoSuchKey") || err.message.includes("NotFound") || err.message.includes("UnknownError")));
 
-      if (!isNotFound && isAuthError(err)) {
-        markR2AuthFailed(err?.message);
+      if (isNotFound) {
+        console.log("[R2Server] GetObject: Key not present in remote R2, checking local fallback:", {
+          exactKey: cleanKey,
+          bucketName,
+        });
+      } else {
+        console.warn("[R2Server] GetObject unexpected error:", {
+          httpStatus: err?.$metadata?.httpStatusCode || err?.status || 500,
+          requestId: err?.$metadata?.requestId || err?.$metadata?.cfId || "(none)",
+          errorName: err?.name || "Error",
+          errorCode: err?.code || err?.$metadata?.errorCode || err?.name || "(none)",
+          message: err?.message || String(err),
+          exactKey: cleanKey,
+          bucketName,
+        });
+
+        if (isAuthError(err)) {
+          markR2AuthFailed(err?.message);
+        }
       }
     }
   }
@@ -949,25 +958,34 @@ export async function headObjectFromR2(params: {
         resolvedKey: cleanKey,
       };
     } catch (err: any) {
-      console.log("[R2Server-Diagnostic] Post-HeadObjectCommand RESPONSE/ERROR:", {
-        httpStatus: err?.$metadata?.httpStatusCode || err?.status || 500,
-        requestId: err?.$metadata?.requestId || err?.$metadata?.cfId || "(none)",
-        errorName: err?.name || "Error",
-        errorCode: err?.code || err?.$metadata?.errorCode || err?.name || "(none)",
-        message: err?.message || String(err),
-        exactKey: cleanKey,
-        bucketName,
-      });
-
       const isNotFound =
         err?.name === "NoSuchKey" ||
         err?.name === "NotFound" ||
+        err?.name === "UnknownError" ||
         err?.$metadata?.httpStatusCode === 404 ||
         err?.code === "NoSuchKey" ||
-        err?.code === "NotFound";
+        err?.code === "NotFound" ||
+        (err?.message && (err.message.includes("NoSuchKey") || err.message.includes("NotFound") || err.message.includes("UnknownError")));
 
-      if (!isNotFound && isAuthError(err)) {
-        markR2AuthFailed(err?.message);
+      if (isNotFound) {
+        console.log("[R2Server] HeadObject: Key not present in remote R2, checking local fallback:", {
+          exactKey: cleanKey,
+          bucketName,
+        });
+      } else {
+        console.warn("[R2Server] HeadObject unexpected error:", {
+          httpStatus: err?.$metadata?.httpStatusCode || err?.status || 500,
+          requestId: err?.$metadata?.requestId || err?.$metadata?.cfId || "(none)",
+          errorName: err?.name || "Error",
+          errorCode: err?.code || err?.$metadata?.errorCode || err?.name || "(none)",
+          message: err?.message || String(err),
+          exactKey: cleanKey,
+          bucketName,
+        });
+
+        if (isAuthError(err)) {
+          markR2AuthFailed(err?.message);
+        }
       }
     }
   }
