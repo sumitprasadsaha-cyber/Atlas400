@@ -4,6 +4,21 @@ import {
   inferMimeFromExtension,
   sanitizeCanonicalStorageKey,
 } from "../../utils/canonicalFilename";
+import {
+  buildCanonicalStorageKey,
+  getCanonicalFileName,
+  getFileExtension,
+  validateStorageKey,
+  type CanonicalStorageKeyParams,
+} from "../../utils/canonicalStorageKey";
+
+export {
+  buildCanonicalStorageKey,
+  getCanonicalFileName,
+  getFileExtension,
+  validateStorageKey,
+  type CanonicalStorageKeyParams,
+};
 
 /**
  * Atlas400 v5.0.8 — Notes Storage Refactor (Final Architecture)

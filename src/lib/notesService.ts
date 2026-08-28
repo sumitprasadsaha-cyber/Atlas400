@@ -32,6 +32,12 @@ import {
   inferMimeFromExtension,
   extractCleanExtension,
 } from "../utils/canonicalFilename";
+import {
+  buildCanonicalStorageKey,
+  getCanonicalFileName,
+  getFileExtension,
+  validateStorageKey,
+} from "../utils/canonicalStorageKey";
 
 export const MAX_NOTE_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 
@@ -209,7 +215,33 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
     throw new Error(metaValidation.error || "Invalid note metadata provided.");
   }
 
-  // 3. Build Canonical Metadata Object (School or UPSC)
+  // 3. Build Canonical Storage Key and Metadata
+  const canonicalStorageKey = buildCanonicalStorageKey({
+    className: params.classGrade,
+    classGrade: params.classGrade,
+    subject: params.subject,
+    gsPaper: params.gsPaper || params.generalStudiesPaper,
+    generalStudiesPaper: params.generalStudiesPaper || params.gsPaper,
+    chapterNumber: params.chapterNumber ?? params.chapterNo,
+    chapterName: params.chapterName ?? params.chapterTitle,
+    moduleNumber: params.moduleNumber ?? params.moduleNo,
+    moduleName: params.moduleName ?? params.moduleTitle,
+    topicNumber: params.topicNumber ?? params.topicNo ?? params.partLabel,
+    topicName: params.topicName ?? params.topicTitle,
+    partLabel: params.partLabel,
+    file,
+  });
+
+  const canonicalFileName = getCanonicalFileName(file.name);
+  const cleanExt = getFileExtension(file.name);
+
+  // Validate the canonical key
+  const keyValidation = validateStorageKey(canonicalStorageKey);
+  if (!keyValidation.isValid) {
+    throw new Error(`Invalid storage key generated: ${keyValidation.error}`);
+  }
+
+  // 3.1 Build Canonical Metadata Object
   const canonicalMetadata = buildCanonicalNoteMetadata({
     className: params.classGrade,
     classGrade: params.classGrade,
@@ -223,10 +255,13 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
     topicNumber: params.topicNumber ?? params.topicNo ?? params.partLabel,
     topicName: params.topicName ?? params.topicTitle,
     partLabel: params.partLabel,
-    fileName: file.name,
+    fileName: canonicalFileName,
     originalFilename: file.name,
     fileSize: file.size,
-    mimeType: file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg"),
+    mimeType: file.type || inferMimeFromExtension(cleanExt),
+    storagePath: canonicalStorageKey,
+    storageKey: canonicalStorageKey,
+    r2Key: canonicalStorageKey,
     visibility: params.visibility || "all",
     allowedStudentIds: params.allowedStudentIds,
     allowedClasses: params.allowedClasses,
@@ -245,31 +280,29 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
   }
   activeUploads.add(uploadLockKey);
 
-  console.log(`[Upload Pipeline] Stage 2: Validation complete for note ${canonicalMetadata.id}. Storage Path: "${canonicalMetadata.storagePath}"`);
+  console.log(`[Upload Pipeline] Stage 2: Validation complete for note ${canonicalMetadata.id}. Canonical Key: "${canonicalStorageKey}"`);
   notesLogger.info("UPLOAD_START", {
     noteId: canonicalMetadata.id,
     noteType: canonicalMetadata.type,
-    fileName: file.name,
+    fileName: canonicalFileName,
     fileSize: file.size,
-    storageKey: canonicalMetadata.storagePath,
+    storageKey: canonicalStorageKey,
   });
 
   let r2Uploaded = false;
   try {
-    // 5. Stage 3: Upload file to Cloudflare R2 with REAL progress tracking (0%..99%)
-    console.log(`[Upload Pipeline] Stage 3: Uploading file to Cloudflare R2 (${canonicalMetadata.storagePath})...`);
-    const mimeType = canonicalMetadata.mimeType || file.type || "application/pdf";
+    // 5. Stage 3: Upload file to Cloudflare R2 with REAL progress tracking (0%..95%)
+    console.log(`[Upload Pipeline] Stage 3: Uploading file to Cloudflare R2 (${canonicalStorageKey})...`);
+    const mimeType = canonicalMetadata.mimeType || file.type || inferMimeFromExtension(cleanExt);
     const bucket = getR2BucketName();
 
     const uploadRes = await uploadToR2({
       bucket,
-      key: canonicalMetadata.storagePath,
+      key: canonicalStorageKey,
       file,
       mimeType,
       onProgress: (realPercent) => {
-        // Report actual progress from XHR byte upload events
         if (onProgress) {
-          // Cap at 95% while uploading bytes so 100% only represents complete DB persistence
           const displayPct = Math.min(95, Math.max(1, realPercent));
           onProgress(displayPct);
         }
@@ -279,16 +312,18 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
     r2Uploaded = true;
     console.log(`[Upload Pipeline] Stage 4: Cloudflare R2 upload confirmed. ETag/Result:`, uploadRes);
 
-    // VERIFY BEFORE FIRESTORE WRITE: Perform HeadObject check on canonicalMetadata.storagePath
-    console.log(`[Upload Pipeline] Stage 4.1: Verifying object existence via HeadObject for key "${canonicalMetadata.storagePath}"...`);
-    const headCheck = await verifyR2ObjectExists({ bucket, key: canonicalMetadata.storagePath });
+    // Rule 9: VERIFY BEFORE FIRESTORE WRITE: Perform HeadObject check on canonicalStorageKey
+    console.log(`[Upload Pipeline] Stage 4.1: Verifying object existence via HeadObject for key "${canonicalStorageKey}"...`);
+    const headCheck = await verifyR2ObjectExists({ bucket, key: canonicalStorageKey });
     if (!headCheck || !headCheck.exists) {
-      console.error(`[Upload Pipeline] HeadObject verification failed for key "${canonicalMetadata.storagePath}". Aborting upload before Firestore write.`);
-      throw new Error(`Upload verification failed: HeadObject confirmed object does not exist in storage for key "${canonicalMetadata.storagePath}".`);
+      console.error(`[Upload Pipeline] HeadObject verification failed for key "${canonicalStorageKey}". Aborting upload before Firestore write.`);
+      // Rollback orphaned file in R2
+      await deleteFromR2({ bucket, key: canonicalStorageKey }).catch(() => {});
+      throw new Error(`Upload verification failed: HeadObject confirmed object does not exist in storage for key "${canonicalStorageKey}".`);
     }
 
-    const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(canonicalMetadata.storagePath)}`;
-    const publicUrl = uploadRes.url || getR2PublicUrl(bucket, canonicalMetadata.storagePath);
+    const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(canonicalStorageKey)}`;
+    const publicUrl = uploadRes.url || getR2PublicUrl(bucket, canonicalStorageKey);
 
     const isUPSC = canonicalMetadata.type === "upsc";
     const chapterNo = isUPSC ? canonicalMetadata.moduleNumber : canonicalMetadata.chapterNumber;
@@ -303,13 +338,13 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
       chapterName: chapterName || "Chapter 1",
       topicNo: canonicalMetadata.topicNumber,
       topicName: canonicalMetadata.topicName || "Topic Note",
-      fileName: canonicalMetadata.fileName,
-      originalFilename: canonicalMetadata.fileName,
-      pdfFileName: canonicalMetadata.fileName,
-      r2Key: canonicalMetadata.storagePath,
-      storageKey: canonicalMetadata.storagePath,
-      storagePath: canonicalMetadata.storagePath,
-      downloadKey: canonicalMetadata.storagePath,
+      fileName: canonicalFileName,
+      originalFilename: file.name,
+      pdfFileName: canonicalFileName,
+      r2Key: canonicalStorageKey,
+      storageKey: canonicalStorageKey,
+      storagePath: canonicalStorageKey,
+      downloadKey: canonicalStorageKey,
       pdfUrl: downloadUrl,
       publicUrl: publicUrl,
       downloadUrl: downloadUrl,
@@ -326,10 +361,10 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
       await saveClassNoteDoc(createdNote);
       console.log(`[Upload Pipeline] Stage 5.1: Firestore document write confirmed.`);
     } catch (dbErr: any) {
-      console.error(`[Upload Pipeline] Stage 5 ERROR: Firestore save failed, initiating R2 rollback for key "${canonicalMetadata.storagePath}"...`, dbErr);
+      console.error(`[Upload Pipeline] Stage 5 ERROR: Firestore save failed, initiating R2 rollback for key "${canonicalStorageKey}"...`, dbErr);
       // Rollback orphaned file in R2
       try {
-        await deleteFromR2({ bucket, key: canonicalMetadata.storagePath });
+        await deleteFromR2({ bucket, key: canonicalStorageKey });
         console.log(`[Upload Pipeline] Rollback complete: deleted orphaned file from R2.`);
       } catch (rollbackErr) {
         console.warn(`[Upload Pipeline] Warning during R2 rollback:`, rollbackErr);
@@ -340,7 +375,7 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
     // 7. Stage 6: Invalidate caches for instant UI synchronization
     console.log(`[Upload Pipeline] Stage 6: Invalidating caches for UI refresh...`);
     await notesCacheService.invalidateMetadataCache();
-    await notesCacheService.invalidateBlobCache(createdNote.storagePath || createdNote.r2Key || "");
+    await notesCacheService.invalidateBlobCache(canonicalStorageKey);
 
     // 8. Stage 7: Signal 100% completion ONLY after all steps succeeded
     console.log(`[Upload Pipeline] Stage 7: Upload and indexing complete.`);
@@ -348,7 +383,7 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
 
     notesLogger.info("UPLOAD_SUCCESS", {
       noteId: createdNote.id,
-      storageKey: createdNote.storagePath || createdNote.r2Key,
+      storageKey: canonicalStorageKey,
       fileSize: createdNote.fileSize,
     });
 
@@ -367,7 +402,12 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
 
 /**
  * Atlas v5.0.8 Production-Hardened Note Replacement Pipeline
- * Safe in-place replacement: upload new asset with real progress -> update Firestore -> purge stale cache -> return updated record
+ * Rule 7: Replace
+ * 1. Read existing storageKey
+ * 2. If new key differs from existing key, delete existing object
+ * 3. Upload new object to canonical storage key
+ * 4. Verify HeadObject
+ * 5. Store new storageKey in Firestore
  */
 export async function replaceNotePipeline(params: NoteReplaceParams): Promise<ClassNote> {
   const { noteId, currentNote, newFile, onProgress } = params;
@@ -379,36 +419,56 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
     throw new Error(fileValidationError);
   }
 
-  const rawTargetStorageKey =
+  const existingStorageKey =
+    (currentNote as any).storageKey ||
     (currentNote as any).storagePath ||
     (currentNote as any).r2Key ||
-    (currentNote as any).storageKey ||
     "";
-  const explicitMime = newFile.type;
-  const canonicalExt = extractCleanExtension(newFile.name, explicitMime);
-  const mimeType = explicitMime || inferMimeFromExtension(canonicalExt);
-  const targetStorageKey = sanitizeCanonicalStorageKey(rawTargetStorageKey, mimeType);
-  const canonicalFileName = buildCanonicalFilename({
-    fileName: newFile.name,
-    mimeType,
+
+  // Build the new canonical storage key for the replacement file
+  const newStorageKey = buildCanonicalStorageKey({
+    className: (currentNote as any).classGrade || (currentNote as any).className || "Class 10",
+    subject: (currentNote as any).subject || (currentNote as any).subjectName || "General",
+    gsPaper: (currentNote as any).gsPaper || (currentNote as any).generalStudiesPaper,
+    chapterNumber: (currentNote as any).chapterNumber ?? (currentNote as any).chapterNo ?? 1,
+    chapterName: (currentNote as any).chapterName ?? (currentNote as any).chapterTitle ?? "Chapter 1",
+    moduleNumber: (currentNote as any).moduleNumber ?? (currentNote as any).moduleNo ?? 1,
+    moduleName: (currentNote as any).moduleName ?? (currentNote as any).moduleTitle ?? "Module 1",
+    topicNumber: (currentNote as any).topicNumber ?? (currentNote as any).topicNo,
+    topicName: (currentNote as any).topicName ?? (currentNote as any).topicTitle,
+    partLabel: (currentNote as any).partLabel,
+    file: newFile,
   });
 
-  console.log(`[Replace Pipeline] Stage 2: Target storage key is "${targetStorageKey}"`);
+  const canonicalFileName = getCanonicalFileName(newFile.name);
+  const cleanExt = getFileExtension(newFile.name);
+  const mimeType = newFile.type || inferMimeFromExtension(cleanExt);
+
+  console.log(`[Replace Pipeline] Stage 2: Existing key: "${existingStorageKey}", New canonical key: "${newStorageKey}"`);
   notesLogger.info("REPLACE_START", {
     noteId,
-    storageKey: targetStorageKey,
+    storageKey: newStorageKey,
     fileName: canonicalFileName,
     fileSize: newFile.size,
+    extra: { existingStorageKey, newStorageKey },
   });
 
   try {
     const bucket = getR2BucketName();
 
+    // If existing key is different from new key (e.g. extension changed), delete old object first
+    if (existingStorageKey && existingStorageKey !== newStorageKey) {
+      console.log(`[Replace Pipeline] Cleaning up old object at "${existingStorageKey}"...`);
+      await deleteFromR2({ bucket, key: existingStorageKey }).catch((delErr) => {
+        console.warn(`[Replace Pipeline] Note: could not delete old key "${existingStorageKey}":`, delErr);
+      });
+    }
+
     // 2. Upload replacement file to Cloudflare R2 with REAL progress tracking
-    console.log(`[Replace Pipeline] Stage 3: Uploading replacement file to Cloudflare R2...`);
+    console.log(`[Replace Pipeline] Stage 3: Uploading replacement file to "${newStorageKey}"...`);
     const uploadRes = await uploadToR2({
       bucket,
-      key: targetStorageKey,
+      key: newStorageKey,
       file: newFile,
       mimeType,
       onProgress: (realPercent) => {
@@ -421,16 +481,16 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
 
     console.log(`[Replace Pipeline] Stage 4: Cloudflare R2 file updated. Result:`, uploadRes);
 
-    // VERIFY BEFORE FIRESTORE WRITE: Perform HeadObject check on targetStorageKey
-    console.log(`[Replace Pipeline] Stage 4.1: Verifying object existence via HeadObject for key "${targetStorageKey}"...`);
-    const headCheck = await verifyR2ObjectExists({ bucket, key: targetStorageKey });
+    // Rule 9: VERIFY BEFORE FIRESTORE WRITE: Perform HeadObject check on newStorageKey
+    console.log(`[Replace Pipeline] Stage 4.1: Verifying object existence via HeadObject for key "${newStorageKey}"...`);
+    const headCheck = await verifyR2ObjectExists({ bucket, key: newStorageKey });
     if (!headCheck || !headCheck.exists) {
-      console.error(`[Replace Pipeline] HeadObject verification failed for key "${targetStorageKey}". Aborting update.`);
-      throw new Error(`Replacement verification failed: HeadObject confirmed object does not exist in storage for key "${targetStorageKey}".`);
+      console.error(`[Replace Pipeline] HeadObject verification failed for key "${newStorageKey}". Aborting update.`);
+      throw new Error(`Replacement verification failed: HeadObject confirmed object does not exist in storage for key "${newStorageKey}".`);
     }
 
-    const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(targetStorageKey)}`;
-    const publicUrl = uploadRes.url || getR2PublicUrl(bucket, targetStorageKey);
+    const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(newStorageKey)}`;
+    const publicUrl = uploadRes.url || getR2PublicUrl(bucket, newStorageKey);
 
     // 3. Update database record with new file metadata
     const updatedNote: ClassNote = {
@@ -440,13 +500,13 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
       chapterNo: (currentNote as any).chapterNo || (currentNote as any).chapterNumber || 1,
       chapterName: (currentNote as any).chapterName || (currentNote as any).chapterTitle || "Chapter 1",
       createdAt: (currentNote as any).createdAt || new Date().toISOString(),
-      originalFilename: canonicalFileName,
+      originalFilename: newFile.name,
       fileName: canonicalFileName,
       pdfFileName: canonicalFileName,
-      r2Key: targetStorageKey,
-      storageKey: targetStorageKey,
-      storagePath: targetStorageKey,
-      downloadKey: targetStorageKey,
+      r2Key: newStorageKey,
+      storageKey: newStorageKey,
+      storagePath: newStorageKey,
+      downloadKey: newStorageKey,
       pdfUrl: downloadUrl,
       publicUrl: publicUrl,
       downloadUrl: downloadUrl,
@@ -462,14 +522,17 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
     // 5. Invalidate cached metadata and stale blob for this note
     console.log(`[Replace Pipeline] Stage 6: Purging cache...`);
     await notesCacheService.invalidateMetadataCache();
-    await notesCacheService.invalidateBlobCache(targetStorageKey);
+    if (existingStorageKey) {
+      await notesCacheService.invalidateBlobCache(existingStorageKey);
+    }
+    await notesCacheService.invalidateBlobCache(newStorageKey);
 
     console.log(`[Replace Pipeline] Stage 7: Replacement complete.`);
     if (onProgress) onProgress(100);
 
     notesLogger.info("REPLACE_SUCCESS", {
       noteId,
-      storageKey: updatedNote.storagePath,
+      storageKey: newStorageKey,
       fileSize: updatedNote.fileSize,
     });
 
