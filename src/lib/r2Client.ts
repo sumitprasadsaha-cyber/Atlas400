@@ -139,9 +139,22 @@ export async function getR2SignedUrlDetails(params: {
       let errText = `HTTP ${response.status}`;
       try {
         const errJson = await response.json();
-        errText = errJson.error || errText;
+        errText = errJson.error || errJson.message || errText;
       } catch {}
-      console.warn(`[R2Client] /api/storage?action=signed-url returned status ${response.status} (${errText}), using proxy URL fallback.`);
+
+      if (response.status === 404) {
+        console.info(`[R2Client] Note not found in storage (404): key="${cleanKey}"`);
+        return {
+          signedUrl: "",
+          exists: false,
+          status: 404,
+          bucket,
+          key: cleanKey,
+          error: errText,
+        };
+      }
+
+      console.warn(`[R2Client] /api/storage?action=signed-url returned status ${response.status} (${errText}), using download endpoint fallback.`);
       const proxyUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`;
       return {
         signedUrl: proxyUrl,

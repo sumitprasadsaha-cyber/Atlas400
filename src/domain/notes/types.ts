@@ -64,7 +64,7 @@ export interface SchoolNote {
   createdAt: string;
   updatedAt: string;
   searchableText: string;
-  version: "5.0.8";
+  version: "6.0.0";
 
   // Compatibility aliases strictly mapped from canonical fields
   classGrade: string;
@@ -111,7 +111,7 @@ export interface UPSCNote {
   createdAt: string;
   updatedAt: string;
   searchableText: string;
-  version: "5.0.8";
+  version: "6.0.0";
 
   // Compatibility aliases strictly mapped from canonical fields
   classGrade: "UPSC";
@@ -521,7 +521,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       createdAt,
       updatedAt,
       searchableText,
-      version: "5.0.8",
+      version: "6.0.0",
 
       // Compatibility aliases
       classGrade: "UPSC",
@@ -584,7 +584,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       createdAt,
       updatedAt,
       searchableText,
-      version: "5.0.8",
+      version: "6.0.0",
 
       // Compatibility aliases
       classGrade: classInfo.className,

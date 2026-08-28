@@ -85,6 +85,11 @@ export async function resolveDirectNoteUrl(target: string | NoteOpeningTarget): 
     return rawUrl;
   }
 
+  // If rawUrl is already a resolved direct download API URL, return immediately (avoids double resolution)
+  if (rawUrl.startsWith("/api/storage?action=download") || rawUrl.startsWith("/api/r2/download") || rawUrl.startsWith("/api/files/download")) {
+    return rawUrl;
+  }
+
   // Extract storageKey if rawUrl contains query parameters or relative paths
   if (rawUrl.includes("key=") || rawUrl.includes("storageKey=") || rawUrl.includes("storagePath=")) {
     try {
@@ -118,7 +123,9 @@ export async function resolveDirectNoteUrl(target: string | NoteOpeningTarget): 
     throw new Error("Unable to open note: Missing file storage key.");
   }
 
-  // 1. Request a verified pre-signed URL from Cloudflare R2 with inline Content-Disposition
+  console.log(`[resolveDirectNoteUrl] Resolving note URL: key="${cleanKey}", bucket="${cleanBucket}", mime="${finalMime}"`);
+
+  // 1. Request a verified pre-signed URL from backend with inline Content-Disposition
   try {
     const signedDetails = await getR2SignedUrlDetails({
       bucket: cleanBucket,
@@ -128,10 +135,17 @@ export async function resolveDirectNoteUrl(target: string | NoteOpeningTarget): 
       contentType: finalMime,
     });
 
+    if (signedDetails.status === 404 || signedDetails.exists === false) {
+      throw new Error(`Object not found: "${cleanKey}" does not exist in storage.`);
+    }
+
     if (signedDetails.signedUrl) {
       return signedDetails.signedUrl;
     }
-  } catch (signErr) {
+  } catch (signErr: any) {
+    if (signErr?.message && signErr.message.includes("Object not found")) {
+      throw signErr;
+    }
     console.warn("[resolveDirectNoteUrl] Error getting signed URL details:", signErr);
   }
 
@@ -150,14 +164,19 @@ export async function resolveDirectNoteUrl(target: string | NoteOpeningTarget): 
  * Immediately captures user gesture activation, resolves URL in single pass, and opens viewer.
  */
 export async function openNote(target: string | NoteOpeningTarget): Promise<string> {
-  const isMobileOrPWA =
+  const isCapacitor = isCapacitorNative();
+  const isPWA =
+    typeof window !== "undefined" &&
+    (window.matchMedia?.("(display-mode: standalone)").matches ||
+      (navigator as any).standalone === true ||
+      (typeof document !== "undefined" && document.referrer.includes("android-app://")));
+  const isMobile =
     typeof navigator !== "undefined" &&
-    (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
-      (typeof window !== "undefined" && window.matchMedia?.("(display-mode: standalone)").matches));
+    /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
   // In desktop browser environments, pre-allocate window synchronously within the user gesture window
   let preAllocatedWindow: Window | null = null;
-  if (!isMobileOrPWA && typeof window !== "undefined") {
+  if (!isCapacitor && !isPWA && !isMobile && typeof window !== "undefined") {
     try {
       preAllocatedWindow = window.open("about:blank", "_blank");
     } catch {
@@ -178,7 +197,22 @@ export async function openNote(target: string | NoteOpeningTarget): Promise<stri
       throw new Error("Invalid note URL.");
     }
 
-    console.log(`[openNote] Successfully resolved note URL:`, directUrl);
+    const fileName =
+      typeof target === "object" && target !== null
+        ? target.fileName || target.pdfFileName || (target as any).filename || "note.pdf"
+        : "note.pdf";
+    const mimeType = getNoteMimeType(
+      fileName,
+      typeof target === "object" && target !== null ? target.mimeType : undefined,
+      typeof target === "object" && target !== null ? target.fileType : undefined
+    );
+
+    console.log(`[openNote] Successfully resolved note URL:`, {
+      directUrl,
+      fileName,
+      mimeType,
+      platform: isCapacitor ? "Capacitor" : isPWA ? "PWA" : isMobile ? "Mobile Web" : "Desktop Web",
+    });
 
     // Track study progress asynchronously in background
     if (typeof target === "object" && target !== null && target.studentId) {
@@ -193,18 +227,8 @@ export async function openNote(target: string | NoteOpeningTarget): Promise<stri
         .catch(() => {});
     }
 
-    // 1. If running on native mobile (Capacitor Android/iOS), open directly in device viewer app
-    if (isCapacitorNative()) {
-      const fileName =
-        typeof target === "object"
-          ? target.fileName || target.pdfFileName || "note.pdf"
-          : "note.pdf";
-      const mimeType = getNoteMimeType(
-        fileName,
-        typeof target === "object" ? target.mimeType : undefined,
-        typeof target === "object" ? target.fileType : undefined
-      );
-
+    // 1. If running on native mobile container (Capacitor Android/iOS), open directly via native FileOpener / intent
+    if (isCapacitor) {
       const openedNative = await openDocumentInNativeApp({
         url: directUrl,
         fileName,
@@ -219,11 +243,21 @@ export async function openNote(target: string | NoteOpeningTarget): Promise<stri
       }
     }
 
-    // 2. Direct browser / OS handoff: Navigate window or trigger anchor
+    // 2. If running inside installed PWA: Navigate current window directly to download/view endpoint (no popup window)
+    if (isPWA) {
+      if (preAllocatedWindow && !preAllocatedWindow.closed) {
+        preAllocatedWindow.close();
+      }
+      window.location.assign(directUrl);
+      return directUrl;
+    }
+
+    // 3. Desktop / Standard Web Browser handoff
     if (preAllocatedWindow && !preAllocatedWindow.closed) {
       preAllocatedWindow.location.href = directUrl;
+    } else if (isMobile) {
+      window.location.assign(directUrl);
     } else {
-      // Fallback for mobile / PWA / blocked popups: create dynamic link click
       const a = document.createElement("a");
       a.href = directUrl;
       a.target = "_blank";

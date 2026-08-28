@@ -1967,6 +1967,9 @@ export function StudentMyTab({
     }
 
     setOpeningNoteId(note.id);
+    const watchdogTimer = setTimeout(() => {
+      setOpeningNoteId((current) => (current === note.id ? null : current));
+    }, 10000);
 
     let url = note.pdfUrl || (note as any).publicUrl || (note as any).fileUrl || (note as any).downloadUrl || "";
     let storagePath = note.storagePath || (note as any).storage_path || (note as any).objectKey || (note as any).r2Key || (note as any).key;
@@ -2018,6 +2021,7 @@ export function StudentMyTab({
       console.error("[StudentDashboard] Error opening note natively:", err);
       alert(err?.message || "Unable to open note. Please check your network connection.");
     } finally {
+      clearTimeout(watchdogTimer);
       setOpeningNoteId(null);
     }
   };

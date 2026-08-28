@@ -438,6 +438,10 @@ export default function SubjectNotes({
     const title = topicFormatted || `Chapter ${note.chapterNo} - ${note.chapterName}`;
 
     setOpeningNoteId(note.id);
+    const watchdogTimer = setTimeout(() => {
+      setOpeningNoteId((current) => (current === note.id ? null : current));
+    }, 10000);
+
     try {
       const finalStorageKey =
         (note as any).storageKey ||
@@ -469,6 +473,7 @@ export default function SubjectNotes({
       console.error("[SubjectNotes] Error opening note natively:", err);
       alert(err?.message || "Unable to open note. Please check your network connection.");
     } finally {
+      clearTimeout(watchdogTimer);
       setOpeningNoteId(null);
     }
   };

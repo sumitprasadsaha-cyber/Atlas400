@@ -102,7 +102,10 @@ export function sanitizeKey(key: string, bucketName?: string): string {
     clean = clean.split("#")[0];
   }
 
-  // 7. Remove leading bucket name if prefixed
+  // 7. Remove leading slashes and collapse duplicate slashes
+  clean = clean.replace(/^\/+/, "").replace(/\/{2,}/g, "/");
+
+  // 8. Remove leading bucket name if prefixed
   if (bucketName) {
     const bucketPrefix = `${bucketName}/`;
     if (clean.startsWith(bucketPrefix)) {
@@ -113,13 +116,13 @@ export function sanitizeKey(key: string, bucketName?: string): string {
     clean = clean.substring("academy-connect-files/".length);
   }
 
-  // 8. Remove leading slashes and collapse duplicate slashes
+  // 9. Re-strip leading slashes after bucket removal
   clean = clean.replace(/^\/+/, "").replace(/\/{2,}/g, "/");
 
-  // 9. Prevent path traversal
+  // 10. Prevent path traversal
   clean = clean.replace(/\.\./g, "_");
 
-  // 10. Clean individual path segments
+  // 11. Clean individual path segments
   const segments = clean
     .split("/")
     .map((seg) => seg.trim())

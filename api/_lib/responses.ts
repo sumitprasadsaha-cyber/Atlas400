@@ -39,34 +39,53 @@ export function sendSuccess(res: any, data: any = {}, statusCode: number = 200):
  */
 export function sendError(res: any, error: any, defaultMessage: string = "Internal server error", defaultCode?: string): void {
   setCorsHeaders(res);
-  const stack = error?.stack || new Error().stack;
-  console.error("[API Error Handler]", {
-    message: error?.message || error,
-    code: error?.code || defaultCode,
-    stack: stack,
-    details: error?.details,
-  });
 
   if (error instanceof HttpError) {
+    if (error.statusCode === 404) {
+      console.info("[API Notice] Resource not found:", {
+        message: error.message,
+        code: error.code || "OBJECT_NOT_FOUND",
+      });
+    } else {
+      console.error("[API Error Handler]", {
+        message: error.message,
+        code: error.code || defaultCode,
+        stack: error.stack,
+        details: error.details,
+      });
+    }
+
     return res.status(error.statusCode).json({
       success: false,
       error: error.message,
       code: error.code || defaultCode || "HTTP_ERROR",
       details: error.details,
-      stack: process.env.NODE_ENV !== "production" ? error.stack : undefined,
+      stack: process.env.NODE_ENV !== "production" && error.statusCode !== 404 ? error.stack : undefined,
     });
   }
 
   const statusCode = error?.statusCode || error?.status || 500;
   const message = error?.message || defaultMessage;
   const code = error?.code || defaultCode || (statusCode === 404 ? "OBJECT_NOT_FOUND" : statusCode === 400 ? "VALIDATION_ERROR" : "SERVER_ERROR");
+  const stack = error?.stack || new Error().stack;
+
+  if (statusCode === 404 || code === "OBJECT_NOT_FOUND") {
+    console.info("[API Notice] Resource not found:", { message, code });
+  } else {
+    console.error("[API Error Handler]", {
+      message,
+      code,
+      stack,
+      details: error?.details,
+    });
+  }
 
   res.status(statusCode).json({
     success: false,
     error: message,
     code,
     details: error?.details,
-    stack: process.env.NODE_ENV !== "production" ? stack : undefined,
+    stack: process.env.NODE_ENV !== "production" && statusCode !== 404 ? stack : undefined,
   });
 }
 
