@@ -9,8 +9,8 @@ import {
   getR2ServerConfig,
   isR2Configured,
   getR2S3Client,
-} from "../../src/lib/r2Server";
-import { sanitizeKey } from "./utils";
+} from "../../src/lib/r2Server.js";
+import { sanitizeKey } from "./utils.js";
 
 export {
   uploadObjectToR2,

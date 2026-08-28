@@ -1,8 +1,8 @@
 import path from "path";
-import { handleOptions, sendSuccess, sendError } from "./_lib/responses";
-import { sanitizeKey, getMimeType, extractUploadPayload, parseRequestBody } from "./_lib/utils";
-import { uploadObjectToR2, deleteObjectFromR2, headObjectFromR2, getR2ServerConfig } from "./_lib/r2";
-import { buildCanonicalNoteMetadata, validateCanonicalNoteMetadata, NoteMetadata } from "../src/domain/notes/types";
+import { handleOptions, sendSuccess, sendError } from "./_lib/responses.js";
+import { sanitizeKey, getMimeType, extractUploadPayload, parseRequestBody } from "./_lib/utils.js";
+import { uploadObjectToR2, deleteObjectFromR2, headObjectFromR2, getR2ServerConfig } from "./_lib/r2.js";
+import { buildCanonicalNoteMetadata, validateCanonicalNoteMetadata, NoteMetadata } from "../src/domain/notes/types.js";
 
 export const runtime = "nodejs";
 

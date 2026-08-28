@@ -1,8 +1,8 @@
 import { pipeline } from "stream";
-import { handleOptions, sendSuccess, sendError, setCorsHeaders } from "./_lib/responses";
-import { validateAction } from "./_lib/validation";
-import { NotFoundError, ValidationError, StorageError } from "./_lib/errors";
-import { sanitizeKey, getMimeType, parseRequestBody, extractUploadPayload } from "./_lib/utils";
+import { handleOptions, sendSuccess, sendError, setCorsHeaders } from "./_lib/responses.js";
+import { validateAction } from "./_lib/validation.js";
+import { NotFoundError, ValidationError, StorageError } from "./_lib/errors.js";
+import { sanitizeKey, getMimeType, parseRequestBody, extractUploadPayload } from "./_lib/utils.js";
 import {
   uploadObjectToR2,
   getObjectFromR2,
@@ -13,8 +13,8 @@ import {
   headObjectFromR2,
   getR2ServerConfig,
   isR2Configured,
-} from "./_lib/r2";
-import { StorageAction } from "./_shared/types";
+} from "./_lib/r2.js";
+import { StorageAction } from "./_shared/types.js";
 
 export const runtime = "nodejs";
 

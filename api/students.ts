@@ -1,7 +1,7 @@
-import { handleOptions, sendSuccess, sendError } from "./_lib/responses";
-import { validateAction } from "./_lib/validation";
-import { checkFirestoreHealth } from "./_lib/firestore";
-import { StudentsAction } from "./_shared/types";
+import { handleOptions, sendSuccess, sendError } from "./_lib/responses.js";
+import { validateAction } from "./_lib/validation.js";
+import { checkFirestoreHealth } from "./_lib/firestore.js";
+import { StudentsAction } from "./_shared/types.js";
 
 export const runtime = "nodejs";
 

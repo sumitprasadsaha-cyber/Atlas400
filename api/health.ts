@@ -1,7 +1,7 @@
-import { handleOptions, sendSuccess, sendError } from "./_lib/responses";
-import { getR2ServerConfig, isR2Configured, verifyR2ReadWrite } from "./_lib/r2";
-import { checkFirestoreHealth } from "./_lib/firestore";
-import { HealthStatusReport } from "./_shared/types";
+import { handleOptions, sendSuccess, sendError } from "./_lib/responses.js";
+import { getR2ServerConfig, isR2Configured, verifyR2ReadWrite } from "./_lib/r2.js";
+import { checkFirestoreHealth } from "./_lib/firestore.js";
+import { HealthStatusReport } from "./_shared/types.js";
 
 export const runtime = "nodejs";
 

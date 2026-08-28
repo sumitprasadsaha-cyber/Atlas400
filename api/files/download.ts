@@ -1,4 +1,4 @@
-import handler from "../storage";
+import handler from "../storage.js";
 
 export const runtime = "nodejs";
 

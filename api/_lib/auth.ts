@@ -1,5 +1,5 @@
-import { UnauthorizedError, ForbiddenError } from "./errors";
-import { AuthSessionUser } from "../_shared/types";
+import { UnauthorizedError, ForbiddenError } from "./errors.js";
+import { AuthSessionUser } from "../_shared/types.js";
 
 /**
  * Extracts bearer token from Authorization header.

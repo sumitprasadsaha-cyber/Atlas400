@@ -1,4 +1,4 @@
-import { HttpError } from "./errors";
+import { HttpError } from "./errors.js";
 
 /**
  * Sets comprehensive CORS and caching headers on the outgoing response.

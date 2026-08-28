@@ -1,9 +1,9 @@
 import { pipeline } from "stream";
-import { handleOptions, sendSuccess, sendError } from "./_lib/responses";
-import { validateAction } from "./_lib/validation";
-import { sanitizeKey, getMimeType } from "./_lib/utils";
-import { uploadObjectToR2, deleteObjectFromR2, getObjectFromR2, getR2ServerConfig } from "./_lib/r2";
-import { PracticeTestsAction } from "./_shared/types";
+import { handleOptions, sendSuccess, sendError } from "./_lib/responses.js";
+import { validateAction } from "./_lib/validation.js";
+import { sanitizeKey, getMimeType } from "./_lib/utils.js";
+import { uploadObjectToR2, deleteObjectFromR2, getObjectFromR2, getR2ServerConfig } from "./_lib/r2.js";
+import { PracticeTestsAction } from "./_shared/types.js";
 
 export const runtime = "nodejs";
 

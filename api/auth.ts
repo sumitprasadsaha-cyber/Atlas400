@@ -1,7 +1,7 @@
-import { handleOptions, sendSuccess, sendError, setCorsHeaders } from "./_lib/responses";
-import { validateAction } from "./_lib/validation";
-import { verifyUserAuth, requireAdmin } from "./_lib/auth";
-import { AuthAction } from "./_shared/types";
+import { handleOptions, sendSuccess, sendError, setCorsHeaders } from "./_lib/responses.js";
+import { validateAction } from "./_lib/validation.js";
+import { verifyUserAuth, requireAdmin } from "./_lib/auth.js";
+import { AuthAction } from "./_shared/types.js";
 
 export const runtime = "nodejs";
 

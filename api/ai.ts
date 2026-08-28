@@ -1,5 +1,5 @@
-import { handleOptions, sendSuccess, sendError } from "./_lib/responses";
-import { validateAction } from "./_lib/validation";
+import { handleOptions, sendSuccess, sendError } from "./_lib/responses.js";
+import { validateAction } from "./_lib/validation.js";
 import {
   handleStudentChat,
   handleAdminChat,
@@ -12,8 +12,8 @@ import {
   moderationService,
   costTracker,
   usageLimitManager,
-} from "../src/services/ai";
-import { AIAction } from "./_shared/types";
+} from "../src/services/ai/index.js";
+import { AIAction } from "./_shared/types.js";
 
 export const runtime = "nodejs";
 

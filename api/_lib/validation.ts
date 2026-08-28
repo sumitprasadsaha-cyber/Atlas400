@@ -1,4 +1,4 @@
-import { ValidationError } from "./errors";
+import { ValidationError } from "./errors.js";
 
 /**
  * Validates that an action string is provided and belongs to the allowed set.
