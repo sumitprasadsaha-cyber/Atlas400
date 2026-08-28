@@ -141,19 +141,26 @@ export async function fetchStudentTestAttempts(
 
   let remoteAttempts: TestAttemptRecord[] = [];
 
-  // 1. Fetch from Firestore test_attempts collection
+  // 1. Fetch from Firestore test_attempts AND student_test_attempts collections
   try {
     const db = await getFirebaseDb();
     if (db) {
-      const colRef = collection(db, "test_attempts");
-      const q = query(colRef, where("studentId", "==", studentId));
-      const snap = await getDocs(q);
-      snap.forEach((docSnap) => {
-        const d = docSnap.data() as TestAttemptRecord;
-        if (d && d.studentId) {
-          remoteAttempts.push({ ...d, id: d.id || docSnap.id });
+      const collectionsToCheck = ["student_test_attempts", "test_attempts"];
+      for (const colName of collectionsToCheck) {
+        try {
+          const colRef = collection(db, colName);
+          const q = query(colRef, where("studentId", "==", studentId));
+          const snap = await getDocs(q);
+          snap.forEach((docSnap) => {
+            const d = docSnap.data() as TestAttemptRecord;
+            if (d && d.studentId) {
+              remoteAttempts.push({ ...d, id: d.id || docSnap.id });
+            }
+          });
+        } catch (colErr) {
+          console.warn(`[ScorePersistence] Error querying ${colName} for ${studentId}:`, colErr);
         }
-      });
+      }
     }
   } catch (err) {
     console.warn(`[ScorePersistence] Firestore test_attempts query error for ${studentId}:`, err);
@@ -484,18 +491,25 @@ export async function deleteAllAttemptsAndScoresFromPersistence(): Promise<{ suc
   console.log("[ScorePersistence] [START_DELETE_ALL] Initiating permanent deletion of ALL student practice test attempts and marks.");
   let deletedCount = 0;
 
-  // 1. Delete all docs from Firestore collection `test_attempts`
+  // 1. Delete all docs from Firestore collections `student_test_attempts`, `test_attempts`, `student_topic_test_scores`, and `student_scores`
   try {
     const db = await getFirebaseDb();
     if (db) {
-      const colRef = collection(db, "test_attempts");
-      const snap = await getDocs(colRef);
-      const batch = writeBatch(db);
-      snap.forEach((d) => {
-        batch.delete(d.ref);
-        deletedCount++;
-      });
-      await batch.commit();
+      const collectionsToClear = ["student_test_attempts", "test_attempts", "student_topic_test_scores", "student_scores"];
+      for (const colName of collectionsToClear) {
+        try {
+          const colRef = collection(db, colName);
+          const snap = await getDocs(colRef);
+          const batch = writeBatch(db);
+          snap.forEach((d) => {
+            batch.delete(d.ref);
+            deletedCount++;
+          });
+          await batch.commit();
+        } catch (colErr) {
+          console.warn(`[ScorePersistence] Error wiping collection ${colName}:`, colErr);
+        }
+      }
     }
   } catch (err) {
     console.warn("[ScorePersistence] Error deleting all attempts from Firestore:", err);
@@ -545,30 +559,37 @@ export async function deleteTopicAttemptsFromPersistence(
 
   let deletedCount = 0;
 
-  // 1. Delete matching documents from Firestore `test_attempts`
+  // 1. Delete matching documents from Firestore `student_test_attempts`, `test_attempts`, `student_topic_test_scores`, and `student_scores`
   try {
     const db = await getFirebaseDb();
     if (db) {
-      const colRef = collection(db, "test_attempts");
-      const snap = await getDocs(colRef);
-      const batch = writeBatch(db);
-      snap.forEach((d) => {
-        const row = d.data() as TestAttemptRecord;
-        if (!row) return;
-        const rClass = (row.classGrade || "").toLowerCase().trim();
-        const rSubj = (row.subject || "").toLowerCase().trim();
-        const rTopic = (row.topicName || "").toLowerCase().trim();
-        const rTopicClean = rTopic.replace(/[^a-z0-9]/g, "");
-        const isChapterMatch = Number(row.chapterNo) === Number(chapterNo);
-        const isMatch =
-          (rClass === normClass && rSubj === normSubj && isChapterMatch && (rTopic === normTopic || rTopicClean === normTopicClean)) ||
-          (isChapterMatch && rTopicClean === normTopicClean);
-        if (isMatch) {
-          batch.delete(d.ref);
-          deletedCount++;
+      const collectionsToCheck = ["student_test_attempts", "test_attempts", "student_topic_test_scores", "student_scores"];
+      for (const colName of collectionsToCheck) {
+        try {
+          const colRef = collection(db, colName);
+          const snap = await getDocs(colRef);
+          const batch = writeBatch(db);
+          snap.forEach((d) => {
+            const row = d.data() as any;
+            if (!row) return;
+            const rClass = (row.classGrade || "").toLowerCase().trim();
+            const rSubj = (row.subject || "").toLowerCase().trim();
+            const rTopic = (row.topicName || row.topicId || "").toLowerCase().trim();
+            const rTopicClean = rTopic.replace(/[^a-z0-9]/g, "");
+            const isChapterMatch = Number(row.chapterNo) === Number(chapterNo);
+            const isMatch =
+              (rClass === normClass && rSubj === normSubj && isChapterMatch && (rTopic === normTopic || rTopicClean === normTopicClean)) ||
+              (isChapterMatch && (rTopic === normTopic || rTopicClean === normTopicClean));
+            if (isMatch) {
+              batch.delete(d.ref);
+              deletedCount++;
+            }
+          });
+          await batch.commit();
+        } catch (colErr) {
+          console.warn(`[ScorePersistence] Error deleting topic attempts from ${colName}:`, colErr);
         }
-      });
-      await batch.commit();
+      }
     }
   } catch (err) {
     console.warn("[ScorePersistence] Error deleting attempts from Firestore:", err);

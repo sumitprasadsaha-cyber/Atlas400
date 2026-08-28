@@ -89,6 +89,77 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "gsPaper", "subject", "moduleNumber", "moduleName", "storagePath"]
+    },
+    "topicPracticeTest": {
+      "title": "Topic Practice Test",
+      "description": "Structured educational practice test questions linked to Topic Note and Syllabus",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "testId": { "type": "string" },
+        "noteId": { "type": "string" },
+        "topicNoteId": { "type": "string" },
+        "classGrade": { "type": "string" },
+        "subject": { "type": "string" },
+        "chapterNo": { "type": "number" },
+        "chapterName": { "type": "string" },
+        "topicName": { "type": "string" },
+        "questionCount": { "type": "number" },
+        "questions": { "type": "array" },
+        "rawText": { "type": "string" },
+        "hasTest": { "type": "boolean" },
+        "hasPracticeTest": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "uploadedBy": { "type": "string" }
+      },
+      "required": ["id", "classGrade", "subject", "chapterNo", "topicName", "questions"]
+    },
+    "studentTestAttempt": {
+      "title": "Student Test Attempt",
+      "description": "Student practice test submission containing score, timestamp, answers, and accuracy breakdown",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "classGrade": { "type": "string" },
+        "subject": { "type": "string" },
+        "chapterNo": { "type": "number" },
+        "chapterName": { "type": "string" },
+        "topicId": { "type": "string" },
+        "topicName": { "type": "string" },
+        "testType": { "type": "string" },
+        "score": { "type": "number" },
+        "totalQuestions": { "type": "number" },
+        "percentage": { "type": "number" },
+        "attemptNumber": { "type": "number" },
+        "answers": { "type": "object" },
+        "correctAnswers": { "type": "object" },
+        "date": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "durationSeconds": { "type": "number" }
+      },
+      "required": ["id", "studentId", "subject", "chapterNo", "topicName", "score", "totalQuestions"]
+    },
+    "studentTopicScore": {
+      "title": "Student Topic Test Score Summary",
+      "description": "Persistent summary record of a student's performance on a specific topic practice test",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "subject": { "type": "string" },
+        "chapterNo": { "type": "number" },
+        "chapterName": { "type": "string" },
+        "topicId": { "type": "string" },
+        "topicName": { "type": "string" },
+        "highestScore": { "type": "number" },
+        "latestScore": { "type": "number" },
+        "totalAttempts": { "type": "number" },
+        "lastAttemptAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["studentId", "subject", "chapterNo", "topicName", "highestScore", "latestScore"]
     }
   },
   "firestore": {
@@ -107,6 +178,18 @@
     "/upsc_notes/{noteId}": {
       "schema": "upscNote",
       "description": "UPSC notes metadata catalog indexed by GS Paper, subject, module, and topic"
+    },
+    "/topic_practice_tests/{testId}": {
+      "schema": "topicPracticeTest",
+      "description": "Permanent practice test question banks per topic, class, and subject"
+    },
+    "/student_test_attempts/{attemptId}": {
+      "schema": "studentTestAttempt",
+      "description": "Individual student practice test attempts, score history, and answer sheets"
+    },
+    "/student_topic_test_scores/{scoreId}": {
+      "schema": "studentTopicScore",
+      "description": "Aggregated highest and latest student test scores per topic"
     }
   }
 }

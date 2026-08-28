@@ -15,7 +15,7 @@ import {
   saveClassNoteDoc,
   deleteClassNoteDoc,
 } from "./firestoreService";
-import { deleteTopicPracticeTest, deleteClassPracticeTests } from "./practiceTestService";
+import { deleteTopicPracticeTest, deleteClassPracticeTests, syncPracticeTestOnNoteRename } from "./practiceTestService";
 import { notesLogger } from "./notesLogger";
 import { notesCacheService } from "./notesCacheService";
 import { validateNoteInput } from "../utils/notesValidation";
@@ -492,6 +492,25 @@ export async function renameNotePipeline(params: NoteRenameParams): Promise<Clas
 
     // Persist to Firestore
     await saveClassNoteDoc(updatedNote);
+
+    // Sync any attached Practice Test if topic or chapter was renamed
+    if (newTopicTitle !== undefined || newChapterTitle !== undefined) {
+      await syncPracticeTestOnNoteRename({
+        noteId,
+        oldClassGrade: currentNote.classGrade || (currentNote as any).className,
+        oldSubject: currentNote.subject,
+        oldChapterNo: currentNote.chapterNo || (currentNote as any).chapterNumber,
+        oldTopicName: (currentNote as any).topicTitle || (currentNote as any).topicName,
+        newClassGrade: updatedNote.classGrade || (updatedNote as any).className,
+        newSubject: updatedNote.subject,
+        newChapterNo: updatedNote.chapterNo || (updatedNote as any).chapterNumber,
+        newChapterName: updatedNote.chapterName || (updatedNote as any).chapterTitle,
+        newTopicName: updatedNote.topicTitle || (updatedNote as any).topicName,
+        practiceTestId: (currentNote as any).practiceTestId,
+      }).catch((syncErr) => {
+        notesLogger.warn("RENAME_TEST_SYNC_WARN", { noteId, error: syncErr?.message });
+      });
+    }
 
     // Invalidate metadata cache
     await notesCacheService.invalidateMetadataCache();

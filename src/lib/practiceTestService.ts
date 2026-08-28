@@ -1087,6 +1087,108 @@ export async function deleteTopicPracticeTest(
   return { success: true, message: "Practice Test deleted successfully." };
 }
 
+export async function syncPracticeTestOnNoteRename(params: {
+  noteId: string;
+  oldClassGrade?: string;
+  oldSubject?: string;
+  oldChapterNo?: number;
+  oldTopicName?: string;
+  newClassGrade?: string;
+  newSubject?: string;
+  newChapterNo?: number;
+  newChapterName?: string;
+  newTopicName?: string;
+  practiceTestId?: string;
+}): Promise<void> {
+  const {
+    noteId,
+    oldClassGrade = "",
+    oldSubject = "",
+    oldChapterNo = 1,
+    oldTopicName = "",
+    newClassGrade,
+    newSubject,
+    newChapterNo,
+    newChapterName,
+    newTopicName,
+    practiceTestId,
+  } = params;
+
+  try {
+    const bank = await fetchAllPracticeTests();
+    const oldTestId = practiceTestId || buildTopicTestId(oldClassGrade, oldSubject, oldChapterNo, oldTopicName);
+
+    let existingTest: TopicPracticeTest | null = bank[oldTestId] || null;
+    let foundKey = oldTestId;
+
+    if (!existingTest) {
+      for (const [k, t] of Object.entries(bank)) {
+        if (
+          t.noteId === noteId ||
+          t.id === practiceTestId ||
+          isExactTopicMatch(oldClassGrade, oldSubject, oldChapterNo, oldTopicName, t.classGrade, t.subject, t.chapterNo, t.topicName)
+        ) {
+          existingTest = t;
+          foundKey = k;
+          break;
+        }
+      }
+    }
+
+    if (!existingTest) return;
+
+    const targetClass = newClassGrade !== undefined ? newClassGrade : existingTest.classGrade;
+    const targetSubj = newSubject !== undefined ? newSubject : existingTest.subject;
+    const targetCh = newChapterNo !== undefined ? newChapterNo : existingTest.chapterNo;
+    const targetChName = newChapterName !== undefined ? newChapterName : existingTest.chapterName;
+    const targetTopic = newTopicName !== undefined ? newTopicName : existingTest.topicName;
+    const newTestId = buildTopicTestId(targetClass, targetSubj, targetCh, targetTopic);
+
+    const updatedQuestions = Array.isArray(existingTest.questions)
+      ? existingTest.questions.map((q) => ({
+          ...q,
+          classGrade: targetClass,
+          subject: targetSubj,
+          chapterNo: targetCh,
+          chapterName: targetChName,
+          topicName: targetTopic,
+        }))
+      : [];
+
+    const updatedTest: TopicPracticeTest = {
+      ...existingTest,
+      id: newTestId,
+      noteId,
+      topicNoteId: noteId,
+      classGrade: targetClass,
+      subject: targetSubj,
+      chapterNo: targetCh,
+      chapterName: targetChName,
+      topicName: targetTopic,
+      questions: updatedQuestions,
+      updatedAt: new Date().toISOString(),
+    };
+
+    delete bank[foundKey];
+    bank[newTestId] = updatedTest;
+    memoryTestBank = { ...bank };
+    saveLocalTestBank(memoryTestBank);
+
+    const db = await getFirebaseDb();
+    if (db) {
+      if (foundKey !== newTestId) {
+        await deleteDoc(doc(db, "topic_practice_tests", foundKey)).catch(() => {});
+      }
+      await setDoc(doc(db, "topic_practice_tests", newTestId), updatedTest, { merge: true });
+    }
+
+    await syncTestBankToStorage(bank).catch(() => {});
+    await notifyPracticeTestRealtimeSync({ testId: newTestId, action: "save_topic" });
+  } catch (err) {
+    console.warn("[PracticeTestService] syncPracticeTestOnNoteRename error:", err);
+  }
+}
+
 export const deleteTopicPracticeTestDirect = deleteTopicPracticeTest;
 
 export async function deleteClassPracticeTests(classGrade: string): Promise<void> {
