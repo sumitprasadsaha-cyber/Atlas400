@@ -50,6 +50,7 @@ export interface SchoolNote {
   folderPath: string; // Directory containing the note
   storagePath: string; // Full R2 object key: class_notes/Class_10/Mathematics/Chapter_01_Real_Numbers/Topic_02_Examples/note.pdf
   r2Key: string; // Alias for storagePath
+  downloadKey: string; // Alias for storagePath
   practiceTestPath: string; // Reserved future path: class_notes/.../practice_tests/
   pdfUrl: string;
   fileName: string;
@@ -97,6 +98,7 @@ export interface UPSCNote {
   folderPath: string; // Directory containing the note
   storagePath: string; // Full R2 object key: upsc/GS2/Polity/Module_03_Fundamental_Rights/Topic_01_Basics/note.pdf
   r2Key: string; // Alias for storagePath
+  downloadKey: string; // Alias for storagePath
   practiceTestPath: string; // Reserved future path: upsc/.../practice_tests/
   pdfUrl: string;
   fileName: string;
@@ -185,6 +187,7 @@ export interface NoteFormInput {
   r2Key?: string;
   storagePath?: string;
   storageKey?: string;
+  downloadKey?: string;
   createdAt?: string;
   uploadedAt?: string;
   updatedAt?: string;
@@ -488,6 +491,8 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
     const id = `upsc_${gsInfo.gsPaperFolder.toLowerCase()}_${sanitizeFolderName(subject).toLowerCase()}_${moduleFolder.toLowerCase()}${topicSuffix}`;
     const searchableText = `UPSC ${gsInfo.gsPaper} ${subject} Module ${moduleNumber} ${rawModName} ${parsedTopicNumber ? `Topic ${parsedTopicNumber}` : ""} ${parsedTopicName || ""} ${originalFilename}`.trim();
 
+    const immutableKey = (input.storagePath || input.storageKey || input.r2Key || input.downloadKey || paths.storagePath).replace(/^\/+/, "");
+
     return {
       type: "upsc",
       noteType: "upsc",
@@ -505,8 +510,9 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       topicFolder,
       hasTopic,
       folderPath: paths.folderPath,
-      storagePath: input.storagePath || input.r2Key || paths.storagePath,
-      r2Key: input.r2Key || input.storagePath || paths.storagePath,
+      storagePath: immutableKey,
+      r2Key: immutableKey,
+      downloadKey: immutableKey,
       practiceTestPath: paths.practiceTestPath,
       pdfUrl: input.pdfUrl || "",
       fileName: originalFilename,
@@ -533,7 +539,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       moduleNo: moduleNumber,
       topicNo: parsedTopicNumber !== undefined ? String(parsedTopicNumber) : undefined,
       pdfFileName: originalFilename,
-      storageKey: input.storagePath || input.r2Key || paths.storagePath,
+      storageKey: immutableKey,
     };
   } else {
     const rawChNo = input.chapterNumber ?? input.chapterNo ?? 1;
@@ -553,6 +559,8 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
     const id = `${classInfo.classFolder.toLowerCase()}_${sanitizeFolderName(subject).toLowerCase()}_${chapterFolder.toLowerCase()}${topicSuffix}`;
     const searchableText = `${classInfo.className} ${subject} Chapter ${chapterNumber} ${rawChName} ${parsedTopicNumber ? `Topic ${parsedTopicNumber}` : ""} ${parsedTopicName || ""} ${originalFilename}`.trim();
 
+    const immutableKey = (input.storagePath || input.storageKey || input.r2Key || input.downloadKey || paths.storagePath).replace(/^\/+/, "");
+
     return {
       type: "school",
       noteType: "school",
@@ -568,8 +576,9 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       topicFolder,
       hasTopic,
       folderPath: paths.folderPath,
-      storagePath: input.storagePath || input.r2Key || paths.storagePath,
-      r2Key: input.r2Key || input.storagePath || paths.storagePath,
+      storagePath: immutableKey,
+      r2Key: immutableKey,
+      downloadKey: immutableKey,
       practiceTestPath: paths.practiceTestPath,
       pdfUrl: input.pdfUrl || "",
       fileName: originalFilename,
@@ -592,7 +601,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       chapterNo: chapterNumber,
       topicNo: parsedTopicNumber !== undefined ? String(parsedTopicNumber) : undefined,
       pdfFileName: originalFilename,
-      storageKey: input.storagePath || input.r2Key || paths.storagePath,
+      storageKey: immutableKey,
     };
   }
 }

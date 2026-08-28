@@ -169,10 +169,15 @@ export default async function handler(req: any, res: any) {
             console.warn("[API Notes] Warning writing metadata.json:", err);
           });
 
-          // Verification check: confirm object presence in R2
+          // Strict verification check: confirm object presence in R2 before acknowledging success
           const headResult = await headObjectFromR2({ bucket, key: canonicalMeta.storagePath });
-          if (!headResult) {
-            console.warn("[API Notes] Verification warning: object HEAD check did not return immediately, continuing.");
+          if (!headResult || !headResult.exists) {
+            console.error(`[API Notes] HeadObject verification failed for uploaded key "${canonicalMeta.storagePath}".`);
+            return res.status(500).json({
+              success: false,
+              code: "UPLOAD_VERIFICATION_FAILED",
+              error: `Upload verification failed: HeadObject confirmed object does not exist in R2 for key "${canonicalMeta.storagePath}".`,
+            });
           }
         } catch (storageErr: any) {
           console.error("[API Notes] R2 upload error:", storageErr);
@@ -196,7 +201,9 @@ export default async function handler(req: any, res: any) {
           note: noteResult,
           documentId: canonicalMeta.id,
           r2Key: canonicalMeta.storagePath,
+          storageKey: canonicalMeta.storagePath,
           storagePath: canonicalMeta.storagePath,
+          downloadKey: canonicalMeta.storagePath,
           folderPath: canonicalMeta.folderPath,
           downloadUrl,
           pdfUrl: downloadUrl,
@@ -235,11 +242,13 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        let targetStorageKey = sanitizeKey(fields.oldStorageKey || fields.storageKey || fields.storagePath || query.storageKey || "");
+        const targetStorageKey = (fields.oldStorageKey || fields.storageKey || fields.storagePath || query.storageKey || "").trim().replace(/^\/+/, "");
 
-        // If target storage key is empty, reconstruct or fail gracefully
-        if (!targetStorageKey && noteIdFromUrl) {
-          targetStorageKey = `class_notes/${noteIdFromUrl}/note.pdf`;
+        if (!targetStorageKey) {
+          return res.status(400).json({
+            success: false,
+            error: "Target storage key is required for note replacement.",
+          });
         }
 
         const r2Config = getR2ServerConfig();
@@ -254,6 +263,17 @@ export default async function handler(req: any, res: any) {
             contentType: mimeType,
           });
 
+          // Strict verification check: confirm object presence in R2 before acknowledging success
+          const headResult = await headObjectFromR2({ bucket, key: targetStorageKey });
+          if (!headResult || !headResult.exists) {
+            console.error(`[API Notes] HeadObject verification failed for replaced key "${targetStorageKey}".`);
+            return res.status(500).json({
+              success: false,
+              code: "REPLACE_VERIFICATION_FAILED",
+              error: `Replacement verification failed: HeadObject confirmed object does not exist in R2 for key "${targetStorageKey}".`,
+            });
+          }
+
           // Update folder metadata.json if exists
           const folderPath = path.dirname(targetStorageKey);
           const metadataKey = `${folderPath}/metadata.json`;
@@ -262,6 +282,8 @@ export default async function handler(req: any, res: any) {
           const updateMetadata = {
             storagePath: targetStorageKey,
             r2Key: targetStorageKey,
+            storageKey: targetStorageKey,
+            downloadKey: targetStorageKey,
             fileName: newFileName,
             originalFilename: newFileName,
             fileSize: payload.size,
@@ -292,6 +314,7 @@ export default async function handler(req: any, res: any) {
           r2Key: targetStorageKey,
           storageKey: targetStorageKey,
           storagePath: targetStorageKey,
+          downloadKey: targetStorageKey,
           fileName: newFileName,
           originalFilename: newFileName,
           pdfFileName: newFileName,

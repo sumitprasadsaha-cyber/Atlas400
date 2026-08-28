@@ -24,6 +24,7 @@ import {
   deleteFromR2,
   getR2BucketName,
   getR2PublicUrl,
+  verifyR2ObjectExists,
 } from "./r2Client";
 
 export const MAX_NOTE_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
@@ -272,6 +273,14 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
     r2Uploaded = true;
     console.log(`[Upload Pipeline] Stage 4: Cloudflare R2 upload confirmed. ETag/Result:`, uploadRes);
 
+    // VERIFY BEFORE FIRESTORE WRITE: Perform HeadObject check on canonicalMetadata.storagePath
+    console.log(`[Upload Pipeline] Stage 4.1: Verifying object existence via HeadObject for key "${canonicalMetadata.storagePath}"...`);
+    const headCheck = await verifyR2ObjectExists({ bucket, key: canonicalMetadata.storagePath });
+    if (!headCheck || !headCheck.exists) {
+      console.error(`[Upload Pipeline] HeadObject verification failed for key "${canonicalMetadata.storagePath}". Aborting upload before Firestore write.`);
+      throw new Error(`Upload verification failed: HeadObject confirmed object does not exist in storage for key "${canonicalMetadata.storagePath}".`);
+    }
+
     const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(canonicalMetadata.storagePath)}`;
     const publicUrl = uploadRes.url || getR2PublicUrl(bucket, canonicalMetadata.storagePath);
 
@@ -294,6 +303,7 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
       r2Key: canonicalMetadata.storagePath,
       storageKey: canonicalMetadata.storagePath,
       storagePath: canonicalMetadata.storagePath,
+      downloadKey: canonicalMetadata.storagePath,
       pdfUrl: downloadUrl,
       publicUrl: publicUrl,
       downloadUrl: downloadUrl,
@@ -398,6 +408,14 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
 
     console.log(`[Replace Pipeline] Stage 4: Cloudflare R2 file updated. Result:`, uploadRes);
 
+    // VERIFY BEFORE FIRESTORE WRITE: Perform HeadObject check on targetStorageKey
+    console.log(`[Replace Pipeline] Stage 4.1: Verifying object existence via HeadObject for key "${targetStorageKey}"...`);
+    const headCheck = await verifyR2ObjectExists({ bucket, key: targetStorageKey });
+    if (!headCheck || !headCheck.exists) {
+      console.error(`[Replace Pipeline] HeadObject verification failed for key "${targetStorageKey}". Aborting update.`);
+      throw new Error(`Replacement verification failed: HeadObject confirmed object does not exist in storage for key "${targetStorageKey}".`);
+    }
+
     const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(targetStorageKey)}`;
     const publicUrl = uploadRes.url || getR2PublicUrl(bucket, targetStorageKey);
 
@@ -415,6 +433,7 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
       r2Key: targetStorageKey,
       storageKey: targetStorageKey,
       storagePath: targetStorageKey,
+      downloadKey: targetStorageKey,
       pdfUrl: downloadUrl,
       publicUrl: publicUrl,
       downloadUrl: downloadUrl,
