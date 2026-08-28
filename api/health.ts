@@ -9,9 +9,27 @@ export default async function handler(req: any, res: any) {
   if (handleOptions(req, res)) return;
 
   try {
+    const rawUrl = (req.url || req.originalUrl || "").split("?")[0];
+    const action = req.query?.action || (rawUrl.includes("debug-env") ? "debug-env" : "health");
+
+    if (action === "debug-env") {
+      const data = {
+        VERCEL: process.env.VERCEL,
+        NODE_ENV: process.env.NODE_ENV,
+        R2_ACCOUNT_ID: !!process.env.R2_ACCOUNT_ID,
+        R2_ACCESS_KEY_ID: !!process.env.R2_ACCESS_KEY_ID,
+        R2_SECRET_ACCESS_KEY: !!process.env.R2_SECRET_ACCESS_KEY,
+        R2_ENDPOINT: !!process.env.R2_ENDPOINT,
+        R2_BUCKET: !!process.env.R2_BUCKET,
+        R2_PUBLIC_URL: !!process.env.R2_PUBLIC_URL,
+      };
+      res.setHeader("Content-Type", "application/json");
+      return res.status(200).json(data);
+    }
+
     const r2Config = getR2ServerConfig();
     const r2Configured = isR2Configured();
-    const isDeepCheck = req.query.deep === "true" || req.query.verify === "true";
+    const isDeepCheck = req.query?.deep === "true" || req.query?.verify === "true";
 
     let r2ReadWrite = false;
     let r2Error: string | undefined;
@@ -63,3 +81,4 @@ export default async function handler(req: any, res: any) {
     return sendError(res, err, "Health check failed.");
   }
 }
+

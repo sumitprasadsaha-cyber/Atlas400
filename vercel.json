@@ -5,6 +5,50 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/api/r2/signed-url",
+      "destination": "/api/storage?action=signed-url"
+    },
+    {
+      "source": "/api/r2/upload",
+      "destination": "/api/storage?action=upload"
+    },
+    {
+      "source": "/api/r2/download",
+      "destination": "/api/storage?action=download"
+    },
+    {
+      "source": "/api/r2/verify",
+      "destination": "/api/storage?action=verify"
+    },
+    {
+      "source": "/api/r2/delete",
+      "destination": "/api/storage?action=delete"
+    },
+    {
+      "source": "/api/r2/health",
+      "destination": "/api/health"
+    },
+    {
+      "source": "/api/r2/:action*",
+      "destination": "/api/storage?action=:action*"
+    },
+    {
+      "source": "/api/files/download",
+      "destination": "/api/storage?action=download"
+    },
+    {
+      "source": "/api/files/:path*",
+      "destination": "/api/storage"
+    },
+    {
+      "source": "/api/debug-env",
+      "destination": "/api/health?action=debug-env"
+    },
+    {
+      "source": "/debug-env",
+      "destination": "/api/health?action=debug-env"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api/:path*"
     },
@@ -14,3 +58,4 @@
     }
   ]
 }
+
