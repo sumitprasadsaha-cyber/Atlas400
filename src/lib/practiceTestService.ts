@@ -1,7 +1,7 @@
 import { ParsedAssessmentQuestion, TopicPracticeTest, TestAttemptRecord } from "../types";
 import { getResolvedViewUrl } from "./storageService";
 import { uploadToR2, downloadFromR2, getR2BucketName } from "./r2Client";
-import { doc, setDoc, onSnapshot, collection, deleteDoc, Unsubscribe } from "firebase/firestore";
+import { doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, Unsubscribe } from "firebase/firestore";
 import { getFirebaseDb } from "./firebase";
 import { normalizeQuestionOptions } from "../utils/assessmentParser";
 
@@ -237,10 +237,36 @@ export function initPracticeTestsRealtimeSync(): void {
     }
   } catch (err) {}
 
-  // B. Firestore Realtime Snapshot for cross-device sync
+  // B. Firestore Realtime Listeners for instant cross-device sync
   getFirebaseDb().then((db) => {
     if (!db) return;
     try {
+      // 1. Listen directly to topic_practice_tests collection for immediate real-time updates
+      const testsColRef = collection(db, "topic_practice_tests");
+      onSnapshot(
+        testsColRef,
+        (snap) => {
+          const freshBank: Record<string, TopicPracticeTest> = {};
+          snap.docs.forEach((docSnap) => {
+            const test = docSnap.data() as TopicPracticeTest;
+            if (test) {
+              const testId = test.id || docSnap.id;
+              freshBank[testId] = { ...test, id: testId };
+            }
+          });
+          memoryTestBank = freshBank;
+          saveLocalTestBank(freshBank, { silent: true });
+          notifyTestBankSubscribers();
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("practice-tests-updated"));
+          }
+        },
+        (err) => {
+          console.warn("[PracticeTestService] topic_practice_tests subscription error:", err);
+        }
+      );
+
+      // 2. Also listen to practice_tests_sync signal
       const syncDocRef = doc(db, "practice_tests_sync", "latest");
       let lastProcessedTs = 0;
 
@@ -262,34 +288,6 @@ export function initPracticeTestsRealtimeSync(): void {
         },
         (err) => {
           console.warn("[PracticeTestService] Firestore practice_tests_sync snapshot error:", err);
-        }
-      );
-
-      // C. Also listen to topic_practice_tests collection for immediate granular updates
-      const testsColRef = collection(db, "topic_practice_tests");
-      onSnapshot(
-        testsColRef,
-        (snap) => {
-          let hasChanges = false;
-          snap.docChanges().forEach((change) => {
-            hasChanges = true;
-            const test = change.doc.data() as TopicPracticeTest;
-            if (change.type === "removed") {
-              delete memoryTestBank[change.doc.id];
-            } else if (test && test.id) {
-              memoryTestBank[test.id] = test;
-            }
-          });
-          if (hasChanges) {
-            saveLocalTestBank(memoryTestBank);
-            notifyTestBankSubscribers();
-            if (typeof window !== "undefined") {
-              window.dispatchEvent(new CustomEvent("practice-tests-updated"));
-            }
-          }
-        },
-        (err) => {
-          console.warn("[PracticeTestService] topic_practice_tests subscription error:", err);
         }
       );
     } catch (err) {
@@ -606,7 +604,8 @@ export async function resolveQuestionImageUrls(
 }
 
 /**
- * Fetches all topic practice tests from R2 / cache and populates the local test bank.
+ * Fetches all topic practice tests directly from Firestore (single source of truth)
+ * and populates the local test bank.
  */
 let activeFetchPromise: Promise<Record<string, TopicPracticeTest>> | null = null;
 
@@ -617,14 +616,44 @@ export async function fetchAllPracticeTests(): Promise<Record<string, TopicPract
 
   activeFetchPromise = (async () => {
     try {
-      const storageBank = await fetchTestBankFromStorage();
-      if (storageBank && typeof storageBank === "object") {
-        memoryTestBank = storageBank;
-        saveLocalTestBank(storageBank, { silent: true });
-        return storageBank;
+      // 1. Primary Source of Truth: Firestore topic_practice_tests collection
+      const db = await getFirebaseDb();
+      if (db) {
+        const testsColRef = collection(db, "topic_practice_tests");
+        const snap = await getDocs(testsColRef);
+        const firestoreBank: Record<string, TopicPracticeTest> = {};
+        snap.docs.forEach((docSnap) => {
+          const test = docSnap.data() as TopicPracticeTest;
+          if (test) {
+            const testId = test.id || docSnap.id;
+            firestoreBank[testId] = { ...test, id: testId };
+          }
+        });
+
+        // Always update memory bank with authoritative Firestore data
+        memoryTestBank = firestoreBank;
+        saveLocalTestBank(firestoreBank, { silent: true });
+        notifyTestBankSubscribers();
+        
+        // Backup to secondary storage in background if needed
+        syncTestBankToStorage(firestoreBank).catch(() => {});
+        return firestoreBank;
       }
     } catch (err) {
-      console.warn("[PracticeTestService] Error fetching tests bank from R2:", err);
+      console.warn("[PracticeTestService] Error fetching tests from Firestore topic_practice_tests:", err);
+    }
+
+    // 2. Secondary fallback if Firestore is temporarily offline
+    try {
+      const storageBank = await fetchTestBankFromStorage();
+      if (storageBank && typeof storageBank === "object" && Object.keys(storageBank).length > 0) {
+        memoryTestBank = { ...storageBank, ...memoryTestBank };
+        saveLocalTestBank(memoryTestBank, { silent: true });
+        notifyTestBankSubscribers();
+        return memoryTestBank;
+      }
+    } catch (err) {
+      console.warn("[PracticeTestService] Error fetching tests bank from fallback storage:", err);
     } finally {
       activeFetchPromise = null;
     }
@@ -640,10 +669,31 @@ export async function getTopicPracticeTest(
   subject: string,
   chapterNo: number,
   topicName: string,
-  _options?: { publishedOnly?: boolean; forceFresh?: boolean }
+  options?: { publishedOnly?: boolean; forceFresh?: boolean }
 ): Promise<TopicPracticeTest | null> {
   const testId = buildTopicTestId(classGrade, subject, chapterNo, topicName);
-  let test = memoryTestBank[testId] || null;
+  let test = (!options?.forceFresh && memoryTestBank[testId]) ? memoryTestBank[testId] : null;
+
+  // Direct single-document Firestore fetch if not in memory or forceFresh requested
+  if (!test || options?.forceFresh) {
+    try {
+      const db = await getFirebaseDb();
+      if (db) {
+        const testDocRef = doc(db, "topic_practice_tests", testId);
+        const docSnap = await getDoc(testDocRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data() as TopicPracticeTest;
+          if (data) {
+            test = { ...data, id: testId };
+            memoryTestBank[testId] = test;
+            notifyTestBankSubscribers();
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[PracticeTestService] Error fetching single test doc from Firestore:", err);
+    }
+  }
 
   if (!test) {
     const bank = await fetchAllPracticeTests();

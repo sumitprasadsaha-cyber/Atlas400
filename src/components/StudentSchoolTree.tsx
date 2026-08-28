@@ -7,7 +7,7 @@ import {
   Image as ImageIcon,
   Search, 
   X,
-  FileQuestion
+  FlaskConical
 } from "lucide-react";
 import { Student, ClassNote, ChapterNote } from "../types";
 import { StudentSchoolSubject, StudentSchoolModule } from "../utils/studentSchoolHierarchyHelper";
@@ -283,8 +283,8 @@ export default function StudentSchoolTree({
                                   )}
                                 </div>
 
-                                {/* Attached Test Button (if available or admin) */}
-                                {(hasTest || isAdmin) && (
+                                {/* Attached Test Button (Only displayed if test exists for this topic) */}
+                                {hasTest && (
                                   <button
                                     type="button"
                                     onClick={(e) => {
@@ -298,10 +298,11 @@ export default function StudentSchoolTree({
                                         testType: "topic",
                                       });
                                     }}
-                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 cursor-pointer transition active:scale-95 shrink-0"
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/90 dark:border-emerald-800/80 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 cursor-pointer transition active:scale-95 shrink-0 shadow-2xs"
                                     title="Take Practice Test"
+                                    aria-label={`Take practice test for ${topic.topicName}`}
                                   >
-                                    <FileQuestion className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                    <FlaskConical className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                                     <span>Test</span>
                                   </button>
                                 )}
