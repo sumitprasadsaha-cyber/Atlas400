@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { 
   ChevronRight, 
   ChevronDown, 
@@ -6,10 +6,12 @@ import {
   FileText, 
   Image as ImageIcon,
   Search, 
-  X
+  X,
+  FileQuestion
 } from "lucide-react";
 import { Student, ClassNote, ChapterNote } from "../types";
 import { StudentSchoolSubject, StudentSchoolModule } from "../utils/studentSchoolHierarchyHelper";
+import { getTopicPracticeTestSync, subscribeToPracticeTests } from "../lib/practiceTestService";
 
 interface StudentSchoolTreeProps {
   className: string;
@@ -34,11 +36,32 @@ export default function StudentSchoolTree({
   subjects,
   student,
   onPreviewNote,
+  onOpenPracticeTest,
   openingNoteId,
   isAdmin = false,
 }: StudentSchoolTreeProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>({});
+  const [, setTestBankTick] = useState(0);
+
+  // Subscribe to real-time practice test changes so attached tests update instantly
+  useEffect(() => {
+    const handleUpdate = () => setTestBankTick((t) => t + 1);
+    const unsub = subscribeToPracticeTests(handleUpdate);
+    if (typeof window !== "undefined") {
+      window.addEventListener("practice-tests-updated", handleUpdate);
+      window.addEventListener("test-attempts-updated", handleUpdate);
+      window.addEventListener("storage", handleUpdate);
+    }
+    return () => {
+      if (unsub) unsub();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("practice-tests-updated", handleUpdate);
+        window.removeEventListener("test-attempts-updated", handleUpdate);
+        window.removeEventListener("storage", handleUpdate);
+      }
+    };
+  }, []);
 
   const toggleModule = (moduleKey: string) => {
     setExpandedModules((prev) => ({
@@ -91,22 +114,27 @@ export default function StudentSchoolTree({
       .filter(Boolean) as StudentSchoolSubject[];
   }, [subjects, cleanQuery]);
 
-  const handleExpandAll = () => {
-    const nextMods: Record<string, boolean> = {};
-    subjects.forEach((s) => {
+  // Collect all visible module keys for toggle expand/collapse
+  const allModuleKeys = useMemo(() => {
+    const keys: string[] = [];
+    filteredSubjects.forEach((s) => {
       s.modules.forEach((m) => {
-        nextMods[`${s.subjectKey}_${m.moduleKey}`] = true;
+        keys.push(`${s.subjectKey}_${m.moduleKey}`);
       });
     });
-    setExpandedModules(nextMods);
-  };
+    return keys;
+  }, [filteredSubjects]);
 
-  const handleCollapseAll = () => {
+  const areAllExpanded = useMemo(() => {
+    if (allModuleKeys.length === 0) return false;
+    return allModuleKeys.every((key) => expandedModules[key] !== false);
+  }, [allModuleKeys, expandedModules]);
+
+  const handleToggleExpandCollapseAll = () => {
+    const nextState = !areAllExpanded;
     const nextMods: Record<string, boolean> = {};
-    subjects.forEach((s) => {
-      s.modules.forEach((m) => {
-        nextMods[`${s.subjectKey}_${m.moduleKey}`] = false;
-      });
+    allModuleKeys.forEach((key) => {
+      nextMods[key] = nextState;
     });
     setExpandedModules(nextMods);
   };
@@ -117,7 +145,7 @@ export default function StudentSchoolTree({
 
   return (
     <div className="flex flex-col gap-3 h-full overflow-hidden" id="student-school-tree-container">
-      {/* Search Input Bar & Controls */}
+      {/* Search Input Bar & Single Toggle Button */}
       <div className="flex items-center gap-2 shrink-0" id="school-search-bar-row">
         <div className="relative flex-1" id="school-chapter-search">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -138,23 +166,14 @@ export default function StudentSchoolTree({
           )}
         </div>
 
-        {/* Expand / Collapse All Toggle */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            onClick={handleExpandAll}
-            className="px-2.5 py-2 text-[11px] font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition cursor-pointer"
-            title="Expand All Chapters"
-          >
-            Expand
-          </button>
-          <button
-            onClick={handleCollapseAll}
-            className="px-2.5 py-2 text-[11px] font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition cursor-pointer"
-            title="Collapse All Chapters"
-          >
-            Collapse
-          </button>
-        </div>
+        {/* Single Expand / Collapse Toggle Button */}
+        <button
+          onClick={handleToggleExpandCollapseAll}
+          className="px-3 py-2 text-[11px] font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition cursor-pointer shrink-0"
+          title={areAllExpanded ? "Collapse All Chapters" : "Expand All Chapters"}
+        >
+          {areAllExpanded ? "Collapse All" : "Expand All"}
+        </button>
       </div>
 
       {/* Chapters List without duplicate Subject container */}
@@ -223,31 +242,68 @@ export default function StudentSchoolTree({
                         ) : (
                           mod.topics.map((topic) => {
                             const isOpening = openingNoteId === topic.id;
+                            const targetClass = className || student.classGrade || (topic.note as any).classGrade || "";
+                            const targetSubj = subj.subject || (topic.note as any).subject || "";
+                            const chapterNo = mod.moduleNo || (topic.note as any).chapterNo || 1;
+
+                            // Check if an attached practice test exists for this topic
+                            const topicTest =
+                              getTopicPracticeTestSync(targetClass, targetSubj, chapterNo, topic.topicName) ||
+                              getTopicPracticeTestSync(targetClass, targetSubj, chapterNo, topic.topicLabel) ||
+                              getTopicPracticeTestSync(targetClass, targetSubj, chapterNo, (topic.note as any).topicTitle || "") ||
+                              ((topic.note as any).hasPracticeTest ? { questions: [{ id: "1" }] } : null);
+
+                            const hasTest = !!(topicTest && Array.isArray(topicTest.questions) && topicTest.questions.length > 0);
 
                             return (
                               <div
                                 key={topic.id}
                                 onClick={() => onPreviewNote(topic.note)}
-                                className={`group flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-100/90 dark:hover:bg-slate-800/70 transition-colors cursor-pointer select-none ${
+                                className={`group flex items-center justify-between gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-100/90 dark:hover:bg-slate-800/70 transition-colors cursor-pointer select-none ${
                                   isOpening ? "opacity-75 bg-blue-50/50 dark:bg-blue-950/30" : ""
                                 }`}
                                 id={`school-topic-${topic.id}`}
                                 title="Tap to open note in browser"
                               >
-                                {topic.fileType === "image" ? (
-                                  <ImageIcon className="w-4 h-4 text-amber-500 shrink-0" />
-                                ) : (
-                                  <FileText className="w-4 h-4 text-blue-500 shrink-0" />
-                                )}
+                                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                  {topic.fileType === "image" ? (
+                                    <ImageIcon className="w-4 h-4 text-amber-500 shrink-0" />
+                                  ) : (
+                                    <FileText className="w-4 h-4 text-blue-500 shrink-0" />
+                                  )}
 
-                                <span className="truncate flex-1 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                  {topic.topicName}
-                                </span>
-
-                                {isOpening && (
-                                  <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 animate-pulse shrink-0">
-                                    Opening...
+                                  <span className="truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                                    {topic.topicName}
                                   </span>
+
+                                  {isOpening && (
+                                    <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 animate-pulse shrink-0">
+                                      Opening...
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Attached Test Button (if available or admin) */}
+                                {(hasTest || isAdmin) && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onOpenPracticeTest?.({
+                                        classGrade: targetClass,
+                                        subject: targetSubj,
+                                        chapterNo: mod.moduleNo,
+                                        chapterName: mod.moduleName,
+                                        topicName: topic.topicName,
+                                        testType: "topic",
+                                      });
+                                    }}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 cursor-pointer transition active:scale-95 shrink-0"
+                                    title="Take Practice Test"
+                                  >
+                                    <FileQuestion className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                    <span>Test</span>
+                                  </button>
                                 )}
                               </div>
                             );

@@ -1,7 +1,7 @@
 import { ParsedAssessmentQuestion, TopicPracticeTest, TestAttemptRecord } from "../types";
 import { getResolvedViewUrl } from "./storageService";
 import { uploadToR2, downloadFromR2, getR2BucketName } from "./r2Client";
-import { doc, setDoc, onSnapshot } from "firebase/firestore";
+import { doc, setDoc, onSnapshot, collection, deleteDoc, Unsubscribe } from "firebase/firestore";
 import { getFirebaseDb } from "./firebase";
 import { normalizeQuestionOptions } from "../utils/assessmentParser";
 
@@ -190,6 +190,32 @@ async function writeSyncQueueToIDB(queue: SyncQueueItem[]): Promise<void> {
   });
 }
 
+const testBankSubscribers = new Set<(bank: Record<string, TopicPracticeTest>) => void>();
+
+function notifyTestBankSubscribers(): void {
+  testBankSubscribers.forEach((fn) => {
+    try {
+      fn(memoryTestBank);
+    } catch (e) {
+      console.warn("[PracticeTestService] Error notifying subscriber:", e);
+    }
+  });
+}
+
+export function subscribeToPracticeTests(
+  callback: (bank: Record<string, TopicPracticeTest>) => void
+): () => void {
+  testBankSubscribers.add(callback);
+  // Initial callback with current memory bank
+  try {
+    callback(memoryTestBank);
+  } catch (e) {}
+
+  return () => {
+    testBankSubscribers.delete(callback);
+  };
+}
+
 export function initPracticeTestsRealtimeSync(): void {
   if (typeof window === "undefined") return;
   if (isRealtimeInitialized) return;
@@ -202,6 +228,7 @@ export function initPracticeTestsRealtimeSync(): void {
       bc.onmessage = async (event) => {
         if (event.data?.type === "PRACTICE_TESTS_UPDATED") {
           await fetchAllPracticeTests();
+          notifyTestBankSubscribers();
           if (typeof window !== "undefined") {
             window.dispatchEvent(new CustomEvent("practice-tests-updated"));
           }
@@ -226,6 +253,7 @@ export function initPracticeTestsRealtimeSync(): void {
             if (ts && ts > lastProcessedTs) {
               lastProcessedTs = ts;
               await fetchAllPracticeTests();
+              notifyTestBankSubscribers();
               if (typeof window !== "undefined") {
                 window.dispatchEvent(new CustomEvent("practice-tests-updated"));
               }
@@ -236,8 +264,36 @@ export function initPracticeTestsRealtimeSync(): void {
           console.warn("[PracticeTestService] Firestore practice_tests_sync snapshot error:", err);
         }
       );
+
+      // C. Also listen to topic_practice_tests collection for immediate granular updates
+      const testsColRef = collection(db, "topic_practice_tests");
+      onSnapshot(
+        testsColRef,
+        (snap) => {
+          let hasChanges = false;
+          snap.docChanges().forEach((change) => {
+            hasChanges = true;
+            const test = change.doc.data() as TopicPracticeTest;
+            if (change.type === "removed") {
+              delete memoryTestBank[change.doc.id];
+            } else if (test && test.id) {
+              memoryTestBank[test.id] = test;
+            }
+          });
+          if (hasChanges) {
+            saveLocalTestBank(memoryTestBank);
+            notifyTestBankSubscribers();
+            if (typeof window !== "undefined") {
+              window.dispatchEvent(new CustomEvent("practice-tests-updated"));
+            }
+          }
+        },
+        (err) => {
+          console.warn("[PracticeTestService] topic_practice_tests subscription error:", err);
+        }
+      );
     } catch (err) {
-      console.warn("[PracticeTestService] Failed setting up Firestore practice_tests_sync listener:", err);
+      console.warn("[PracticeTestService] Failed setting up Firestore practice_tests listeners:", err);
     }
   });
 }
@@ -858,6 +914,20 @@ export async function saveTopicPracticeTest(
 
   updateLocalTopicCache(topicTest);
   clearAllQuestionCaches();
+  notifyTestBankSubscribers();
+
+  // 1. Direct Firestore write for instant cross-device realtime synchronization
+  try {
+    const db = await getFirebaseDb();
+    if (db) {
+      const testDocRef = doc(db, "topic_practice_tests", topicTestId);
+      await setDoc(testDocRef, topicTest, { merge: true });
+    }
+  } catch (err) {
+    console.warn("[PracticeTestService] Direct Firestore write notice:", err);
+  }
+
+  // 2. Sync to R2 and send realtime signal
   await syncTestBankToStorage(getLocalTestBank()).catch(() => false);
   await notifyPracticeTestRealtimeSync({ testId: topicTestId, action: "save_topic" });
 
@@ -903,6 +973,16 @@ export async function deleteTopicPracticeTest(
   removeLocalTopicCache(testId);
   saveLocalTestBank(bank);
   clearAllQuestionCaches();
+  notifyTestBankSubscribers();
+
+  // 1. Direct Firestore delete
+  try {
+    const db = await getFirebaseDb();
+    if (db) {
+      const testDocRef = doc(db, "topic_practice_tests", testId);
+      await deleteDoc(testDocRef);
+    }
+  } catch (err) {}
 
   await deleteTopicAttemptsFromPersistence(classGrade, subject, chapterNo, topicName).catch(() => {});
   await syncTestBankToStorage(bank).catch(() => {});
