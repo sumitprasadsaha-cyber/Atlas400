@@ -494,6 +494,10 @@ export function generateCandidateKeys(rawKey: string): string[] {
 /**
  * Retrieves an object stream from Cloudflare R2 bucket or local disk fallback.
  */
+/**
+ * Fetches an object stream directly from Cloudflare R2 bucket or local disk fallback.
+ * Strictly O(1) single-key retrieval.
+ */
 export async function getObjectFromR2(params: {
   bucket?: string;
   key: string;
@@ -510,98 +514,92 @@ export async function getObjectFromR2(params: {
 }> {
   const config = getR2ServerConfig();
   const bucketName = params.bucket || config.bucket;
-  const cleanKey = params.key.replace(/^\/+/, "");
+  const cleanKey = (params.key || "").trim().replace(/^\/+/, "");
 
-  // Resolve existence and canonical key first
-  const headCheck = await headObjectFromR2({ bucket: bucketName, key: cleanKey });
-  const effectiveKey = headCheck.exists && headCheck.resolvedKey ? headCheck.resolvedKey : cleanKey;
-  const candidateKeys = headCheck.exists && headCheck.resolvedKey ? [headCheck.resolvedKey] : generateCandidateKeys(cleanKey);
+  if (!cleanKey) {
+    return { body: null, resolvedKey: "" };
+  }
 
   if (isR2Configured()) {
-    const client = getR2S3Client();
-    for (const cand of candidateKeys) {
-      try {
-        const input: GetObjectCommandInput = {
-          Bucket: bucketName,
-          Key: cand,
-          Range: params.range,
-        };
+    try {
+      const client = getR2S3Client();
+      const input: GetObjectCommandInput = {
+        Bucket: bucketName,
+        Key: cleanKey,
+        Range: params.range,
+      };
 
-        const command = new GetObjectCommand(input);
-        const response = await client.send(command);
+      const command = new GetObjectCommand(input);
+      const response = await client.send(command);
 
-        return {
-          body: (response.Body as unknown as Readable) || null,
-          contentType: response.ContentType || getMimeTypeFromKey(cand),
-          contentLength: response.ContentLength,
-          contentRange: response.ContentRange,
-          lastModified: response.LastModified,
-          etag: response.ETag,
-          metadata: response.Metadata,
-          resolvedKey: cand,
-        };
-      } catch (err: any) {
-        if (
-          err.name === "NoSuchKey" ||
-          err.name === "NotFound" ||
-          err.$metadata?.httpStatusCode === 404
-        ) {
-          continue;
-        } else {
-          if (isAuthError(err)) {
-            markR2AuthFailed(err?.message);
-          }
-        }
+      return {
+        body: (response.Body as unknown as Readable) || null,
+        contentType: response.ContentType || getMimeTypeFromKey(cleanKey),
+        contentLength: response.ContentLength,
+        contentRange: response.ContentRange,
+        lastModified: response.LastModified,
+        etag: response.ETag,
+        metadata: response.Metadata,
+        resolvedKey: cleanKey,
+      };
+    } catch (err: any) {
+      if (
+        err.name === "NoSuchKey" ||
+        err.name === "NotFound" ||
+        err.$metadata?.httpStatusCode === 404
+      ) {
+        // Fall through to local storage
+      } else if (isAuthError(err)) {
+        markR2AuthFailed(err?.message);
       }
     }
   }
 
-  // Check local filesystem storage
-  for (const cand of candidateKeys) {
-    try {
-      const filePath = getSafeLocalPath(bucketName, cand);
-      if (fs.existsSync(filePath)) {
-        const stat = await fs.promises.stat(filePath);
-        const contentType = getMimeTypeFromKey(cand);
-        const etag = `"${stat.size}-${stat.mtimeMs}"`;
+  // Check local filesystem storage fallback
+  try {
+    const filePath = getSafeLocalPath(bucketName, cleanKey);
+    if (fs.existsSync(filePath)) {
+      const stat = await fs.promises.stat(filePath);
+      const contentType = getMimeTypeFromKey(cleanKey);
+      const etag = `"${stat.size}-${stat.mtimeMs}"`;
 
-        if (params.range && stat.size > 0) {
-          const parts = params.range.replace(/bytes=/, "").split("-");
-          const start = parseInt(parts[0], 10) || 0;
-          const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
-          const chunkSize = end - start + 1;
-          const fileStream = fs.createReadStream(filePath, { start, end });
-
-          return {
-            body: fileStream,
-            contentType,
-            contentLength: chunkSize,
-            contentRange: `bytes ${start}-${end}/${stat.size}`,
-            lastModified: stat.mtime,
-            etag,
-            resolvedKey: cand,
-          };
-        }
+      if (params.range && stat.size > 0) {
+        const parts = params.range.replace(/bytes=/, "").split("-");
+        const start = parseInt(parts[0], 10) || 0;
+        const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+        const chunkSize = end - start + 1;
+        const fileStream = fs.createReadStream(filePath, { start, end });
 
         return {
-          body: fs.createReadStream(filePath),
+          body: fileStream,
           contentType,
-          contentLength: stat.size,
+          contentLength: chunkSize,
+          contentRange: `bytes ${start}-${end}/${stat.size}`,
           lastModified: stat.mtime,
           etag,
-          resolvedKey: cand,
+          resolvedKey: cleanKey,
         };
       }
-    } catch (localErr) {
-      // continue to next candidate
+
+      return {
+        body: fs.createReadStream(filePath),
+        contentType,
+        contentLength: stat.size,
+        lastModified: stat.mtime,
+        etag,
+        resolvedKey: cleanKey,
+      };
     }
+  } catch (localErr) {
+    // Ignore local error
   }
 
-  return { body: null, resolvedKey: effectiveKey };
+  return { body: null, resolvedKey: cleanKey };
 }
 
 /**
  * Generates a presigned URL or proxy streaming URL for downloading or uploading to Cloudflare R2 / Local Storage.
+ * Deterministic, instant O(1) presigned URL generation.
  */
 export async function generateR2SignedUrl(params: {
   bucket?: string;
@@ -612,23 +610,10 @@ export async function generateR2SignedUrl(params: {
 }): Promise<string> {
   const config = getR2ServerConfig();
   const bucketName = params.bucket || config.bucket || "academy-connect-files";
-  const cleanKey = params.key.replace(/^\/+/, "");
+  const cleanKey = (params.key || "").trim().replace(/^\/+/, "");
   const expiresIn = params.expiresIn || 3600;
   const operation = params.operation || "getObject";
-
-  // Check object existence and resolve exact object key if viewing
-  let effectiveKey = cleanKey;
-  let effectiveMime = params.contentType || getMimeTypeFromKey(cleanKey);
-
-  if (operation === "getObject") {
-    try {
-      const head = await headObjectFromR2({ bucket: bucketName, key: cleanKey });
-      if (head.exists && head.resolvedKey) {
-        effectiveKey = head.resolvedKey;
-        if (head.contentType) effectiveMime = head.contentType;
-      }
-    } catch {}
-  }
+  const effectiveMime = params.contentType || getMimeTypeFromKey(cleanKey);
 
   if (isR2Configured()) {
     try {
@@ -636,7 +621,7 @@ export async function generateR2SignedUrl(params: {
       if (operation === "putObject") {
         const command = new PutObjectCommand({
           Bucket: bucketName,
-          Key: effectiveKey,
+          Key: cleanKey,
           ContentType: effectiveMime,
         });
         return await getSignedUrl(client, command, { expiresIn });
@@ -645,7 +630,7 @@ export async function generateR2SignedUrl(params: {
       // Generate direct pre-signed URL with inline Content-Disposition so browsers/mobile OS view natively
       const command = new GetObjectCommand({
         Bucket: bucketName,
-        Key: effectiveKey,
+        Key: cleanKey,
         ResponseContentDisposition: "inline",
         ResponseContentType: effectiveMime,
       });
@@ -659,11 +644,11 @@ export async function generateR2SignedUrl(params: {
 
   // Fallback to public URL if configured and operation is getObject
   if (config.publicUrl && operation === "getObject") {
-    return `${config.publicUrl.replace(/\/+$/, "")}/${effectiveKey}`;
+    return `${config.publicUrl.replace(/\/+$/, "")}/${cleanKey}`;
   }
 
   // Default reliable fallback: streaming download proxy
-  return `/api/storage?action=download&bucket=${encodeURIComponent(bucketName)}&key=${encodeURIComponent(effectiveKey)}`;
+  return `/api/storage?action=download&bucket=${encodeURIComponent(bucketName)}&key=${encodeURIComponent(cleanKey)}`;
 }
 
 /**
@@ -862,6 +847,7 @@ export async function listObjectsFromR2(params: {
 
 /**
  * Checks metadata/existence of an object in Cloudflare R2 bucket or local disk fallback.
+ * Strictly O(1) direct single-key verification.
  */
 export async function headObjectFromR2(params: {
   bucket?: string;
@@ -877,141 +863,61 @@ export async function headObjectFromR2(params: {
 }> {
   const config = getR2ServerConfig();
   const bucketName = params.bucket || config.bucket;
-  const cleanKey = params.key.replace(/^\/+/, "");
+  const cleanKey = (params.key || "").trim().replace(/^\/+/, "");
 
-  const candidateKeys = generateCandidateKeys(cleanKey);
+  if (!cleanKey) {
+    return { exists: false };
+  }
 
   if (isR2Configured()) {
-    const client = getR2S3Client();
-    for (const cand of candidateKeys) {
-      try {
-        const command = new HeadObjectCommand({
-          Bucket: bucketName,
-          Key: cand,
-        });
-        const response = await client.send(command);
-        return {
-          exists: true,
-          contentLength: response.ContentLength,
-          contentType: response.ContentType,
-          lastModified: response.LastModified,
-          etag: response.ETag,
-          metadata: response.Metadata,
-          resolvedKey: cand,
-        };
-      } catch (err: any) {
-        // Try next candidate
-      }
-    }
-
-    // If direct candidate keys didn't match, check directory prefix in R2
-    const lastSlash = cleanKey.lastIndexOf("/");
-    if (lastSlash !== -1) {
-      const dirName = cleanKey.substring(0, lastSlash);
-      const dirCandidates = [
-        dirName,
-        dirName.replace(/Chapter_/g, "Module_"),
-        dirName.replace(/Module_/g, "Chapter_"),
-        `notes/${dirName}`,
-      ];
-
-      for (const dirCand of dirCandidates) {
-        try {
-          const listRes = await listObjectsFromR2({
-            bucket: bucketName,
-            prefix: dirCand.endsWith("/") ? dirCand : `${dirCand}/`,
-            maxKeys: 10,
-          });
-
-          if (listRes.objects && listRes.objects.length > 0) {
-            // Find first valid file
-            const matchedObj = listRes.objects.find(
-              (o) =>
-                !o.key.endsWith("/") &&
-                !o.key.endsWith(".empty") &&
-                (o.key.endsWith(".pdf") ||
-                  o.key.endsWith(".png") ||
-                  o.key.endsWith(".jpg") ||
-                  o.key.endsWith(".jpeg") ||
-                  o.key.endsWith(".webp") ||
-                  o.size > 0)
-            ) || listRes.objects[0];
-
-            if (matchedObj) {
-              return {
-                exists: true,
-                contentLength: matchedObj.size,
-                contentType: getMimeTypeFromKey(matchedObj.key),
-                lastModified: matchedObj.lastModified,
-                etag: matchedObj.etag,
-                resolvedKey: matchedObj.key,
-              };
-            }
-          }
-        } catch {}
-      }
-    }
-  }
-
-  // Check local filesystem
-  for (const cand of candidateKeys) {
     try {
-      const filePath = getSafeLocalPath(bucketName, cand);
-      if (fs.existsSync(filePath)) {
-        const stat = await fs.promises.stat(filePath);
-        return {
-          exists: true,
-          contentLength: stat.size,
-          contentType: getMimeTypeFromKey(cand),
-          lastModified: stat.mtime,
-          etag: `"${stat.size}-${stat.mtimeMs}"`,
-          resolvedKey: cand,
-        };
+      const client = getR2S3Client();
+      const command = new HeadObjectCommand({
+        Bucket: bucketName,
+        Key: cleanKey,
+      });
+      const response = await client.send(command);
+      return {
+        exists: true,
+        contentLength: response.ContentLength,
+        contentType: response.ContentType || getMimeTypeFromKey(cleanKey),
+        lastModified: response.LastModified,
+        etag: response.ETag,
+        metadata: response.Metadata,
+        resolvedKey: cleanKey,
+      };
+    } catch (err: any) {
+      if (
+        err.name === "NoSuchKey" ||
+        err.name === "NotFound" ||
+        err.$metadata?.httpStatusCode === 404
+      ) {
+        // Fall through to check local storage
+      } else if (isAuthError(err)) {
+        markR2AuthFailed(err?.message);
       }
-    } catch {
-      // ignore and try next
     }
   }
 
-  // Check local filesystem directory scan
-  const lastSlashLocal = cleanKey.lastIndexOf("/");
-  if (lastSlashLocal !== -1) {
-    const dirName = cleanKey.substring(0, lastSlashLocal);
-    const dirCandidates = [
-      dirName,
-      dirName.replace(/Chapter_/g, "Module_"),
-      dirName.replace(/Module_/g, "Chapter_"),
-      `notes/${dirName}`,
-    ];
-
-    for (const dirCand of dirCandidates) {
-      try {
-        const localDir = getSafeLocalPath(bucketName, dirCand);
-        if (fs.existsSync(localDir) && (await fs.promises.stat(localDir)).isDirectory()) {
-          const files = await fs.promises.readdir(localDir);
-          const validFile = files.find(
-            (f) =>
-              !f.startsWith(".") &&
-              (f.endsWith(".pdf") || f.endsWith(".png") || f.endsWith(".jpg") || f.endsWith(".jpeg") || f.endsWith(".webp"))
-          );
-          if (validFile) {
-            const fullFilePath = path.join(localDir, validFile);
-            const stat = await fs.promises.stat(fullFilePath);
-            const foundKey = `${dirCand.replace(/\/+$/, "")}/${validFile}`;
-            return {
-              exists: true,
-              contentLength: stat.size,
-              contentType: getMimeTypeFromKey(foundKey),
-              lastModified: stat.mtime,
-              etag: `"${stat.size}-${stat.mtimeMs}"`,
-              resolvedKey: foundKey,
-            };
-          }
-        }
-      } catch {}
+  // Check local filesystem storage fallback
+  try {
+    const filePath = getSafeLocalPath(bucketName, cleanKey);
+    if (fs.existsSync(filePath)) {
+      const stat = await fs.promises.stat(filePath);
+      return {
+        exists: true,
+        contentLength: stat.size,
+        contentType: getMimeTypeFromKey(cleanKey),
+        lastModified: stat.mtime,
+        etag: `"${stat.size}-${stat.mtimeMs}"`,
+        resolvedKey: cleanKey,
+      };
     }
+  } catch {
+    // Ignore local error
   }
 
-  return { exists: false };
+  return { exists: false, resolvedKey: cleanKey };
 }
+
 

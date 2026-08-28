@@ -39,7 +39,7 @@ export function getNoteMimeType(fileNameOrUrl: string, mimeType?: string, fileTy
 
 /**
  * Resolves a direct HTTPS URL to Cloudflare R2 for opening/viewing notes.
- * Strictly guarantees that no serverless endpoint (/api/download, /api/file, /api/storage, /api/r2, /api/proxy) is used.
+ * Strictly O(1) single-pass resolution.
  */
 export async function resolveDirectNoteUrl(target: string | NoteOpeningTarget): Promise<string> {
   let rawUrl = "";
@@ -117,7 +117,7 @@ export async function resolveDirectNoteUrl(target: string | NoteOpeningTarget): 
     throw new Error("Unable to open note: Missing file storage key.");
   }
 
-  // 1. Request a verified pre-signed URL from Cloudflare R2 with inline Content-Disposition (or streaming URL)
+  // 1. Request a verified pre-signed URL from Cloudflare R2 with inline Content-Disposition
   try {
     const signedDetails = await getR2SignedUrlDetails({
       bucket: cleanBucket,
@@ -145,37 +145,58 @@ export async function resolveDirectNoteUrl(target: string | NoteOpeningTarget): 
 }
 
 /**
- * Universal Note Opener for Desktop, Android, iPad, and installed PWAs.
- * Directly opens notes in the browser or OS-native viewer via window.open(url, "_blank", "noopener,noreferrer").
+ * Universal Note Opener for Desktop, Android, iOS, and installed PWAs.
+ * Immediately captures user gesture activation, resolves URL in single pass, and opens viewer.
  */
-export async function openNote(target: string | NoteOpeningTarget): Promise<void> {
+export async function openNote(target: string | NoteOpeningTarget): Promise<string> {
+  const isMobileOrPWA =
+    typeof navigator !== "undefined" &&
+    (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+      (typeof window !== "undefined" && window.matchMedia?.("(display-mode: standalone)").matches));
+
+  // In desktop browser environments, pre-allocate window synchronously within the user gesture window
+  let preAllocatedWindow: Window | null = null;
+  if (!isMobileOrPWA && typeof window !== "undefined") {
+    try {
+      preAllocatedWindow = window.open("about:blank", "_blank");
+    } catch {
+      preAllocatedWindow = null;
+    }
+  }
+
   try {
-    const directUrl = await resolveDirectNoteUrl(target);
+    // Single-pass O(1) URL resolution with 8s timeout guard
+    const resolvePromise = resolveDirectNoteUrl(target);
+    const timeoutPromise = new Promise<string>((_, reject) =>
+      setTimeout(() => reject(new Error("Document URL resolution timed out (8s limit).")), 8000)
+    );
+
+    const directUrl = await Promise.race([resolvePromise, timeoutPromise]);
 
     if (!directUrl) {
       throw new Error("Invalid note URL.");
     }
 
-    console.log(`[openNote] Opening note URL:`, directUrl);
+    console.log(`[openNote] Successfully resolved note URL:`, directUrl);
 
-    // Track study progress if student information is attached
+    // Track study progress asynchronously in background
     if (typeof target === "object" && target !== null && target.studentId) {
-      try {
-        const { recordNoteOpenedOrDownloaded } = await import("../utils/chapterProgressHelper");
-        recordNoteOpenedOrDownloaded(
-          target.studentId,
-          target.subject,
-          target.noteId || target.storageKey || target.storagePath || ""
-        );
-      } catch (trackErr) {
-        console.warn("[openNote] Progress recording notice:", trackErr);
-      }
+      import("../utils/chapterProgressHelper")
+        .then(({ recordNoteOpenedOrDownloaded }) => {
+          recordNoteOpenedOrDownloaded(
+            target.studentId!,
+            target.subject,
+            target.noteId || target.storageKey || target.storagePath || ""
+          );
+        })
+        .catch(() => {});
     }
 
-    // Direct browser / OS handoff: Allow operating system to launch its native PDF / Image viewer
-    const win = window.open(directUrl, "_blank", "noopener,noreferrer");
-    if (!win || win.closed || typeof win.closed === "undefined") {
-      // Fallback for popup blocker in mobile PWA
+    // Direct browser / OS handoff: Navigate window
+    if (preAllocatedWindow && !preAllocatedWindow.closed) {
+      preAllocatedWindow.location.href = directUrl;
+    } else {
+      // Fallback for mobile / PWA / blocked popups: create dynamic link click
       const a = document.createElement("a");
       a.href = directUrl;
       a.target = "_blank";
@@ -184,8 +205,13 @@ export async function openNote(target: string | NoteOpeningTarget): Promise<void
       a.click();
       document.body.removeChild(a);
     }
+
+    return directUrl;
   } catch (err: any) {
+    if (preAllocatedWindow && !preAllocatedWindow.closed) {
+      preAllocatedWindow.close();
+    }
     console.error("[openNote] Note opening failed:", err);
-    alert("Unable to open note.");
+    throw err;
   }
 }

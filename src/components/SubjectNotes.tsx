@@ -465,8 +465,9 @@ export default function SubjectNotes({
         studentId: studentId,
         subject: subject,
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error("[SubjectNotes] Error opening note natively:", err);
+      alert(err?.message || "Unable to open note. Please check your network connection.");
     } finally {
       setOpeningNoteId(null);
     }

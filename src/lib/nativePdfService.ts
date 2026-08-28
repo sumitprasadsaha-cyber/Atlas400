@@ -275,17 +275,11 @@ export function preloadAdjacentNotes(notes: ClassNote[], currentIndex: number): 
 }
 
 /**
- * Directly opens a note using device-native browser or viewer.
+ * Directly opens a note using device-native browser or viewer in a single O(1) pass.
  */
 export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<OpenPdfResult> {
   try {
-    const directUrl = await resolveDirectNoteUrl(options);
-    if (!directUrl) {
-      throw new Error("Unable to resolve direct note storage URL.");
-    }
-
-    await openNote(options);
-
+    const directUrl = await openNote(options);
     return {
       success: true,
       signedUrl: directUrl,

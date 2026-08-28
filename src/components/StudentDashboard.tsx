@@ -2014,8 +2014,9 @@ export function StudentMyTab({
         studentId: localStudent?.id,
         subject: selectedSubject || note.subject,
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error("[StudentDashboard] Error opening note natively:", err);
+      alert(err?.message || "Unable to open note. Please check your network connection.");
     } finally {
       setOpeningNoteId(null);
     }
