@@ -520,7 +520,23 @@ export async function getObjectFromR2(params: {
     return { body: null, resolvedKey: "" };
   }
 
-  if (isR2Configured()) {
+  const maskedAccountId = config.accountId ? `${config.accountId.slice(0, 4)}...${config.accountId.slice(-4)}` : "(not-set)";
+  const r2Configured = isR2Configured();
+
+  console.log("[R2Server-Diagnostic] Pre-GetObjectCommand Check:", {
+    bucketName,
+    endpoint: config.endpoint,
+    accountIdMasked: maskedAccountId,
+    region: "auto",
+    exactKey: cleanKey,
+    keyLength: cleanKey.length,
+    keyJsonStringified: JSON.stringify(cleanKey),
+    isR2Configured: r2Configured,
+    willAttemptR2: r2Configured,
+    localFallbackAvailable: true,
+  });
+
+  if (r2Configured) {
     try {
       const client = getR2S3Client();
       const input: GetObjectCommandInput = {
@@ -531,6 +547,15 @@ export async function getObjectFromR2(params: {
 
       const command = new GetObjectCommand(input);
       const response = await client.send(command);
+
+      console.log("[R2Server-Diagnostic] Post-GetObjectCommand SUCCESS:", {
+        httpStatus: response.$metadata?.httpStatusCode || 200,
+        requestId: response.$metadata?.requestId || response.$metadata?.cfId || "(none)",
+        exactKey: cleanKey,
+        contentLength: response.ContentLength,
+        contentType: response.ContentType,
+        etag: response.ETag,
+      });
 
       return {
         body: (response.Body as unknown as Readable) || null,
@@ -543,13 +568,24 @@ export async function getObjectFromR2(params: {
         resolvedKey: cleanKey,
       };
     } catch (err: any) {
-      if (
-        err.name === "NoSuchKey" ||
-        err.name === "NotFound" ||
-        err.$metadata?.httpStatusCode === 404
-      ) {
-        // Fall through to local storage
-      } else if (isAuthError(err)) {
+      console.log("[R2Server-Diagnostic] Post-GetObjectCommand RESPONSE/ERROR:", {
+        httpStatus: err?.$metadata?.httpStatusCode || err?.status || 500,
+        requestId: err?.$metadata?.requestId || err?.$metadata?.cfId || "(none)",
+        errorName: err?.name || "Error",
+        errorCode: err?.code || err?.$metadata?.errorCode || err?.name || "(none)",
+        message: err?.message || String(err),
+        exactKey: cleanKey,
+        bucketName,
+      });
+
+      const isNotFound =
+        err?.name === "NoSuchKey" ||
+        err?.name === "NotFound" ||
+        err?.$metadata?.httpStatusCode === 404 ||
+        err?.code === "NoSuchKey" ||
+        err?.code === "NotFound";
+
+      if (!isNotFound && isAuthError(err)) {
         markR2AuthFailed(err?.message);
       }
     }
@@ -869,7 +905,23 @@ export async function headObjectFromR2(params: {
     return { exists: false };
   }
 
-  if (isR2Configured()) {
+  const maskedAccountId = config.accountId ? `${config.accountId.slice(0, 4)}...${config.accountId.slice(-4)}` : "(not-set)";
+  const r2Configured = isR2Configured();
+
+  console.log("[R2Server-Diagnostic] Pre-HeadObjectCommand Check:", {
+    bucketName,
+    endpoint: config.endpoint,
+    accountIdMasked: maskedAccountId,
+    region: "auto",
+    exactKey: cleanKey,
+    keyLength: cleanKey.length,
+    keyJsonStringified: JSON.stringify(cleanKey),
+    isR2Configured: r2Configured,
+    willAttemptR2: r2Configured,
+    localFallbackAvailable: true,
+  });
+
+  if (r2Configured) {
     try {
       const client = getR2S3Client();
       const command = new HeadObjectCommand({
@@ -877,6 +929,16 @@ export async function headObjectFromR2(params: {
         Key: cleanKey,
       });
       const response = await client.send(command);
+
+      console.log("[R2Server-Diagnostic] Post-HeadObjectCommand SUCCESS:", {
+        httpStatus: response.$metadata?.httpStatusCode || 200,
+        requestId: response.$metadata?.requestId || response.$metadata?.cfId || "(none)",
+        exactKey: cleanKey,
+        contentLength: response.ContentLength,
+        contentType: response.ContentType,
+        etag: response.ETag,
+      });
+
       return {
         exists: true,
         contentLength: response.ContentLength,
@@ -887,13 +949,24 @@ export async function headObjectFromR2(params: {
         resolvedKey: cleanKey,
       };
     } catch (err: any) {
-      if (
-        err.name === "NoSuchKey" ||
-        err.name === "NotFound" ||
-        err.$metadata?.httpStatusCode === 404
-      ) {
-        // Fall through to check local storage
-      } else if (isAuthError(err)) {
+      console.log("[R2Server-Diagnostic] Post-HeadObjectCommand RESPONSE/ERROR:", {
+        httpStatus: err?.$metadata?.httpStatusCode || err?.status || 500,
+        requestId: err?.$metadata?.requestId || err?.$metadata?.cfId || "(none)",
+        errorName: err?.name || "Error",
+        errorCode: err?.code || err?.$metadata?.errorCode || err?.name || "(none)",
+        message: err?.message || String(err),
+        exactKey: cleanKey,
+        bucketName,
+      });
+
+      const isNotFound =
+        err?.name === "NoSuchKey" ||
+        err?.name === "NotFound" ||
+        err?.$metadata?.httpStatusCode === 404 ||
+        err?.code === "NoSuchKey" ||
+        err?.code === "NotFound";
+
+      if (!isNotFound && isAuthError(err)) {
         markR2AuthFailed(err?.message);
       }
     }

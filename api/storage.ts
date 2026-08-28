@@ -95,6 +95,15 @@ export default async function handler(req: any, res: any) {
           canonicalKey: cleanKey,
           bucket: actualBucket,
           operation: params.operation || "getObject",
+          isR2Configured: isR2Configured(),
+          envDetected: {
+            R2_ACCOUNT_ID: Boolean(process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_R2_ACCOUNT_ID || process.env.VITE_R2_ACCOUNT_ID),
+            R2_ACCESS_KEY_ID: Boolean(process.env.R2_ACCESS_KEY_ID || process.env.CLOUDFLARE_R2_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || process.env.VITE_R2_ACCESS_KEY_ID),
+            R2_SECRET_ACCESS_KEY: Boolean(process.env.R2_SECRET_ACCESS_KEY || process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || process.env.VITE_R2_SECRET_ACCESS_KEY),
+            R2_ENDPOINT: Boolean(process.env.R2_ENDPOINT || process.env.CLOUDFLARE_R2_ENDPOINT || process.env.VITE_R2_ENDPOINT || process.env.R2_ACCOUNT_ID),
+            R2_BUCKET: Boolean(process.env.R2_BUCKET || process.env.CLOUDFLARE_R2_BUCKET || process.env.VITE_R2_BUCKET),
+            R2_PUBLIC_URL: Boolean(process.env.R2_PUBLIC_URL || process.env.CLOUDFLARE_R2_PUBLIC_URL || process.env.VITE_R2_PUBLIC_URL),
+          },
         });
 
         // Verify object existence using HeadObject before generating any signed URL
