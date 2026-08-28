@@ -1,6 +1,7 @@
 import { handleOptions, sendSuccess, sendError } from "./_lib/responses.js";
 import { getR2ServerConfig, isR2Configured, verifyR2ReadWrite } from "./_lib/r2.js";
 import { checkFirestoreHealth } from "./_lib/firestore.js";
+import { getAppVersionInfo } from "./_lib/version.js";
 import { HealthStatusReport } from "./_shared/types.js";
 
 export const runtime = "nodejs";
@@ -45,14 +46,19 @@ export default async function handler(req: any, res: any) {
 
     const firestoreStatus = await checkFirestoreHealth();
     const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
+    const versionInfo = getAppVersionInfo();
 
-    const report: HealthStatusReport = {
+    const report: any = {
       status: "healthy",
       timestamp: new Date().toISOString(),
+      version: versionInfo.version,
+      gitCommit: versionInfo.gitCommitShort,
       environment: {
         nodeEnv: process.env.NODE_ENV || "development",
         runtime: "nodejs",
         isVercel: Boolean(process.env.VERCEL),
+        deploymentEnvironment: versionInfo.deploymentEnvironment,
+        buildTime: versionInfo.buildTime,
       },
       services: {
         cloudflareR2: {

@@ -3,8 +3,12 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig, loadEnv} from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { getAppVersionInfo } from './api/_lib/version';
 
 export default defineConfig(({ command, mode }) => {
+  // Compute automated version metadata
+  const versionInfo = getAppVersionInfo();
+
   // Determine HMR configuration based on environment
   let hmrConfig: any = true;
 
@@ -37,6 +41,15 @@ export default defineConfig(({ command, mode }) => {
     const val = process.env[key] || fileEnv[key] || '';
     envDefine[`import.meta.env.${key}`] = JSON.stringify(val);
   }
+
+  // Inject dynamic automated version metadata
+  envDefine['import.meta.env.VITE_APP_VERSION'] = JSON.stringify(versionInfo.version);
+  envDefine['import.meta.env.VITE_GIT_COMMIT'] = JSON.stringify(versionInfo.gitCommit);
+  envDefine['import.meta.env.VITE_GIT_COMMIT_SHORT'] = JSON.stringify(versionInfo.gitCommitShort);
+  envDefine['import.meta.env.VITE_GIT_BRANCH'] = JSON.stringify(versionInfo.gitBranch);
+  envDefine['import.meta.env.VITE_BUILD_TIME'] = JSON.stringify(versionInfo.buildTime);
+  envDefine['import.meta.env.VITE_DEPLOYMENT_ENV'] = JSON.stringify(versionInfo.deploymentEnvironment);
+  envDefine['import.meta.env.VITE_BASE_VERSION'] = JSON.stringify(versionInfo.baseVersion);
 
   return {
     plugins: [

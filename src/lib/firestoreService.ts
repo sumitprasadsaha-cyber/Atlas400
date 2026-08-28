@@ -1539,6 +1539,55 @@ export async function saveClassNoteDoc(note: ClassNote): Promise<void> {
   }
 }
 
+/**
+ * Fetch all Class Notes and UPSC Notes directly from Firestore
+ */
+export async function fetchAllClassNotesFromFirestore(): Promise<ClassNote[]> {
+  try {
+    const db = await getFirebaseDb();
+    if (!db) {
+      return getLocalClassNotes();
+    }
+
+    const notesMap = new Map<string, ClassNote>();
+
+    try {
+      const classCol = collection(db, "class_notes");
+      const classSnap = await getDocs(classCol);
+      classSnap.forEach((d) => {
+        const data = d.data() as ClassNote;
+        if (data && (data.id || d.id)) {
+          notesMap.set(data.id || d.id, { ...data, id: data.id || d.id });
+        }
+      });
+    } catch (err) {
+      console.warn("[Firestore] Failed to read class_notes collection:", err);
+    }
+
+    try {
+      const upscCol = collection(db, "upsc_notes");
+      const upscSnap = await getDocs(upscCol);
+      upscSnap.forEach((d) => {
+        const data = d.data() as ClassNote;
+        if (data && (data.id || d.id)) {
+          notesMap.set(data.id || d.id, { ...data, id: data.id || d.id });
+        }
+      });
+    } catch (err) {
+      console.warn("[Firestore] Failed to read upsc_notes collection:", err);
+    }
+
+    if (notesMap.size > 0) {
+      return Array.from(notesMap.values());
+    }
+
+    return getLocalClassNotes();
+  } catch (err) {
+    console.warn("[Firestore] Error fetching all notes from Firestore:", err);
+    return getLocalClassNotes();
+  }
+}
+
 export async function deleteClassNoteDoc(noteId: string): Promise<void> {
   const db = await getFirebaseDb();
   const currentLocal = getLocalClassNotes();

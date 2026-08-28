@@ -271,79 +271,89 @@ export async function replaceTopicNote(params: ReplaceTopicNoteParams): Promise<
   });
 
   const bucket = getR2BucketName();
+  let newFileUploaded = false;
 
-  // If old key differs from new key, clean up old object in R2
-  if (existingObjectKey && existingObjectKey !== newStorageKey) {
-    await deleteFromR2({ bucket, key: existingObjectKey }).catch((delErr) => {
-      console.warn(`[StorageService] Note: could not delete old key "${existingObjectKey}":`, delErr);
+  try {
+    // 1. Upload new file to R2
+    const uploadRes = await uploadToR2({
+      bucket,
+      key: newStorageKey,
+      file: newFile,
+      mimeType,
+      onProgress: (pct) => {
+        if (onProgress) onProgress(Math.min(95, pct));
+      },
     });
+    newFileUploaded = true;
+
+    // 2. Verify object existence via HeadObject
+    const headCheck = await verifyR2ObjectExists({ bucket, key: newStorageKey });
+    if (!headCheck || !headCheck.exists) {
+      throw new Error(`Replacement verification failed: HeadObject confirmed object does not exist for key "${newStorageKey}".`);
+    }
+
+    // Logging: Upload Success
+    console.log(`[StorageService] Replace Upload Success: "${newStorageKey}"`);
+    notesLogger.info("REPLACE_SUCCESS", {
+      noteId,
+      storageKey: newStorageKey,
+    });
+
+    const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(newStorageKey)}`;
+    const publicUrl = uploadRes.url || getR2PublicUrl(bucket, newStorageKey);
+
+    const updatedNote: ClassNote = {
+      ...currentNote,
+      originalFilename: rawFileName,
+      fileName: canonicalFileName,
+      pdfFileName: canonicalFileName,
+      objectKey: newStorageKey,
+      r2Key: newStorageKey,
+      storageKey: newStorageKey,
+      storagePath: newStorageKey,
+      downloadKey: newStorageKey,
+      pdfUrl: downloadUrl,
+      publicUrl,
+      downloadUrl,
+      fileSize: newFile.size,
+      mimeType,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // 3. Update Firestore record
+    await saveClassNoteDoc(updatedNote);
+
+    // 4. Clean up old object in R2 ONLY after Firestore update succeeds
+    if (existingObjectKey && existingObjectKey !== newStorageKey) {
+      await deleteFromR2({ bucket, key: existingObjectKey }).catch((delErr) => {
+        console.warn(`[StorageService] Note: could not delete old key "${existingObjectKey}":`, delErr);
+      });
+    }
+
+    // Logging: Database Update
+    console.log(`[StorageService] Database Update Success for Replaced Note: noteId="${noteId}"`);
+    notesLogger.info("REPLACE_SUCCESS", {
+      noteId,
+      storageKey: newStorageKey,
+      fileSize: updatedNote.fileSize,
+    });
+
+    // 5. Invalidate caches
+    await notesCacheService.invalidateMetadataCache();
+    if (existingObjectKey) {
+      await notesCacheService.invalidateBlobCache(existingObjectKey);
+    }
+    await notesCacheService.invalidateBlobCache(newStorageKey);
+
+    if (onProgress) onProgress(100);
+    return updatedNote;
+  } catch (err: any) {
+    if (newFileUploaded && existingObjectKey && existingObjectKey !== newStorageKey) {
+      console.warn(`[StorageService] Rolling back replacement upload "${newStorageKey}"...`);
+      await deleteFromR2({ bucket, key: newStorageKey }).catch(() => {});
+    }
+    throw err;
   }
-
-  // Upload new file to R2
-  const uploadRes = await uploadToR2({
-    bucket,
-    key: newStorageKey,
-    file: newFile,
-    mimeType,
-    onProgress: (pct) => {
-      if (onProgress) onProgress(Math.min(95, pct));
-    },
-  });
-
-  // Verify object existence via HeadObject
-  const headCheck = await verifyR2ObjectExists({ bucket, key: newStorageKey });
-  if (!headCheck || !headCheck.exists) {
-    throw new Error(`Replacement verification failed: HeadObject confirmed object does not exist for key "${newStorageKey}".`);
-  }
-
-  // Logging: Upload Success
-  console.log(`[StorageService] Replace Upload Success: "${newStorageKey}"`);
-  notesLogger.info("REPLACE_SUCCESS", {
-    noteId,
-    storageKey: newStorageKey,
-  });
-
-  const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(newStorageKey)}`;
-  const publicUrl = uploadRes.url || getR2PublicUrl(bucket, newStorageKey);
-
-  const updatedNote: ClassNote = {
-    ...currentNote,
-    originalFilename: rawFileName,
-    fileName: canonicalFileName,
-    pdfFileName: canonicalFileName,
-    objectKey: newStorageKey,
-    r2Key: newStorageKey,
-    storageKey: newStorageKey,
-    storagePath: newStorageKey,
-    downloadKey: newStorageKey,
-    pdfUrl: downloadUrl,
-    publicUrl,
-    downloadUrl,
-    fileSize: newFile.size,
-    mimeType,
-    updatedAt: new Date().toISOString(),
-  };
-
-  // Update Firestore record
-  await saveClassNoteDoc(updatedNote);
-
-  // Logging: Database Update
-  console.log(`[StorageService] Database Update Success for Replaced Note: noteId="${noteId}"`);
-  notesLogger.info("REPLACE_SUCCESS", {
-    noteId,
-    storageKey: newStorageKey,
-    fileSize: updatedNote.fileSize,
-  });
-
-  // Invalidate caches
-  await notesCacheService.invalidateMetadataCache();
-  if (existingObjectKey) {
-    await notesCacheService.invalidateBlobCache(existingObjectKey);
-  }
-  await notesCacheService.invalidateBlobCache(newStorageKey);
-
-  if (onProgress) onProgress(100);
-  return updatedNote;
 }
 
 /**

@@ -445,52 +445,69 @@ export default async function handler(req: any, res: any) {
         return sendSuccess(res, { success: true, ...result });
       }
 
-      // 7. ATOMIC REPLACE
+      // 7. ATOMIC REPLACE (Upload first -> Verify -> Delete old)
       case "replace": {
         const oldKey = params.oldKey || params.oldStoragePath;
         const newKey = params.newKey || params.newStoragePath || params.key;
         const base64 = params.base64;
         const mimeType = params.mimeType || "application/octet-stream";
 
-        if (oldKey) {
+        if (!newKey || !base64) {
+          return sendError(
+            res,
+            new ValidationError("Missing required 'newKey' and 'base64' parameters for replacement.")
+          );
+        }
+
+        const cleanNewKey = sanitizeKey(newKey, actualBucket);
+        const cleanOldKey = oldKey ? sanitizeKey(oldKey, actualBucket) : "";
+        const buffer = Buffer.from(base64, "base64");
+
+        // 1. Upload new object
+        const uploadRes = await uploadObjectToR2({
+          bucket: actualBucket,
+          key: cleanNewKey,
+          body: buffer,
+          contentType: mimeType,
+        });
+
+        // 2. Verify new object exists in R2
+        const headCheck = await headObjectFromR2({ bucket: actualBucket, key: cleanNewKey });
+        if (!headCheck.exists) {
+          // Rollback newly uploaded object
+          if (cleanOldKey && cleanOldKey !== cleanNewKey) {
+            await deleteObjectFromR2({ bucket: actualBucket, key: cleanNewKey }).catch(() => {});
+          }
+          return sendError(
+            res,
+            new StorageError(`Replace verification failed: Object was not found in R2 after upload: ${cleanNewKey}`, "REPLACE_VERIFY_FAILED")
+          );
+        }
+
+        // 3. Delete old object only if new object is verified and oldKey is different
+        if (cleanOldKey && cleanOldKey !== cleanNewKey) {
           try {
-            const cleanOldKey = sanitizeKey(oldKey, actualBucket);
             await deleteObjectFromR2({ bucket: actualBucket, key: cleanOldKey });
           } catch (delErr) {
-            console.warn(`[Storage API] Old object was not found or already deleted: ${oldKey}`, delErr);
+            console.warn(`[Storage API] Old object cleanup warning during replace: ${cleanOldKey}`, delErr);
           }
         }
 
-        if (newKey && base64) {
-          const cleanNewKey = sanitizeKey(newKey, actualBucket);
-          const buffer = Buffer.from(base64, "base64");
-          const uploadRes = await uploadObjectToR2({
-            bucket: actualBucket,
-            key: cleanNewKey,
-            body: buffer,
-            contentType: mimeType,
-          });
-
-          const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(uploadRes.bucket)}&key=${encodeURIComponent(cleanNewKey)}`;
-          const publicUrl = config.publicUrl
-            ? `${config.publicUrl}/${cleanNewKey}`
-            : downloadUrl;
-
-          return sendSuccess(res, {
-            bucket: uploadRes.bucket,
-            key: uploadRes.key,
-            etag: uploadRes.etag,
-            url: downloadUrl,
-            publicUrl,
-            size: buffer.length,
-            mimeType,
-            replaced: true,
-          });
-        }
+        const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(uploadRes.bucket)}&key=${encodeURIComponent(cleanNewKey)}`;
+        const publicUrl = config.publicUrl
+          ? `${config.publicUrl}/${cleanNewKey}`
+          : downloadUrl;
 
         return sendSuccess(res, {
-          oldKeyDeleted: Boolean(oldKey),
-          message: "Replace processed successfully.",
+          bucket: uploadRes.bucket,
+          key: uploadRes.key,
+          etag: uploadRes.etag,
+          url: downloadUrl,
+          publicUrl,
+          size: buffer.length,
+          mimeType,
+          replaced: true,
+          oldKeyDeleted: Boolean(cleanOldKey && cleanOldKey !== cleanNewKey),
         });
       }
 

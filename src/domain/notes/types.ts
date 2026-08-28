@@ -87,7 +87,7 @@ export interface SchoolNote {
   createdAt: string;
   updatedAt: string;
   searchableText: string;
-  version: "6.0.0";
+  version?: string;
 
   // Compatibility aliases strictly mapped from canonical fields
   classGrade: string;
@@ -135,7 +135,7 @@ export interface UPSCNote {
   createdAt: string;
   updatedAt: string;
   searchableText: string;
-  version: "6.0.0";
+  version?: string;
 
   // Compatibility aliases strictly mapped from canonical fields
   classGrade: "UPSC";
@@ -156,6 +156,8 @@ export type NoteMetadata = SchoolNote | UPSCNote;
  * Input fields received from Upload Forms, Add Topic forms, or API payloads.
  */
 export interface NoteFormInput {
+  id?: string;
+  documentId?: string;
   noteType?: NoteType;
   type?: NoteType;
   className?: string;
@@ -213,6 +215,7 @@ export interface NoteFormInput {
   createdAt?: string;
   uploadedAt?: string;
   updatedAt?: string;
+  version?: string;
 }
 
 /**
@@ -533,7 +536,8 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
     }, canonicalFileName, mimeType);
 
     const topicSuffix = topicFolder ? `_${topicFolder.toLowerCase()}` : "";
-    const id = `upsc_${gsInfo.gsPaperFolder.toLowerCase()}_${sanitizeFolderName(subject).toLowerCase()}_${moduleFolder.toLowerCase()}${topicSuffix}`;
+    const generatedId = `upsc_${gsInfo.gsPaperFolder.toLowerCase()}_${sanitizeFolderName(subject).toLowerCase()}_${moduleFolder.toLowerCase()}${topicSuffix}`;
+    const id = input.id || input.documentId || generatedId;
     const searchableText = `UPSC ${gsInfo.gsPaper} ${subject} Module ${moduleNumber} ${rawModName} ${parsedTopicNumber ? `Topic ${parsedTopicNumber}` : ""} ${parsedTopicName || ""} ${canonicalFileName}`.trim();
 
     const rawKey = input.storagePath || input.storageKey || input.r2Key || input.downloadKey || paths.storagePath;
@@ -573,7 +577,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       createdAt,
       updatedAt,
       searchableText,
-      version: "6.0.0",
+      version: input.version || "auto",
 
       // Compatibility aliases
       classGrade: "UPSC",
@@ -602,7 +606,8 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
     }, canonicalFileName, mimeType);
 
     const topicSuffix = topicFolder ? `_${topicFolder.toLowerCase()}` : "";
-    const id = `${classInfo.classFolder.toLowerCase()}_${sanitizeFolderName(subject).toLowerCase()}_${chapterFolder.toLowerCase()}${topicSuffix}`;
+    const generatedId = `${classInfo.classFolder.toLowerCase()}_${sanitizeFolderName(subject).toLowerCase()}_${chapterFolder.toLowerCase()}${topicSuffix}`;
+    const id = input.id || input.documentId || generatedId;
     const searchableText = `${classInfo.className} ${subject} Chapter ${chapterNumber} ${rawChName} ${parsedTopicNumber ? `Topic ${parsedTopicNumber}` : ""} ${parsedTopicName || ""} ${canonicalFileName}`.trim();
 
     const rawKey = input.storagePath || input.storageKey || input.r2Key || input.downloadKey || paths.storagePath;
@@ -640,7 +645,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       createdAt,
       updatedAt,
       searchableText,
-      version: "6.0.0",
+      version: input.version || "auto",
 
       // Compatibility aliases
       classGrade: classInfo.className,

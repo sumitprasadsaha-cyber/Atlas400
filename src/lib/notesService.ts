@@ -453,18 +453,11 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
     extra: { existingStorageKey, newStorageKey },
   });
 
+  const bucket = getR2BucketName();
+  let newFileUploaded = false;
+
   try {
-    const bucket = getR2BucketName();
-
-    // If existing key is different from new key (e.g. extension changed), delete old object first
-    if (existingStorageKey && existingStorageKey !== newStorageKey) {
-      console.log(`[Replace Pipeline] Cleaning up old object at "${existingStorageKey}"...`);
-      await deleteFromR2({ bucket, key: existingStorageKey }).catch((delErr) => {
-        console.warn(`[Replace Pipeline] Note: could not delete old key "${existingStorageKey}":`, delErr);
-      });
-    }
-
-    // 2. Upload replacement file to Cloudflare R2 with REAL progress tracking
+    // 1. Upload replacement file to Cloudflare R2 with REAL progress tracking
     console.log(`[Replace Pipeline] Stage 3: Uploading replacement file to "${newStorageKey}"...`);
     const uploadRes = await uploadToR2({
       bucket,
@@ -478,10 +471,11 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
         }
       },
     });
+    newFileUploaded = true;
 
     console.log(`[Replace Pipeline] Stage 4: Cloudflare R2 file updated. Result:`, uploadRes);
 
-    // Rule 9: VERIFY BEFORE FIRESTORE WRITE: Perform HeadObject check on newStorageKey
+    // Rule 9 & Requirement 5: VERIFY BEFORE FIRESTORE WRITE: Perform HeadObject check on newStorageKey
     console.log(`[Replace Pipeline] Stage 4.1: Verifying object existence via HeadObject for key "${newStorageKey}"...`);
     const headCheck = await verifyR2ObjectExists({ bucket, key: newStorageKey });
     if (!headCheck || !headCheck.exists) {
@@ -492,7 +486,7 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
     const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(newStorageKey)}`;
     const publicUrl = uploadRes.url || getR2PublicUrl(bucket, newStorageKey);
 
-    // 3. Update database record with new file metadata
+    // 2. Build updated note metadata
     const updatedNote: ClassNote = {
       ...(currentNote as ClassNote),
       classGrade: (currentNote as any).classGrade || (currentNote as any).className || "Class 10",
@@ -515,9 +509,17 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
       updatedAt: new Date().toISOString(),
     };
 
-    // 4. Save to Firestore
+    // 3. Save to Firestore
     console.log(`[Replace Pipeline] Stage 5: Updating Firestore document...`);
     await saveClassNoteDoc(updatedNote);
+
+    // 4. Requirement 5: ONLY AFTER Firestore write succeeds, clean up old R2 object if key changed
+    if (existingStorageKey && existingStorageKey !== newStorageKey) {
+      console.log(`[Replace Pipeline] Cleaning up old object at "${existingStorageKey}"...`);
+      await deleteFromR2({ bucket, key: existingStorageKey }).catch((delErr) => {
+        console.warn(`[Replace Pipeline] Note: could not delete old key "${existingStorageKey}":`, delErr);
+      });
+    }
 
     // 5. Invalidate cached metadata and stale blob for this note
     console.log(`[Replace Pipeline] Stage 6: Purging cache...`);
@@ -538,6 +540,12 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
 
     return updatedNote;
   } catch (err: any) {
+    // Requirement 5: Full rollback on failure (clean up newly uploaded file if key changed, preserving old file)
+    if (newFileUploaded && existingStorageKey && existingStorageKey !== newStorageKey) {
+      console.warn(`[Replace Pipeline] Rolling back newly uploaded object "${newStorageKey}"...`);
+      await deleteFromR2({ bucket, key: newStorageKey }).catch(() => {});
+    }
+
     notesLogger.error("REPLACE_ERROR", {
       noteId,
       error: err?.message || "Replacement pipeline error",

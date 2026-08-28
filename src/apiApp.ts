@@ -805,8 +805,13 @@ import authHandler from "../api/auth";
 import healthHandler from "../api/health";
 import studentsHandler from "../api/students";
 import aiHandler from "../api/ai";
+import versionHandler from "../api/version";
 
-// Mount API route handlers for /storage, /notes, /practice-tests, /auth, /health, /students, /ai, /debug-env
+// Mount API route handlers for /storage, /notes, /practice-tests, /auth, /health, /students, /ai, /debug-env, /version
+router.all("/version", (req, res) => versionHandler(req, res));
+router.all("/version.ts", (req, res) => versionHandler(req, res));
+router.all("/api/version", (req, res) => versionHandler(req, res));
+router.all("/api/version.ts", (req, res) => versionHandler(req, res));
 router.all("/debug-env", (req, res) => {
   if (!req.query) req.query = {};
   req.query.action = "debug-env";

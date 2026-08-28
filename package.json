@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test:pdf-storage-flow": "tsx scripts/testPdfStorageFlow.ts"
+    "test:pdf-storage-flow": "tsx scripts/testPdfStorageFlow.ts",
+    "test:topic-notes-guarantees": "tsx scripts/testTopicNoteIntegrityGuarantees.ts",
+    "verify:storage-integrity": "tsx scripts/verifyStorageIntegrity.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1116.0",
