@@ -1,4 +1,5 @@
 import express from "express";
+import { pipeline } from "stream";
 import { GoogleGenAI } from "@google/genai";
 import {
   uploadObjectToR2,
@@ -573,12 +574,16 @@ router.get("/r2/download", async (req, res) => {
       res.setHeader("Content-Length", obj.contentLength);
     }
 
-    if (req.query.download === "true" || req.query.filename) {
-      const downloadFilename = (req.query.filename as string) || cleanKey.split("/").pop() || "download";
-      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadFilename)}"`);
-    }
+    const isAttachment = req.query.download === "true";
+    const dispositionType = isAttachment ? "attachment" : "inline";
+    const downloadFilename = (req.query.filename as string) || cleanKey.split("/").pop() || "note.pdf";
+    res.setHeader("Content-Disposition", `${dispositionType}; filename="${encodeURIComponent(downloadFilename)}"`);
 
-    obj.body.pipe(res);
+    pipeline(obj.body, res, (err) => {
+      if (err) {
+        console.warn("[Server R2] Stream pipeline notice:", err?.message || err);
+      }
+    });
   } catch (err: any) {
     console.error("[Server R2] Download error:", {
       endpoint: "/api/r2/download",
@@ -586,9 +591,9 @@ router.get("/r2/download", async (req, res) => {
       stack: err.stack,
     });
     if (err.name === "NoSuchKey" || err.name === "NotFound" || err.$metadata?.httpStatusCode === 404) {
-      return res.status(404).send("File not found in Cloudflare R2.");
+      return res.status(404).json({ success: false, error: "Object not found", message: "File not found in Cloudflare R2." });
     }
-    return res.status(500).send(`Cloudflare R2 Download Error: ${err.message || err}`);
+    return res.status(500).json({ success: false, error: "Download failed", message: err.message || String(err) });
   }
 });
 

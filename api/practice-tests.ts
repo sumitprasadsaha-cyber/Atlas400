@@ -1,3 +1,4 @@
+import { pipeline } from "stream";
 import { handleOptions, sendSuccess, sendError } from "./_lib/responses";
 import { validateAction } from "./_lib/validation";
 import { sanitizeKey, getMimeType } from "./_lib/utils";
@@ -33,7 +34,7 @@ export default async function handler(req: any, res: any) {
         const { classGrade, subject, chapterNo, chapterName, topicName, questions, rawText, fileName, base64 } = req.body || {};
 
         if (!classGrade || !subject || !chapterName) {
-          return res.status(400).json({ error: "Missing required practice test fields (classGrade, subject, chapterName)." });
+          return res.status(400).json({ success: false, error: "Missing required practice test fields (classGrade, subject, chapterName)." });
         }
 
         let storageKey = "";
@@ -93,7 +94,7 @@ export default async function handler(req: any, res: any) {
       case "download": {
         const storageKey = req.query.storageKey || req.query.key || req.body?.storageKey;
         if (!storageKey) {
-          return res.status(400).json({ error: "Missing required 'storageKey' parameter." });
+          return res.status(400).json({ success: false, error: "Missing required 'storageKey' parameter." });
         }
 
         const cleanKey = sanitizeKey(String(storageKey));
@@ -101,12 +102,20 @@ export default async function handler(req: any, res: any) {
         const obj = await getObjectFromR2({ bucket: config.bucket, key: cleanKey });
 
         if (!obj.body) {
-          return res.status(404).send("Practice test file not found.");
+          return res.status(404).json({ success: false, error: "Practice test file not found in storage." });
         }
 
         res.setHeader("Content-Type", "application/json");
         res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-        return obj.body.pipe(res);
+
+        return await new Promise<void>((resolve) => {
+          pipeline(obj.body, res, (err) => {
+            if (err) {
+              console.warn("[Practice Tests API] Stream pipeline warning:", err?.message || err);
+            }
+            resolve();
+          });
+        });
       }
 
       // 4. LIST
@@ -115,9 +124,10 @@ export default async function handler(req: any, res: any) {
       }
 
       default:
-        return res.status(400).json({ error: `Unsupported practice tests action: ${action}` });
+        return res.status(400).json({ success: false, error: `Unsupported practice tests action: ${action}` });
     }
   } catch (err: any) {
     return sendError(res, err, "Practice test operation failed.");
   }
 }
+

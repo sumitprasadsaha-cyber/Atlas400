@@ -1,5 +1,6 @@
 import { getBucketName, sanitizeStoragePath } from "./storageService";
 import { getR2SignedUrlDetails, getR2PublicUrl } from "./r2Client";
+import { openDocumentInNativeApp, isCapacitorNative } from "./nativeFileOpener";
 
 export interface NoteOpeningTarget {
   url?: string;
@@ -192,7 +193,33 @@ export async function openNote(target: string | NoteOpeningTarget): Promise<stri
         .catch(() => {});
     }
 
-    // Direct browser / OS handoff: Navigate window
+    // 1. If running on native mobile (Capacitor Android/iOS), open directly in device viewer app
+    if (isCapacitorNative()) {
+      const fileName =
+        typeof target === "object"
+          ? target.fileName || target.pdfFileName || "note.pdf"
+          : "note.pdf";
+      const mimeType = getNoteMimeType(
+        fileName,
+        typeof target === "object" ? target.mimeType : undefined,
+        typeof target === "object" ? target.fileType : undefined
+      );
+
+      const openedNative = await openDocumentInNativeApp({
+        url: directUrl,
+        fileName,
+        mimeType,
+      });
+
+      if (openedNative) {
+        if (preAllocatedWindow && !preAllocatedWindow.closed) {
+          preAllocatedWindow.close();
+        }
+        return directUrl;
+      }
+    }
+
+    // 2. Direct browser / OS handoff: Navigate window or trigger anchor
     if (preAllocatedWindow && !preAllocatedWindow.closed) {
       preAllocatedWindow.location.href = directUrl;
     } else {
