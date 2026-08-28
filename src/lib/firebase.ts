@@ -43,14 +43,19 @@ export async function ensureFirebaseInitialized(): Promise<void> {
 
       let config: any = null;
 
-      // 1. Try to fetch dynamic configuration if available
+      // 1. Try to fetch dynamic configuration if available (with fast 500ms timeout)
       try {
-        const res = await fetch("/firebase-applet-config.json");
-        if (res.ok) {
+        const controller = new AbortController();
+        const fetchTimer = setTimeout(() => controller.abort(), 500);
+        const res = await fetch("/firebase-applet-config.json", { signal: controller.signal }).catch(() => null);
+        clearTimeout(fetchTimer);
+        if (res && res.ok) {
           const contentType = res.headers.get("content-type") || "";
           if (contentType.includes("application/json")) {
-            config = await res.json();
-            console.log("[Firebase] Loaded configuration from firebase-applet-config.json");
+            config = await res.json().catch(() => null);
+            if (config) {
+              console.log("[Firebase] Loaded configuration from firebase-applet-config.json");
+            }
           }
         }
       } catch (e) {

@@ -132,6 +132,11 @@ export default function App() {
     return !Boolean(cached?.role);
   });
 
+  const [startupProgress, setStartupProgress] = useState<{ step: string; percent: number }>({
+    step: "Restoring Session…",
+    percent: 25,
+  });
+
   const safeSetLocalStorage = (key: string, val: string) => {
     safeLocalStorageSetItem(key, val);
   };
@@ -141,81 +146,93 @@ export default function App() {
     let unsubscribe: any = null;
     let isMounted = true;
 
+    console.log("[Startup] App mounted");
+
     async function initAuthSync() {
       try {
-        const firebaseAuth = await getFirebaseAuth();
-        if (firebaseAuth && isMounted) {
-          unsubscribe = firebaseAuth.onAuthStateChanged(async (firebaseUser: any) => {
-            if (!isMounted) return;
+        console.log("[Startup] Restoring session");
+        setStartupProgress({ step: "Restoring session…", percent: 35 });
 
+        // Synchronously check cached session
+        const cachedSession = getCachedAuthSession();
+        if (cachedSession && (cachedSession.role === "admin" || cachedSession.role === "student")) {
+          console.log("[Startup] Session restored");
+          if (isMounted) {
+            setAuth({
+              isAuthenticated: true,
+              role: cachedSession.role,
+              loggedInStudentId: cachedSession.studentId || null,
+            });
+            if (cachedSession.role === "student" && cachedSession.studentId) {
+              setSelectedStudentId(cachedSession.studentId);
+            }
+          }
+        }
+
+        console.log("[Startup] Loading user");
+        setStartupProgress({ step: "Authenticating…", percent: 55 });
+
+        // Obtain Firebase Auth instance with safe timeout race
+        const firebaseAuthPromise = getFirebaseAuth();
+        const authTimeoutPromise = new Promise<any>((resolve) => setTimeout(() => resolve(null), 2500));
+        const firebaseAuth = await Promise.race([firebaseAuthPromise, authTimeoutPromise]);
+
+        if (!firebaseAuth) {
+          console.warn("[Startup] Firebase Auth unavailable, continuing with offline/cached state");
+          console.log("[Startup] Initializing storage service");
+          console.log("[Startup] Loading dashboard");
+          console.log("[Startup] Startup complete");
+          if (isMounted) {
+            setStartupProgress({ step: "Startup complete", percent: 100 });
+            setIsAuthInitializing(false);
+          }
+          return;
+        }
+
+        if (!isMounted) return;
+
+        unsubscribe = firebaseAuth.onAuthStateChanged(async (firebaseUser: any) => {
+          if (!isMounted) return;
+
+          try {
             if (firebaseUser) {
-              try {
-                // Instantly confirm state if cached session matches user
-                const cachedSession = getCachedAuthSession();
-                if (cachedSession && (cachedSession.uid === firebaseUser.uid || (firebaseUser.email && cachedSession.email?.toLowerCase() === firebaseUser.email.toLowerCase()))) {
-                  setAuth({
-                    isAuthenticated: true,
-                    role: cachedSession.role,
-                    loggedInStudentId: cachedSession.studentId || null,
-                  });
-                  if (cachedSession.role === "student" && cachedSession.studentId) {
-                    setSelectedStudentId(cachedSession.studentId);
-                  }
-                  setIsAuthInitializing(false);
-                }
+              console.log("[Startup] Loading permissions");
+              setStartupProgress({ step: "Loading permissions…", percent: 75 });
 
-                // Verify / refresh latest role from database
-                const roleResult = await verifyUserRoleFromDatabase(firebaseUser.uid, firebaseUser.email);
-                if (!isMounted) return;
+              // Verify / refresh latest role from database with built-in safety timeout
+              const roleResult = await verifyUserRoleFromDatabase(firebaseUser.uid, firebaseUser.email);
+              if (!isMounted) return;
 
-                if (roleResult.role === "Student") {
-                  const studentId = roleResult.studentId || null;
-                  saveCachedAuthSession({
-                    uid: firebaseUser.uid,
-                    email: firebaseUser.email || "",
-                    role: "student",
-                    studentId,
-                  });
-                  setAuth({
-                    isAuthenticated: true,
-                    role: "student",
-                    loggedInStudentId: studentId,
-                  });
-                  if (studentId) {
-                    setSelectedStudentId(studentId);
-                  }
-                  setIsAuthInitializing(false);
-                } else if (roleResult.role === "Admin") {
-                  saveCachedAuthSession({
-                    uid: firebaseUser.uid,
-                    email: firebaseUser.email || "",
-                    role: "admin",
-                    studentId: null,
-                  });
-                  setAuth({
-                    isAuthenticated: true,
-                    role: "admin",
-                    loggedInStudentId: null,
-                  });
-                  setIsAuthInitializing(false);
-                } else {
-                  // If role could not be resolved from network, preserve existing cached session
-                  const fallbackSession = getCachedAuthSession();
-                  if (fallbackSession) {
-                    setAuth({
-                      isAuthenticated: true,
-                      role: fallbackSession.role,
-                      loggedInStudentId: fallbackSession.studentId || null,
-                    });
-                    if (fallbackSession.role === "student" && fallbackSession.studentId) {
-                      setSelectedStudentId(fallbackSession.studentId);
-                    }
-                  }
-                  setIsAuthInitializing(false);
+              if (roleResult.role === "Student") {
+                const studentId = roleResult.studentId || null;
+                saveCachedAuthSession({
+                  uid: firebaseUser.uid,
+                  email: firebaseUser.email || "",
+                  role: "student",
+                  studentId,
+                });
+                setAuth({
+                  isAuthenticated: true,
+                  role: "student",
+                  loggedInStudentId: studentId,
+                });
+                if (studentId) {
+                  setSelectedStudentId(studentId);
                 }
-              } catch (err) {
-                console.warn("[App Auth Sync] Non-fatal role verification notice:", err);
-                // Do not sign the user out on network failure; keep authenticated session
+              } else if (roleResult.role === "Admin") {
+                saveCachedAuthSession({
+                  uid: firebaseUser.uid,
+                  email: firebaseUser.email || "",
+                  role: "admin",
+                  studentId: null,
+                });
+                setAuth({
+                  isAuthenticated: true,
+                  role: "admin",
+                  loggedInStudentId: null,
+                });
+              } else {
+                // If role could not be resolved from network, preserve existing cached session
                 const fallbackSession = getCachedAuthSession();
                 if (fallbackSession) {
                   setAuth({
@@ -227,30 +244,65 @@ export default function App() {
                     setSelectedStudentId(fallbackSession.studentId);
                   }
                 }
-                setIsAuthInitializing(false);
               }
             } else {
               // Firebase reports no active user session
+              console.log("[Startup] No active user session detected");
               clearCachedAuthSession();
               setAuth({
                 isAuthenticated: false,
                 role: null,
                 loggedInStudentId: null,
               });
-              setIsAuthInitializing(false);
             }
-          });
-        }
+          } catch (err) {
+            console.warn("[Startup] Auth synchronization notice:", err);
+            const fallbackSession = getCachedAuthSession();
+            if (fallbackSession) {
+              setAuth({
+                isAuthenticated: true,
+                role: fallbackSession.role,
+                loggedInStudentId: fallbackSession.studentId || null,
+              });
+              if (fallbackSession.role === "student" && fallbackSession.studentId) {
+                setSelectedStudentId(fallbackSession.studentId);
+              }
+            }
+          } finally {
+            if (isMounted) {
+              console.log("[Startup] Initializing storage service");
+              console.log("[Startup] Loading dashboard");
+              setStartupProgress({ step: "Startup complete", percent: 100 });
+              setIsAuthInitializing(false);
+              console.log("[Startup] Startup complete");
+            }
+          }
+        });
       } catch (err) {
-        console.warn("Firebase Auth synchronization notice:", err);
+        console.warn("[Startup] Unexpected error in initAuthSync:", err);
         if (isMounted) {
           setIsAuthInitializing(false);
         }
+      } finally {
+        // Guaranteed safety release timeout to prevent any deadlock
+        setTimeout(() => {
+          if (isMounted) {
+            setIsAuthInitializing((prev) => {
+              if (prev) {
+                console.log("[Startup] Safety fallback released initialization lock");
+                setStartupProgress({ step: "Startup complete", percent: 100 });
+                return false;
+              }
+              return false;
+            });
+          }
+        }, 2000);
       }
     }
 
     initAuthSync();
-    // Initialize practice test realtime synchronization and fetch directly from Firestore on launch
+
+    // Initialize practice test realtime synchronization non-blockingly
     initPracticeTestsRealtimeSync();
     fetchAllPracticeTests().catch((err) => {
       console.warn("[App] Initial practice tests fetch warning:", err);
@@ -486,14 +538,9 @@ export default function App() {
   }, []);
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(() => {
     // If a student session was preserved, preset selected student ID
-    const cachedAuth = localStorage.getItem("tuition_auth_state");
-    if (cachedAuth) {
-      try {
-        const parsed = JSON.parse(cachedAuth);
-        if (parsed.role === "student") {
-          return parsed.loggedInStudentId;
-        }
-      } catch (e) {}
+    const cachedSession = getCachedAuthSession();
+    if (cachedSession && cachedSession.role === "student" && cachedSession.studentId) {
+      return cachedSession.studentId;
     }
     return null;
   });
@@ -1407,11 +1454,14 @@ export default function App() {
             <Sparkles className="w-5 h-5" />
           </div>
           <div className="w-full flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 px-0.5">
-            <span>Restoring Session…</span>
-            <span className="font-mono text-blue-600 dark:text-blue-400">85%</span>
+            <span>{startupProgress.step}</span>
+            <span className="font-mono text-blue-600 dark:text-blue-400">{startupProgress.percent}%</span>
           </div>
           <div className="w-full bg-slate-100 dark:bg-slate-800/90 h-2 rounded-full overflow-hidden border border-slate-200/60 dark:border-slate-700/60">
-            <div className="h-full bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 rounded-full animate-pulse transition-all duration-300 w-[85%]" />
+            <div
+              className="h-full bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 rounded-full transition-all duration-300"
+              style={{ width: `${startupProgress.percent}%` }}
+            />
           </div>
         </div>
       </div>

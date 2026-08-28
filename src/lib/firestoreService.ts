@@ -258,99 +258,85 @@ export async function verifyUserRoleFromDatabase(uid: string, userEmail?: string
     return { role: null, studentId: null, userDoc: null };
   };
 
-  try {
-    const db = await getFirebaseDb();
-
-    if (!db) {
-      return checkLocalData();
-    }
-
-    // ----------------------------------------------------
-    // FIRESTORE LIVE DATABASE LOOKUP
-    // ----------------------------------------------------
-
-    // 1. CHECK STUDENTS COLLECTION / TABLE FIRST
-    // A) Direct doc in students/{uid}
+  const performLiveLookup = async (): Promise<RoleVerificationResult> => {
     try {
-      const studentDocRef = doc(db, "students", uid);
-      const studentDocSnap = await getDoc(studentDocRef);
-      if (studentDocSnap.exists()) {
-        const studentData = studentDocSnap.data() as Student;
-        const res: RoleVerificationResult = {
-          role: "Student",
-          studentId: studentData.id || uid,
-          userDoc: { uid, role: "Student", studentId: studentData.id || uid }
-        };
-        saveCachedAuthSession({ uid, email: normalizedEmail || studentData.email || "", role: "student", studentId: res.studentId });
-        return res;
-      }
-    } catch (err) {
-      console.warn("[verifyUserRoleFromDatabase] Direct student doc lookup warning:", err);
-    }
+      const db = await getFirebaseDb();
 
-    // B) Direct doc in users/{uid} for Student role
-    let userDoc: any = null;
-    try {
-      const userDocRef = doc(db, "users", uid);
-      const userDocSnap = await getDoc(userDocRef);
-      if (userDocSnap.exists()) {
-        userDoc = userDocSnap.data();
-        if (userDoc && userDoc.role && String(userDoc.role).trim().toLowerCase() === "student") {
-          const studentId = userDoc.studentId || uid;
-          const res: RoleVerificationResult = {
-            role: "Student",
-            studentId,
-            userDoc
-          };
-          saveCachedAuthSession({ uid, email: normalizedEmail || userDoc.email || "", role: "student", studentId });
-          return res;
-        }
+      if (!db) {
+        return checkLocalData();
       }
-    } catch (err) {
-      console.warn("[verifyUserRoleFromDatabase] Direct user doc lookup warning:", err);
-    }
 
-    // C) Check if userDoc has studentId pointing to students collection doc
-    if (userDoc && userDoc.studentId) {
+      // ----------------------------------------------------
+      // FIRESTORE LIVE DATABASE LOOKUP
+      // ----------------------------------------------------
+
+      // 1. CHECK STUDENTS COLLECTION / TABLE FIRST
+      // A) Direct doc in students/{uid}
       try {
-        const targetStudentRef = doc(db, "students", userDoc.studentId);
-        const targetStudentSnap = await getDoc(targetStudentRef);
-        if (targetStudentSnap.exists()) {
+        const studentDocRef = doc(db, "students", uid);
+        const studentDocSnap = await getDoc(studentDocRef);
+        if (studentDocSnap.exists()) {
+          const studentData = studentDocSnap.data() as Student;
           const res: RoleVerificationResult = {
             role: "Student",
-            studentId: userDoc.studentId,
-            userDoc
+            studentId: studentData.id || uid,
+            userDoc: { uid, role: "Student", studentId: studentData.id || uid }
           };
-          saveCachedAuthSession({ uid, email: normalizedEmail || userDoc.email || "", role: "student", studentId: userDoc.studentId });
+          saveCachedAuthSession({ uid, email: normalizedEmail || studentData.email || "", role: "student", studentId: res.studentId });
           return res;
         }
       } catch (err) {
-        console.warn("[verifyUserRoleFromDatabase] Target student ref lookup warning:", err);
-      }
-    }
-
-    // D) Query students collection where uid == uid
-    try {
-      const studentsColRef = collection(db, "students");
-      const qUid = query(studentsColRef, where("uid", "==", uid));
-      const snapUid = await getDocs(qUid);
-      if (!snapUid.empty) {
-        const studentData = snapUid.docs[0].data() as Student;
-        const res: RoleVerificationResult = {
-          role: "Student",
-          studentId: studentData.id || uid,
-          userDoc: userDoc || { uid, role: "Student", studentId: studentData.id || uid }
-        };
-        saveCachedAuthSession({ uid, email: normalizedEmail || studentData.email || "", role: "student", studentId: res.studentId });
-        return res;
+        console.warn("[verifyUserRoleFromDatabase] Direct student doc lookup warning:", err);
       }
 
-      // E) Query students collection where email == normalizedEmail
-      if (normalizedEmail) {
-        const qEmail = query(studentsColRef, where("email", "==", normalizedEmail));
-        const snapEmail = await getDocs(qEmail);
-        if (!snapEmail.empty) {
-          const studentData = snapEmail.docs[0].data() as Student;
+      // B) Direct doc in users/{uid} for Student role
+      let userDoc: any = null;
+      try {
+        const userDocRef = doc(db, "users", uid);
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+          userDoc = userDocSnap.data();
+          if (userDoc && userDoc.role && String(userDoc.role).trim().toLowerCase() === "student") {
+            const studentId = userDoc.studentId || uid;
+            const res: RoleVerificationResult = {
+              role: "Student",
+              studentId,
+              userDoc
+            };
+            saveCachedAuthSession({ uid, email: normalizedEmail || userDoc.email || "", role: "student", studentId });
+            return res;
+          }
+        }
+      } catch (err) {
+        console.warn("[verifyUserRoleFromDatabase] Direct user doc lookup warning:", err);
+      }
+
+      // C) Check if userDoc has studentId pointing to students collection doc
+      if (userDoc && userDoc.studentId) {
+        try {
+          const targetStudentRef = doc(db, "students", userDoc.studentId);
+          const targetStudentSnap = await getDoc(targetStudentRef);
+          if (targetStudentSnap.exists()) {
+            const res: RoleVerificationResult = {
+              role: "Student",
+              studentId: userDoc.studentId,
+              userDoc
+            };
+            saveCachedAuthSession({ uid, email: normalizedEmail || userDoc.email || "", role: "student", studentId: userDoc.studentId });
+            return res;
+          }
+        } catch (err) {
+          console.warn("[verifyUserRoleFromDatabase] Target student ref lookup warning:", err);
+        }
+      }
+
+      // D) Query students collection where uid == uid
+      try {
+        const studentsColRef = collection(db, "students");
+        const qUid = query(studentsColRef, where("uid", "==", uid));
+        const snapUid = await getDocs(qUid);
+        if (!snapUid.empty) {
+          const studentData = snapUid.docs[0].data() as Student;
           const res: RoleVerificationResult = {
             role: "Student",
             studentId: studentData.id || uid,
@@ -359,171 +345,203 @@ export async function verifyUserRoleFromDatabase(uid: string, userEmail?: string
           saveCachedAuthSession({ uid, email: normalizedEmail || studentData.email || "", role: "student", studentId: res.studentId });
           return res;
         }
-      }
-    } catch (e) {
-      console.warn("Error querying students collection:", e);
-    }
 
-    // F) Query users collection where email == normalizedEmail and role == Student
-    if (normalizedEmail) {
-      try {
-        const usersColRef = collection(db, "users");
-        const qUsersEmail = query(usersColRef, where("email", "==", normalizedEmail));
-        const snapUsersEmail = await getDocs(qUsersEmail);
-        for (const docSnap of snapUsersEmail.docs) {
-          const data = docSnap.data();
-          if (data && String(data.role || "").trim().toLowerCase() === "student") {
+        // E) Query students collection where email == normalizedEmail
+        if (normalizedEmail) {
+          const qEmail = query(studentsColRef, where("email", "==", normalizedEmail));
+          const snapEmail = await getDocs(qEmail);
+          if (!snapEmail.empty) {
+            const studentData = snapEmail.docs[0].data() as Student;
             const res: RoleVerificationResult = {
               role: "Student",
-              studentId: data.studentId || uid,
-              userDoc: data
+              studentId: studentData.id || uid,
+              userDoc: userDoc || { uid, role: "Student", studentId: studentData.id || uid }
             };
-            saveCachedAuthSession({ uid, email: normalizedEmail || data.email || "", role: "student", studentId: res.studentId });
+            saveCachedAuthSession({ uid, email: normalizedEmail || studentData.email || "", role: "student", studentId: res.studentId });
             return res;
           }
         }
       } catch (e) {
-        console.warn("Error querying users collection by email for student:", e);
-      }
-    }
-
-    // STUDENT CHECK FINISHED -> If student was found, we already returned.
-
-    // 2. CHECK ADMINS COLLECTION / TABLE SECOND
-    // A) Check direct doc in admins/{uid}
-    try {
-      const adminDocRef = doc(db, "admins", uid);
-      const adminDocSnap = await getDoc(adminDocRef);
-      if (adminDocSnap.exists()) {
-        const res: RoleVerificationResult = {
-          role: "Admin",
-          studentId: null,
-          userDoc: adminDocSnap.data()
-        };
-        saveCachedAuthSession({ uid, email: normalizedEmail || adminDocSnap.data()?.email || "", role: "admin", studentId: null });
-        return res;
-      }
-    } catch (err) {
-      console.warn("[verifyUserRoleFromDatabase] Direct admin doc lookup warning:", err);
-    }
-
-    // B) Check direct doc in users/{uid} for Admin role
-    if (userDoc && userDoc.role && String(userDoc.role).trim().toLowerCase() === "admin") {
-      const res: RoleVerificationResult = {
-        role: "Admin",
-        studentId: null,
-        userDoc
-      };
-      saveCachedAuthSession({ uid, email: normalizedEmail || userDoc.email || "", role: "admin", studentId: null });
-      return res;
-    }
-
-    // C) Query admins collection where uid == uid
-    try {
-      const adminsColRef = collection(db, "admins");
-      const qAdminUid = query(adminsColRef, where("uid", "==", uid));
-      const snapAdminUid = await getDocs(qAdminUid);
-      if (!snapAdminUid.empty) {
-        const res: RoleVerificationResult = {
-          role: "Admin",
-          studentId: null,
-          userDoc: snapAdminUid.docs[0].data()
-        };
-        saveCachedAuthSession({ uid, email: normalizedEmail || snapAdminUid.docs[0].data()?.email || "", role: "admin", studentId: null });
-        return res;
+        console.warn("Error querying students collection:", e);
       }
 
-      // D) Query admins collection where email == normalizedEmail
+      // F) Query users collection where email == normalizedEmail and role == Student
       if (normalizedEmail) {
-        const qAdminEmail = query(adminsColRef, where("email", "==", normalizedEmail));
-        const snapAdminEmail = await getDocs(qAdminEmail);
-        if (!snapAdminEmail.empty) {
+        try {
+          const usersColRef = collection(db, "users");
+          const qUsersEmail = query(usersColRef, where("email", "==", normalizedEmail));
+          const snapUsersEmail = await getDocs(qUsersEmail);
+          for (const docSnap of snapUsersEmail.docs) {
+            const data = docSnap.data();
+            if (data && String(data.role || "").trim().toLowerCase() === "student") {
+              const res: RoleVerificationResult = {
+                role: "Student",
+                studentId: data.studentId || uid,
+                userDoc: data
+              };
+              saveCachedAuthSession({ uid, email: normalizedEmail || data.email || "", role: "student", studentId: res.studentId });
+              return res;
+            }
+          }
+        } catch (e) {
+          console.warn("Error querying users collection by email for student:", e);
+        }
+      }
+
+      // STUDENT CHECK FINISHED -> If student was found, we already returned.
+
+      // 2. CHECK ADMINS COLLECTION / TABLE SECOND
+      // A) Check direct doc in admins/{uid}
+      try {
+        const adminDocRef = doc(db, "admins", uid);
+        const adminDocSnap = await getDoc(adminDocRef);
+        if (adminDocSnap.exists()) {
           const res: RoleVerificationResult = {
             role: "Admin",
             studentId: null,
-            userDoc: snapAdminEmail.docs[0].data()
+            userDoc: adminDocSnap.data()
           };
-          saveCachedAuthSession({ uid, email: normalizedEmail || snapAdminEmail.docs[0].data()?.email || "", role: "admin", studentId: null });
+          saveCachedAuthSession({ uid, email: normalizedEmail || adminDocSnap.data()?.email || "", role: "admin", studentId: null });
           return res;
         }
+      } catch (err) {
+        console.warn("[verifyUserRoleFromDatabase] Direct admin doc lookup warning:", err);
       }
-    } catch (e) {
-      console.warn("Error querying admins collection:", e);
-    }
 
-    // E) Query users collection for Admin record by email or scanning users collection
-    if (normalizedEmail) {
+      // B) Check direct doc in users/{uid} for Admin role
+      if (userDoc && userDoc.role && String(userDoc.role).trim().toLowerCase() === "admin") {
+        const res: RoleVerificationResult = {
+          role: "Admin",
+          studentId: null,
+          userDoc
+        };
+        saveCachedAuthSession({ uid, email: normalizedEmail || userDoc.email || "", role: "admin", studentId: null });
+        return res;
+      }
+
+      // C) Query admins collection where uid == uid
       try {
-        const usersColRef = collection(db, "users");
-        const qUsersEmail = query(usersColRef, where("email", "==", normalizedEmail));
-        const snapUsersEmail = await getDocs(qUsersEmail);
-        for (const docSnap of snapUsersEmail.docs) {
-          const data = docSnap.data();
-          if (data && String(data.role || "").trim().toLowerCase() === "admin") {
-            // Ensure record has correct UID attached
-            if (data.uid !== uid) {
-              try {
-                await setDoc(doc(db, "users", docSnap.id), { uid }, { merge: true });
-              } catch (e) {
-                // Ignore sync error
-              }
-            }
+        const adminsColRef = collection(db, "admins");
+        const qAdminUid = query(adminsColRef, where("uid", "==", uid));
+        const snapAdminUid = await getDocs(qAdminUid);
+        if (!snapAdminUid.empty) {
+          const res: RoleVerificationResult = {
+            role: "Admin",
+            studentId: null,
+            userDoc: snapAdminUid.docs[0].data()
+          };
+          saveCachedAuthSession({ uid, email: normalizedEmail || snapAdminUid.docs[0].data()?.email || "", role: "admin", studentId: null });
+          return res;
+        }
+
+        // D) Query admins collection where email == normalizedEmail
+        if (normalizedEmail) {
+          const qAdminEmail = query(adminsColRef, where("email", "==", normalizedEmail));
+          const snapAdminEmail = await getDocs(qAdminEmail);
+          if (!snapAdminEmail.empty) {
             const res: RoleVerificationResult = {
               role: "Admin",
               studentId: null,
-              userDoc: { ...data, uid }
+              userDoc: snapAdminEmail.docs[0].data()
             };
-            saveCachedAuthSession({ uid, email: normalizedEmail, role: "admin", studentId: null });
+            saveCachedAuthSession({ uid, email: normalizedEmail || snapAdminEmail.docs[0].data()?.email || "", role: "admin", studentId: null });
             return res;
           }
         }
       } catch (e) {
-        console.warn("Error querying users collection by email for admin:", e);
+        console.warn("Error querying admins collection:", e);
       }
-    }
 
-    // F) Fallback scan of users collection in Firestore to support custom doc ID formats
-    try {
-      const usersColRef = collection(db, "users");
-      const snapAllUsers = await getDocs(usersColRef);
-      for (const d of snapAllUsers.docs) {
-        const u = d.data();
-        const matchesUid = u.uid === uid || d.id === uid;
-        const matchesEmail = normalizedEmail && u.email?.toLowerCase().trim() === normalizedEmail;
-        const isAdminRole = String(u.role || "").trim().toLowerCase() === "admin";
-
-        if ((matchesUid || matchesEmail) && isAdminRole) {
-          const res: RoleVerificationResult = {
-            role: "Admin",
-            studentId: null,
-            userDoc: { ...u, uid }
-          };
-          saveCachedAuthSession({ uid, email: normalizedEmail || u.email || "", role: "admin", studentId: null });
-          return res;
+      // E) Query users collection for Admin record by email or scanning users collection
+      if (normalizedEmail) {
+        try {
+          const usersColRef = collection(db, "users");
+          const qUsersEmail = query(usersColRef, where("email", "==", normalizedEmail));
+          const snapUsersEmail = await getDocs(qUsersEmail);
+          for (const docSnap of snapUsersEmail.docs) {
+            const data = docSnap.data();
+            if (data && String(data.role || "").trim().toLowerCase() === "admin") {
+              // Ensure record has correct UID attached
+              if (data.uid !== uid) {
+                try {
+                  await setDoc(doc(db, "users", docSnap.id), { uid }, { merge: true });
+                } catch (e) {
+                  // Ignore sync error
+                }
+              }
+              const res: RoleVerificationResult = {
+                role: "Admin",
+                studentId: null,
+                userDoc: { ...data, uid }
+              };
+              saveCachedAuthSession({ uid, email: normalizedEmail, role: "admin", studentId: null });
+              return res;
+            }
+          }
+        } catch (e) {
+          console.warn("Error querying users collection by email for admin:", e);
         }
       }
-    } catch (e) {
-      console.warn("Error scanning users collection for admin:", e);
+
+      // F) Fallback scan of users collection in Firestore to support custom doc ID formats
+      try {
+        const usersColRef = collection(db, "users");
+        const snapAllUsers = await getDocs(usersColRef);
+        for (const d of snapAllUsers.docs) {
+          const u = d.data();
+          const matchesUid = u.uid === uid || d.id === uid;
+          const matchesEmail = normalizedEmail && u.email?.toLowerCase().trim() === normalizedEmail;
+          const isAdminRole = String(u.role || "").trim().toLowerCase() === "admin";
+
+          if ((matchesUid || matchesEmail) && isAdminRole) {
+            const res: RoleVerificationResult = {
+              role: "Admin",
+              studentId: null,
+              userDoc: { ...u, uid }
+            };
+            saveCachedAuthSession({ uid, email: normalizedEmail || u.email || "", role: "admin", studentId: null });
+            return res;
+          }
+        }
+      } catch (e) {
+        console.warn("Error scanning users collection for admin:", e);
+      }
+
+      // 3. Fallback check to local data before returning null
+      const localResult = checkLocalData();
+      if (localResult.role) {
+        return localResult;
+      }
+
+      // 4. NEITHER STUDENTS NOR ADMINS RECORD EXISTS FOR THIS UID / EMAIL
+      return {
+        role: null,
+        studentId: null,
+        userDoc: null
+      };
+
+    } catch (err) {
+      console.warn("[verifyUserRoleFromDatabase] Error during database role check, using local fallback:", err);
+      return checkLocalData();
     }
+  };
 
-    // 3. Fallback check to local data before returning null
-    const localResult = checkLocalData();
-    if (localResult.role) {
-      return localResult;
-    }
+  // Enforce a strict 2500ms safety race against local cache to prevent startup deadlocks
+  let timeoutHandle: any;
+  const timeoutPromise = new Promise<RoleVerificationResult>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      console.warn("[verifyUserRoleFromDatabase] Network role verification timed out after 2500ms, using local session fallback");
+      resolve(checkLocalData());
+    }, 2500);
+  });
 
-    // 4. NEITHER STUDENTS NOR ADMINS RECORD EXISTS FOR THIS UID / EMAIL
-    return {
-      role: null,
-      studentId: null,
-      userDoc: null
-    };
-
+  try {
+    const result = await Promise.race([performLiveLookup(), timeoutPromise]);
+    clearTimeout(timeoutHandle);
+    return result;
   } catch (err) {
-    console.warn("[verifyUserRoleFromDatabase] Error during database role check, using local fallback:", err);
-    // Never crash or trigger unintended logout due to network issues
-    const fallbackResult = checkLocalData();
-    return fallbackResult;
+    clearTimeout(timeoutHandle);
+    return checkLocalData();
   }
 }
 
