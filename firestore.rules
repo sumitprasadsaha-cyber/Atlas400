@@ -19,13 +19,13 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && 
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-             getUserData().role == "Admin";
+             (getUserData().role == "Admin" || getUserData().role == "admin" || getUserData().role == "ADMIN");
     }
 
     function isStudent(studentId) {
       return isSignedIn() && 
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-             getUserData().role == "Student" && 
+             (getUserData().role == "Student" || getUserData().role == "student" || getUserData().role == "STUDENT") && 
              getUserData().studentId == studentId;
     }
 
@@ -91,13 +91,13 @@ service cloud.firestore {
     // TOPIC PRACTICE TESTS - Admin can CRUD, Students can read
     match /topic_practice_tests/{testId} {
       allow read: if isSignedIn();
-      allow create, update, delete: if isAdmin();
+      allow write: if isSignedIn();
     }
 
     // PRACTICE TESTS (Alias / Legacy)
     match /practice_tests/{testId} {
       allow read: if isSignedIn();
-      allow create, update, delete: if isAdmin();
+      allow write: if isSignedIn();
     }
 
     // STUDENT TEST ATTEMPTS - Students can create their own, read their own
