@@ -170,7 +170,7 @@ export default function StudentSchoolTree({
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder={`Search across subjects, modules, topic notes, and files...`}
+            placeholder={`Search across subjects, chapters, topic notes, and files...`}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-8 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-hidden focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
@@ -245,7 +245,7 @@ export default function StudentSchoolTree({
                         {subj.subject}
                       </h4>
                       <p className="text-[11px] text-slate-400 dark:text-slate-500 font-medium">
-                        {subj.totalModules} {subj.totalModules === 1 ? "Module" : "Modules"} • {subj.totalTopics} {subj.totalTopics === 1 ? "Topic Note" : "Topic Notes"}
+                        {subj.totalModules} {subj.totalModules === 1 ? "Chapter" : "Chapters"} • {subj.totalTopics} {subj.totalTopics === 1 ? "Topic Note" : "Topic Notes"}
                       </p>
                     </div>
                   </div>
@@ -269,12 +269,12 @@ export default function StudentSchoolTree({
                   </div>
                 </div>
 
-                {/* Level 3: Modules Container */}
+                {/* Level 3: Chapters Container */}
                 {isSubjExpanded && (
                   <div className="p-3.5 space-y-3 bg-slate-50/30 dark:bg-slate-950/30">
                     {subj.modules.length === 0 ? (
                       <div className="p-4 text-center text-xs text-slate-400 dark:text-slate-500 italic bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800">
-                        No modules created for this subject yet.
+                        No chapters created for this subject yet.
                       </div>
                     ) : (
                       subj.modules.map((mod) => {
@@ -285,9 +285,9 @@ export default function StudentSchoolTree({
                           <div
                             key={mod.moduleKey}
                             className="border border-slate-200/90 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-2xs"
-                            id={`school-module-${modKey}`}
+                            id={`school-chapter-${modKey}`}
                           >
-                            {/* Module Header (Collapsible) */}
+                            {/* Chapter Header (Collapsible) */}
                             <div
                               onClick={() => toggleModule(modKey)}
                               className="flex items-center justify-between px-3.5 py-2.5 bg-slate-50/60 dark:bg-slate-850/40 hover:bg-slate-100/60 dark:hover:bg-slate-800/60 cursor-pointer select-none transition-colors border-b border-slate-100 dark:border-slate-800/60"
@@ -327,7 +327,7 @@ export default function StudentSchoolTree({
                               <div className="p-2 space-y-1.5 bg-white dark:bg-slate-900">
                                 {mod.topics.length === 0 ? (
                                   <div className="p-3 text-center text-xs text-slate-400 italic">
-                                    No topic notes uploaded in this module yet.
+                                    No topic notes uploaded in this chapter yet.
                                   </div>
                                 ) : (
                                   mod.topics.map((topic) => {
