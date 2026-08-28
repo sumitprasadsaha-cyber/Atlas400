@@ -4,6 +4,31 @@ All notable changes to the **Tuition Ledger Management (Atlas400)** project are 
 
 ---
 
+## [5.2.1] - 2026-08-27
+
+### 🎯 Persistent Topic Test Synchronization & Real-Time Sync
+- **Firestore Single Source of Truth:**
+  - Guaranteed permanent storage of all created and uploaded practice tests within the Firestore `topic_practice_tests` collection.
+  - Implemented non-destructive `{ merge: true }` writes with comprehensive metadata (`testId`, `hasTest`, `hasPracticeTest`, question arrays, and timestamps).
+  - Synchronized test presence metadata (`hasPracticeTest`, `hasTest`, `practiceTestId`) directly onto associated class and UPSC note records.
+- **Immediate Admin → Student Real-Time Sync:**
+  - Real-time `onSnapshot` subscriptions and broadcast event listeners across admin and student portals.
+  - Instant appearance and synchronization of newly created or updated practice tests across student devices without manual refresh.
+- **Topic Test Visibility & Access Fixes:**
+  - Resolved practice test visibility across `StudentSchoolTree`, `StudentUPSCTree`, `SubjectNotes`, and `AdminNotesDashboard`.
+  - Added multi-key matching algorithms to reliably pair tests with notes using normalized class, subject, chapter/module, and topic labels.
+- **Student Study Space Improvements:**
+  - Instant loading and launch of topic assessments directly from the interactive tree and subject notes cards.
+  - Enhanced student attempt persistence, score tracking, and auto-graded results feedback.
+- **Auto-Sync & App Lifecycle Hydration:**
+  - Proactive database hydration on application launch (`App.tsx`) and authentication session recovery.
+  - Persistent caching and zero-loss state retention during browser refreshes, logouts, and tab switching.
+- **Upload Reliability & Storage Hardening:**
+  - Atomic question updates and robust image upload linking to cloud storage with specific question IDs.
+  - Graceful cleanup and non-destructive unlinking when tests or questions are removed.
+
+---
+
 ## [5.1.0] - 2026-08-27
 
 ### 🚀 Major Hierarchy & Terminology Refactor
