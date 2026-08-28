@@ -813,6 +813,11 @@ router.all("/download", (req, res) => {
   req.query.action = "download";
   return storageHandler(req, res);
 });
+router.all("/r2/download", (req, res) => {
+  req.query.action = "download";
+  return storageHandler(req, res);
+});
+router.all("/r2/*", (req, res) => storageHandler(req, res));
 router.all("/notes", (req, res) => notesHandler(req, res));
 router.all("/notes.ts", (req, res) => notesHandler(req, res));
 router.all("/notes/upload", (req, res) => notesHandler(req, res));
