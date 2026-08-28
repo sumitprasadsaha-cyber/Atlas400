@@ -1,3 +1,10 @@
+import {
+  buildCanonicalFilename,
+  extractCleanExtension,
+  inferMimeFromExtension,
+  sanitizeCanonicalStorageKey,
+} from "../../utils/canonicalFilename";
+
 /**
  * Atlas400 v5.0.8 — Notes Storage Refactor (Final Architecture)
  * Single Canonical Source of Truth for Notes Domain Model
@@ -343,8 +350,9 @@ export function generateSchoolStoragePaths(
     chapterFolder: string;
     topicFolder?: string;
   },
-  fileName = "note.pdf"
-): { folderPath: string; storagePath: string; practiceTestPath: string } {
+  fileName = "note.pdf",
+  mimeType?: string
+): { folderPath: string; storagePath: string; practiceTestPath: string; canonicalFileName: string } {
   const cleanSubjectFolder = sanitizeFolderName(meta.subject);
   const classFolder = meta.classFolder || "Class_10";
   const chapterFolder = meta.chapterFolder || "Chapter_01_General";
@@ -353,10 +361,17 @@ export function generateSchoolStoragePaths(
     ? `${STORAGE_ROOTS.SCHOOL}/${classFolder}/${cleanSubjectFolder}/${chapterFolder}/${meta.topicFolder}`
     : `${STORAGE_ROOTS.SCHOOL}/${classFolder}/${cleanSubjectFolder}/${chapterFolder}`;
 
+  const canonicalFileName = buildCanonicalFilename({
+    fileName,
+    mimeType,
+    defaultBaseName: "note",
+  });
+
   return {
     folderPath,
-    storagePath: `${folderPath}/${fileName}`,
+    storagePath: `${folderPath}/${canonicalFileName}`,
     practiceTestPath: `${folderPath}/practice_tests`,
+    canonicalFileName,
   };
 }
 
@@ -371,8 +386,9 @@ export function generateUPSCStoragePaths(
     moduleFolder: string;
     topicFolder?: string;
   },
-  fileName = "note.pdf"
-): { folderPath: string; storagePath: string; practiceTestPath: string } {
+  fileName = "note.pdf",
+  mimeType?: string
+): { folderPath: string; storagePath: string; practiceTestPath: string; canonicalFileName: string } {
   const cleanSubjectFolder = sanitizeFolderName(meta.subject);
   const gsPaperFolder = meta.gsPaperFolder || "GS1";
   const moduleFolder = meta.moduleFolder || "Module_01_General";
@@ -381,10 +397,17 @@ export function generateUPSCStoragePaths(
     ? `${STORAGE_ROOTS.UPSC}/${gsPaperFolder}/${cleanSubjectFolder}/${moduleFolder}/${meta.topicFolder}`
     : `${STORAGE_ROOTS.UPSC}/${gsPaperFolder}/${cleanSubjectFolder}/${moduleFolder}`;
 
+  const canonicalFileName = buildCanonicalFilename({
+    fileName,
+    mimeType,
+    defaultBaseName: "note",
+  });
+
   return {
     folderPath,
-    storagePath: `${folderPath}/${fileName}`,
+    storagePath: `${folderPath}/${canonicalFileName}`,
     practiceTestPath: `${folderPath}/practice_tests`,
+    canonicalFileName,
   };
 }
 
@@ -404,8 +427,9 @@ export function generateStoragePaths(
     moduleFolder?: string;
     topicFolder?: string;
   },
-  fileName = "note.pdf"
-): { folderPath: string; storagePath: string; practiceTestPath: string } {
+  fileName = "note.pdf",
+  mimeType?: string
+): { folderPath: string; storagePath: string; practiceTestPath: string; canonicalFileName: string } {
   const isUPSC = meta.noteType === "upsc" || meta.type === "upsc";
   if (isUPSC) {
     return generateUPSCStoragePaths({
@@ -413,14 +437,14 @@ export function generateStoragePaths(
       subject: meta.subject,
       moduleFolder: meta.moduleFolder || "Module_01_General",
       topicFolder: meta.topicFolder,
-    }, fileName);
+    }, fileName, mimeType);
   } else {
     return generateSchoolStoragePaths({
       classFolder: meta.classFolder || "Class_10",
       subject: meta.subject,
       chapterFolder: meta.chapterFolder || "Chapter_01_General",
       topicFolder: meta.topicFolder,
-    }, fileName);
+    }, fileName, mimeType);
   }
 }
 
@@ -438,11 +462,17 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
   const rawSubject = (input.subject || input.subjectName || "General").trim().replace(/\s+/g, " ");
   const subject = rawSubject || "General";
 
-  // File resolution
-  const originalFilename = input.fileName || input.originalFilename || input.pdfFileName || "note.pdf";
-  const ext = originalFilename.split(".").pop()?.toLowerCase() || "pdf";
-  const fileType: "pdf" | "image" = ext === "pdf" ? "pdf" : "image";
-  const mimeType = input.mimeType || input.mime_type || (fileType === "pdf" ? "application/pdf" : `image/${ext}`);
+  // File resolution using canonical filename builder
+  const rawInputFileName = input.fileName || input.originalFilename || input.pdfFileName || "note.pdf";
+  const explicitMime = input.mimeType || input.mime_type;
+  const canonicalExt = extractCleanExtension(rawInputFileName, explicitMime);
+  const fileType: "pdf" | "image" = canonicalExt === "pdf" ? "pdf" : "image";
+  const mimeType = explicitMime || inferMimeFromExtension(canonicalExt);
+  const canonicalFileName = buildCanonicalFilename({
+    fileName: rawInputFileName,
+    mimeType,
+    defaultBaseName: "note",
+  });
   const fileSize = input.fileSize || input.file_size || 0;
 
   // Topic parsing (strictly optional)
@@ -485,13 +515,14 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       subject,
       moduleFolder,
       topicFolder,
-    }, originalFilename);
+    }, canonicalFileName, mimeType);
 
     const topicSuffix = topicFolder ? `_${topicFolder.toLowerCase()}` : "";
     const id = `upsc_${gsInfo.gsPaperFolder.toLowerCase()}_${sanitizeFolderName(subject).toLowerCase()}_${moduleFolder.toLowerCase()}${topicSuffix}`;
-    const searchableText = `UPSC ${gsInfo.gsPaper} ${subject} Module ${moduleNumber} ${rawModName} ${parsedTopicNumber ? `Topic ${parsedTopicNumber}` : ""} ${parsedTopicName || ""} ${originalFilename}`.trim();
+    const searchableText = `UPSC ${gsInfo.gsPaper} ${subject} Module ${moduleNumber} ${rawModName} ${parsedTopicNumber ? `Topic ${parsedTopicNumber}` : ""} ${parsedTopicName || ""} ${canonicalFileName}`.trim();
 
-    const immutableKey = (input.storagePath || input.storageKey || input.r2Key || input.downloadKey || paths.storagePath).replace(/^\/+/, "");
+    const rawKey = input.storagePath || input.storageKey || input.r2Key || input.downloadKey || paths.storagePath;
+    const immutableKey = sanitizeCanonicalStorageKey(rawKey, mimeType);
 
     return {
       type: "upsc",
@@ -515,7 +546,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       downloadKey: immutableKey,
       practiceTestPath: paths.practiceTestPath,
       pdfUrl: input.pdfUrl || "",
-      fileName: originalFilename,
+      fileName: canonicalFileName,
       fileType,
       fileSize,
       mimeType,
@@ -538,7 +569,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       chapterName: rawModName,
       moduleNo: moduleNumber,
       topicNo: parsedTopicNumber !== undefined ? String(parsedTopicNumber) : undefined,
-      pdfFileName: originalFilename,
+      pdfFileName: canonicalFileName,
       storageKey: immutableKey,
     };
   } else {
@@ -553,13 +584,14 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       subject,
       chapterFolder,
       topicFolder,
-    }, originalFilename);
+    }, canonicalFileName, mimeType);
 
     const topicSuffix = topicFolder ? `_${topicFolder.toLowerCase()}` : "";
     const id = `${classInfo.classFolder.toLowerCase()}_${sanitizeFolderName(subject).toLowerCase()}_${chapterFolder.toLowerCase()}${topicSuffix}`;
-    const searchableText = `${classInfo.className} ${subject} Chapter ${chapterNumber} ${rawChName} ${parsedTopicNumber ? `Topic ${parsedTopicNumber}` : ""} ${parsedTopicName || ""} ${originalFilename}`.trim();
+    const searchableText = `${classInfo.className} ${subject} Chapter ${chapterNumber} ${rawChName} ${parsedTopicNumber ? `Topic ${parsedTopicNumber}` : ""} ${parsedTopicName || ""} ${canonicalFileName}`.trim();
 
-    const immutableKey = (input.storagePath || input.storageKey || input.r2Key || input.downloadKey || paths.storagePath).replace(/^\/+/, "");
+    const rawKey = input.storagePath || input.storageKey || input.r2Key || input.downloadKey || paths.storagePath;
+    const immutableKey = sanitizeCanonicalStorageKey(rawKey, mimeType);
 
     return {
       type: "school",
@@ -581,7 +613,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       downloadKey: immutableKey,
       practiceTestPath: paths.practiceTestPath,
       pdfUrl: input.pdfUrl || "",
-      fileName: originalFilename,
+      fileName: canonicalFileName,
       fileType,
       fileSize,
       mimeType,
@@ -600,7 +632,7 @@ export function buildCanonicalNoteMetadata(input: NoteFormInput): NoteMetadata {
       class: classInfo.className,
       chapterNo: chapterNumber,
       topicNo: parsedTopicNumber !== undefined ? String(parsedTopicNumber) : undefined,
-      pdfFileName: originalFilename,
+      pdfFileName: canonicalFileName,
       storageKey: immutableKey,
     };
   }

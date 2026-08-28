@@ -1,6 +1,6 @@
 import path from "path";
 import { handleOptions, sendSuccess, sendError } from "./_lib/responses.js";
-import { sanitizeKey, getMimeType, extractUploadPayload, parseRequestBody } from "./_lib/utils.js";
+import { sanitizeKey, getMimeType, extractUploadPayload, parseRequestBody, buildCanonicalFilename, extractCleanExtension } from "./_lib/utils.js";
 import { uploadObjectToR2, deleteObjectFromR2, headObjectFromR2, getR2ServerConfig } from "./_lib/r2.js";
 import { buildCanonicalNoteMetadata, validateCanonicalNoteMetadata, NoteMetadata } from "../src/domain/notes/types.js";
 
@@ -21,7 +21,7 @@ function isSupportedFileType(filename: string, mimeType: string): boolean {
   const cleanMime = (mimeType || "").toLowerCase().trim();
   if (ALLOWED_MIME_TYPES.has(cleanMime)) return true;
 
-  const ext = (filename || "").split(".").pop()?.toLowerCase() || "";
+  const ext = extractCleanExtension(filename, mimeType);
   if (ALLOWED_EXTENSIONS.has(ext)) return true;
 
   return false;
@@ -242,7 +242,8 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        const targetStorageKey = (fields.oldStorageKey || fields.storageKey || fields.storagePath || query.storageKey || "").trim().replace(/^\/+/, "");
+        const rawTargetKey = (fields.oldStorageKey || fields.storageKey || fields.storagePath || query.storageKey || "").trim();
+        const targetStorageKey = sanitizeKey(rawTargetKey);
 
         if (!targetStorageKey) {
           return res.status(400).json({

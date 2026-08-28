@@ -26,6 +26,12 @@ import {
   getR2PublicUrl,
   verifyR2ObjectExists,
 } from "./r2Client";
+import {
+  buildCanonicalFilename,
+  sanitizeCanonicalStorageKey,
+  inferMimeFromExtension,
+  extractCleanExtension,
+} from "../utils/canonicalFilename";
 
 export const MAX_NOTE_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 
@@ -297,9 +303,9 @@ export async function uploadNotePipeline(params: NoteUploadParams): Promise<Clas
       chapterName: chapterName || "Chapter 1",
       topicNo: canonicalMetadata.topicNumber,
       topicName: canonicalMetadata.topicName || "Topic Note",
-      fileName: file.name,
-      originalFilename: file.name,
-      pdfFileName: file.name,
+      fileName: canonicalMetadata.fileName,
+      originalFilename: canonicalMetadata.fileName,
+      pdfFileName: canonicalMetadata.fileName,
       r2Key: canonicalMetadata.storagePath,
       storageKey: canonicalMetadata.storagePath,
       storagePath: canonicalMetadata.storagePath,
@@ -373,23 +379,30 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
     throw new Error(fileValidationError);
   }
 
-  const targetStorageKey =
+  const rawTargetStorageKey =
     (currentNote as any).storagePath ||
     (currentNote as any).r2Key ||
     (currentNote as any).storageKey ||
     "";
+  const explicitMime = newFile.type;
+  const canonicalExt = extractCleanExtension(newFile.name, explicitMime);
+  const mimeType = explicitMime || inferMimeFromExtension(canonicalExt);
+  const targetStorageKey = sanitizeCanonicalStorageKey(rawTargetStorageKey, mimeType);
+  const canonicalFileName = buildCanonicalFilename({
+    fileName: newFile.name,
+    mimeType,
+  });
 
   console.log(`[Replace Pipeline] Stage 2: Target storage key is "${targetStorageKey}"`);
   notesLogger.info("REPLACE_START", {
     noteId,
     storageKey: targetStorageKey,
-    fileName: newFile.name,
+    fileName: canonicalFileName,
     fileSize: newFile.size,
   });
 
   try {
     const bucket = getR2BucketName();
-    const mimeType = newFile.type || (newFile.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
 
     // 2. Upload replacement file to Cloudflare R2 with REAL progress tracking
     console.log(`[Replace Pipeline] Stage 3: Uploading replacement file to Cloudflare R2...`);
@@ -427,9 +440,9 @@ export async function replaceNotePipeline(params: NoteReplaceParams): Promise<Cl
       chapterNo: (currentNote as any).chapterNo || (currentNote as any).chapterNumber || 1,
       chapterName: (currentNote as any).chapterName || (currentNote as any).chapterTitle || "Chapter 1",
       createdAt: (currentNote as any).createdAt || new Date().toISOString(),
-      originalFilename: newFile.name,
-      fileName: newFile.name,
-      pdfFileName: newFile.name,
+      originalFilename: canonicalFileName,
+      fileName: canonicalFileName,
+      pdfFileName: canonicalFileName,
       r2Key: targetStorageKey,
       storageKey: targetStorageKey,
       storagePath: targetStorageKey,

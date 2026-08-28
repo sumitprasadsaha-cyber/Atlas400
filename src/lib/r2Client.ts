@@ -1,3 +1,5 @@
+import { sanitizeCanonicalStorageKey, buildCanonicalFilename, inferMimeFromExtension, extractCleanExtension } from "../utils/canonicalFilename";
+
 /**
  * Cloudflare R2 Client (Browser & Isomorphic)
  * 
@@ -221,8 +223,14 @@ export async function uploadToR2(params: {
   onProgress?: (percent: number) => void;
 }): Promise<R2UploadResult> {
   const bucket = getR2BucketName(params.bucket);
-  const cleanKey = params.key.replace(/^\/+/, "");
-  const mimeType = params.mimeType || (params.file as any).type || "application/octet-stream";
+  const explicitMime = params.mimeType || (params.file as any).type;
+  const canonicalExt = extractCleanExtension(params.key || (params.file as File)?.name, explicitMime);
+  const mimeType = explicitMime || inferMimeFromExtension(canonicalExt);
+  const cleanKey = sanitizeCanonicalStorageKey(params.key, mimeType);
+  const cleanFilename = buildCanonicalFilename({
+    fileName: (params.file as File)?.name || cleanKey.split("/").pop() || "note.pdf",
+    mimeType,
+  });
   const baseUrl = getApiBaseUrl();
 
   console.log(`[R2Client] Initiating upload to Cloudflare R2: bucket="${bucket}", key="${cleanKey}", size=${params.file.size}`);
@@ -237,7 +245,7 @@ export async function uploadToR2(params: {
       const formResult = await new Promise<R2UploadResult>((resolve, reject) => {
         try {
           const formData = new FormData();
-          formData.append("file", params.file, (params.file as File).name || cleanKey.split("/").pop() || "file.pdf");
+          formData.append("file", params.file, cleanFilename);
           formData.append("bucket", bucket);
           formData.append("key", cleanKey);
           formData.append("mimeType", mimeType);
