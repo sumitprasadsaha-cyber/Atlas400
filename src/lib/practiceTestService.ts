@@ -1,4 +1,4 @@
-import { ParsedAssessmentQuestion, TopicPracticeTest, TestAttemptRecord } from "../types";
+import { ParsedAssessmentQuestion, TopicPracticeTest, TestAttemptRecord, ClassNote } from "../types";
 import { getResolvedViewUrl } from "./storageService";
 import { uploadToR2, downloadFromR2, getR2BucketName } from "./r2Client";
 import { doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, Unsubscribe } from "firebase/firestore";
@@ -950,6 +950,9 @@ export async function saveTopicPracticeTest(
 
   const topicTest: TopicPracticeTest = {
     id: topicTestId,
+    testId: topicTestId,
+    hasTest: true,
+    hasPracticeTest: true,
     classGrade: context.classGrade,
     subject: context.subject,
     chapterNo: context.chapterNo,
@@ -957,6 +960,7 @@ export async function saveTopicPracticeTest(
     topicName: context.topicName,
     rawText: context.rawText,
     questions: formattedQuestions,
+    questionCount: formattedQuestions.length,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     uploadedBy: "Admin",
@@ -972,6 +976,27 @@ export async function saveTopicPracticeTest(
     if (db) {
       const testDocRef = doc(db, "topic_practice_tests", topicTestId);
       await setDoc(testDocRef, topicTest, { merge: true });
+
+      // Also mirror/link hasPracticeTest to class_notes & upsc_notes documents
+      try {
+        const collectionsToCheck = ["class_notes", "upsc_notes"];
+        for (const colName of collectionsToCheck) {
+          const notesCol = collection(db, colName);
+          const snap = await getDocs(notesCol);
+          for (const docSnap of snap.docs) {
+            const n = docSnap.data() as ClassNote;
+            const nClass = (n as any).className || n.classGrade || "";
+            const nSubj = (n as any).subjectName || n.subject || "";
+            const nCh = (n as any).chapterNumber ?? n.chapterNo ?? 1;
+            const nTopic = (n as any).topicTitle || (n as any).topicName || n.partLabel || "";
+            if (isExactTopicMatch(context.classGrade, context.subject, context.chapterNo, context.topicName, nClass, nSubj, nCh, nTopic)) {
+              await setDoc(docSnap.ref, { hasPracticeTest: true, hasTest: true, practiceTestId: topicTestId }, { merge: true }).catch(() => {});
+            }
+          }
+        }
+      } catch (linkErr) {
+        console.warn("[PracticeTestService] Note link update notice:", linkErr);
+      }
     }
   } catch (err) {
     console.warn("[PracticeTestService] Direct Firestore write notice:", err);
@@ -1031,6 +1056,27 @@ export async function deleteTopicPracticeTest(
     if (db) {
       const testDocRef = doc(db, "topic_practice_tests", testId);
       await deleteDoc(testDocRef);
+
+      // Unlink hasPracticeTest on corresponding note documents
+      try {
+        const collectionsToCheck = ["class_notes", "upsc_notes"];
+        for (const colName of collectionsToCheck) {
+          const notesCol = collection(db, colName);
+          const snap = await getDocs(notesCol);
+          for (const docSnap of snap.docs) {
+            const n = docSnap.data() as ClassNote;
+            if (n.practiceTestId === testId || (n as any).hasPracticeTest || (n as any).hasTest) {
+              const nClass = (n as any).className || n.classGrade || "";
+              const nSubj = (n as any).subjectName || n.subject || "";
+              const nCh = (n as any).chapterNumber ?? n.chapterNo ?? 1;
+              const nTopic = (n as any).topicTitle || (n as any).topicName || n.partLabel || "";
+              if (isExactTopicMatch(classGrade, subject, chapterNo, topicName, nClass, nSubj, nCh, nTopic) || n.practiceTestId === testId) {
+                await setDoc(docSnap.ref, { hasPracticeTest: false, hasTest: false, practiceTestId: null }, { merge: true }).catch(() => {});
+              }
+            }
+          }
+        }
+      } catch (unlinkErr) {}
     }
   } catch (err) {}
 

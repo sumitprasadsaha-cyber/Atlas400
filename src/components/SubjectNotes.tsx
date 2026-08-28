@@ -872,7 +872,10 @@ export default function SubjectNotes({
                                           {/* Practice Test Button & Score */}
                                           {(() => {
                                             const topicLabel = tItem.topicLabel;
-                                            const topicTest = getTopicPracticeTestSync("UPSC", subject, chGroup.chapterNo, topicLabel);
+                                            const topicTest =
+                                              getTopicPracticeTestSync("UPSC", subject, chGroup.chapterNo, topicLabel) ||
+                                              getTopicPracticeTestSync("UPSC", subject, chGroup.chapterNo, tItem.topicName) ||
+                                              ((tItem.note as any)?.hasPracticeTest || (tItem.note as any)?.hasTest ? { questions: [{ id: "1" }] } : null);
                                             const hasTest = !!(topicTest && topicTest.questions && topicTest.questions.length > 0);
                                             const studentIdentifier = studentId || studentName;
                                             const stats = getTopicTestStats(
@@ -1085,7 +1088,11 @@ export default function SubjectNotes({
                           const matchedStud = students.find((s) => s.id === studentId || s.name === studentName);
                           const noteClass = note.classGrade || classGrade || matchedStud?.classGrade || "";
                           const noteSubj = note.subject || subject;
-                          const topicTest = getTopicPracticeTestSync(noteClass, noteSubj, group.chapterNo, topicLabel);
+                          const topicTest =
+                            getTopicPracticeTestSync(noteClass, noteSubj, group.chapterNo, topicLabel) ||
+                            getTopicPracticeTestSync(noteClass, noteSubj, group.chapterNo, (note as any).topicTitle || "") ||
+                            getTopicPracticeTestSync(noteClass, noteSubj, group.chapterNo, (note as any).topicName || "") ||
+                            ((note as any).hasPracticeTest || (note as any).hasTest ? { questions: [{ id: "1" }] } : null);
                           const hasTest = !!(topicTest && topicTest.questions && topicTest.questions.length > 0);
 
                           const studentIdentifier = studentId || studentName;
@@ -1372,7 +1379,11 @@ export default function SubjectNotes({
                                 const matchedStud = students.find((s) => s.id === studentId || s.name === studentName);
                                 const noteClass = note.classGrade || classGrade || matchedStud?.classGrade || "";
                                 const noteSubj = note.subject || subject;
-                                const topicTest = getTopicPracticeTestSync(noteClass, noteSubj, group.chapterNo, topicLabel);
+                                const topicTest =
+                                  getTopicPracticeTestSync(noteClass, noteSubj, group.chapterNo, topicLabel) ||
+                                  getTopicPracticeTestSync(noteClass, noteSubj, group.chapterNo, (note as any).topicTitle || "") ||
+                                  getTopicPracticeTestSync(noteClass, noteSubj, group.chapterNo, (note as any).topicName || "") ||
+                                  ((note as any).hasPracticeTest || (note as any).hasTest ? { questions: [{ id: "1" }] } : null);
                                 const hasTest = !!(topicTest && topicTest.questions && topicTest.questions.length > 0);
 
                                 const studentIdentifier = studentId || studentName;

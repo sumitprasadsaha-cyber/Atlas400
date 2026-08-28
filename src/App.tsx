@@ -43,6 +43,7 @@ import {
   clearCachedAuthSession,
   fetchFreshAdminDashboardData
 } from "./lib/firestoreService";
+import { initPracticeTestsRealtimeSync, fetchAllPracticeTests } from "./lib/practiceTestService";
 import { migrateLegacyNotesToClassNotes, filterClassNotesForStudent, getStudentSubjects, isSubjectMatching } from "./utils/classNoteHelper";
 import { deleteFileFromStorage, uploadProfilePhoto } from "./lib/storageService";
 import { safeLocalStorageSetItem, safeLocalStorageGetItem, safeLocalStorageRemoveItem } from "./lib/safeStorage";
@@ -249,6 +250,11 @@ export default function App() {
     }
 
     initAuthSync();
+    // Initialize practice test realtime synchronization and fetch directly from Firestore on launch
+    initPracticeTestsRealtimeSync();
+    fetchAllPracticeTests().catch((err) => {
+      console.warn("[App] Initial practice tests fetch warning:", err);
+    });
 
     return () => {
       isMounted = false;

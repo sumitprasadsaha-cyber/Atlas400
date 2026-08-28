@@ -34,7 +34,7 @@ import {
   deletePaperPipeline
 } from "../../lib/notesService";
 import { searchHierarchicalNotes } from "../../utils/notesHierarchyHelper";
-import { fetchAllPracticeTests, buildTopicTestId } from "../../lib/practiceTestService";
+import { fetchAllPracticeTests, buildTopicTestId, subscribeToPracticeTests, getTopicPracticeTestSync } from "../../lib/practiceTestService";
 
 import TopicCard from "./TopicCard";
 import QuickAddTopicModal, { ParentContext } from "./QuickAddTopicModal";
@@ -278,17 +278,39 @@ export default function AdminNotesDashboard({
 
   useEffect(() => {
     loadPracticeTests();
+    const unsub = subscribeToPracticeTests((updatedBank) => {
+      setPracticeTestBank(updatedBank);
+    });
+    const handleUpdate = () => {
+      loadPracticeTests();
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("practice-tests-updated", handleUpdate);
+      window.addEventListener("storage", handleUpdate);
+    }
+    return () => {
+      if (unsub) unsub();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("practice-tests-updated", handleUpdate);
+        window.removeEventListener("storage", handleUpdate);
+      }
+    };
   }, [loadPracticeTests]);
 
   // Helper to check if a topic note has an active practice test
   const checkIfTopicHasPracticeTest = useCallback((note: ClassNote): boolean => {
     if (!note) return false;
+    if ((note as any).hasPracticeTest || (note as any).hasTest) return true;
     const classGrade = (note as any).className || note.classGrade || (note as any).class || "";
     const subject = (note as any).subjectName || note.subject || "";
     const chapterNo = (note as any).chapterNumber ?? note.chapterNo ?? 1;
     const topicName = (note as any).topicTitle || (note as any).topicName || note.partLabel || "";
     const testId = (note as any).practiceTestId || buildTopicTestId(classGrade, subject, Number(chapterNo), topicName);
-    return Boolean(practiceTestBank[testId]);
+    if (practiceTestBank[testId] && Array.isArray(practiceTestBank[testId].questions) && practiceTestBank[testId].questions.length > 0) {
+      return true;
+    }
+    const syncTest = getTopicPracticeTestSync(classGrade, subject, Number(chapterNo), topicName);
+    return Boolean(syncTest && Array.isArray(syncTest.questions) && syncTest.questions.length > 0);
   }, [practiceTestBank]);
 
   // Separate Notes by Category: School vs UPSC

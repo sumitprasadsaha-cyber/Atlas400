@@ -306,6 +306,10 @@ export interface ParsedAssessmentQuestion {
 
 export interface TopicPracticeTest {
   id: string; // Unique test key: `${classGrade}_${subject}_ch${chapterNo}_${topicName}`
+  testId?: string;
+  hasTest?: boolean;
+  hasPracticeTest?: boolean;
+  questionCount?: number;
   classGrade: string;
   subject: string;
   chapterNo: number;
