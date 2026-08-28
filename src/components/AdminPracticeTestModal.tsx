@@ -29,6 +29,7 @@ import {
   subscribeToTestAttempts
 } from "../utils/assessmentParser";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
+import Toast from "./Toast";
 import {
   getTopicPracticeTest,
   saveTopicPracticeTest,
@@ -1232,9 +1233,13 @@ export default function AdminPracticeTestModal({
               <span>Delete All Tests (DB)</span>
             </button>
             {deleteToast && (
-              <div className="absolute -top-14 left-0 w-full min-w-[280px] rounded-2xl bg-rose-600 text-white text-[11px] font-semibold px-3 py-2 shadow-lg shadow-rose-600/25 z-50">
-                {deleteToast}
-              </div>
+              <Toast
+                message={deleteToast}
+                type="error"
+                duration={5000}
+                onClose={() => setDeleteToast(null)}
+                id="admin-practice-test-delete-toast"
+              />
             )}
           </div>
 

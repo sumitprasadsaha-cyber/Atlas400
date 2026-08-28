@@ -45,6 +45,7 @@ import CreateHierarchyNodeModal, {
 import NotesPreviewModal from "./NotesPreviewModal";
 import AdminPracticeTestModal from "../AdminPracticeTestModal";
 import NotesMainPanel from "./NotesMainPanel";
+import Toast from "../Toast";
 import {
   getSchoolHierarchy,
   getUpscHierarchy,
@@ -1183,21 +1184,15 @@ export default function AdminNotesDashboard({
 
   return (
     <div className="h-full flex flex-col bg-slate-100 dark:bg-slate-950 overflow-hidden" id="admin-notes-dashboard">
-      {/* Toast notification */}
+      {/* Toast notification rendered via Portal to document.body above all modals */}
       {toast && (
-        <div 
-          className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-2xl shadow-xl border flex items-center gap-3 animate-slideUp text-xs font-bold ${
-            toast.type === "success" 
-              ? "bg-emerald-600 text-white border-emerald-500 shadow-emerald-500/20" 
-              : toast.type === "error" 
-              ? "bg-rose-600 text-white border-rose-500 shadow-rose-500/20" 
-              : "bg-slate-900 text-white border-slate-700"
-          }`}
-        >
-          {toast.type === "success" && <CheckCircle2 className="w-4 h-4" />}
-          {toast.type === "error" && <AlertTriangle className="w-4 h-4" />}
-          <span>{toast.message}</span>
-        </div>
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          duration={3500}
+          onClose={() => setToast(null)}
+          id="admin-notes-dashboard-toast"
+        />
       )}
 
       {/* =========================================================================
