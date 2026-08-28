@@ -113,50 +113,50 @@ export async function resolveDirectNoteUrl(target: string | NoteOpeningTarget): 
   }
 
   if (!cleanKey) {
+    if (rawUrl) return rawUrl;
     throw new Error("Unable to open note: Missing file storage key.");
   }
 
-  // 1. Check if direct public R2 URL/domain is configured
+  // 1. Request a verified pre-signed URL from Cloudflare R2 with inline Content-Disposition (or streaming URL)
+  try {
+    const signedDetails = await getR2SignedUrlDetails({
+      bucket: cleanBucket,
+      key: cleanKey,
+      expiresIn: 3600,
+      operation: "getObject",
+      contentType: finalMime,
+    });
+
+    if (signedDetails.signedUrl) {
+      return signedDetails.signedUrl;
+    }
+  } catch (signErr) {
+    console.warn("[resolveDirectNoteUrl] Error getting signed URL details:", signErr);
+  }
+
+  // 2. Direct public URL fallback if configured
   const directPublicUrl = getR2PublicUrl(cleanBucket, cleanKey);
-  if (directPublicUrl && !directPublicUrl.includes("/api/")) {
+  if (directPublicUrl && (directPublicUrl.startsWith("http://") || directPublicUrl.startsWith("https://"))) {
     return directPublicUrl;
   }
 
-  // 2. Request a direct pre-signed URL from Cloudflare R2 with inline Content-Disposition
-  const signedDetails = await getR2SignedUrlDetails({
-    bucket: cleanBucket,
-    key: cleanKey,
-    expiresIn: 3600,
-    operation: "getObject",
-    contentType: finalMime,
-  });
-
-  if (signedDetails.signedUrl && !signedDetails.signedUrl.includes("/api/")) {
-    return signedDetails.signedUrl;
-  }
-
-  // Fallback: If rawUrl is direct external HTTPS (not /api/), return it
-  if (rawUrl && (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) && !rawUrl.includes("/api/")) {
-    return rawUrl;
-  }
-
-  throw new Error("Unable to open note: Direct storage URL could not be resolved.");
+  // 3. Streaming download proxy fallback
+  return `/api/storage?action=download&bucket=${encodeURIComponent(cleanBucket)}&key=${encodeURIComponent(cleanKey)}`;
 }
 
 /**
  * Universal Note Opener for Desktop, Android, iPad, and installed PWAs.
  * Directly opens notes in the browser or OS-native viewer via window.open(url, "_blank", "noopener,noreferrer").
- * Never proxies note viewing through Vercel or serverless endpoints.
  */
 export async function openNote(target: string | NoteOpeningTarget): Promise<void> {
   try {
     const directUrl = await resolveDirectNoteUrl(target);
 
-    if (!directUrl || directUrl.includes("/api/")) {
-      throw new Error("Invalid or serverless note URL blocked.");
+    if (!directUrl) {
+      throw new Error("Invalid note URL.");
     }
 
-    console.log(`[openNote] Opening direct note URL on Cloudflare R2:`, directUrl);
+    console.log(`[openNote] Opening note URL:`, directUrl);
 
     // Track study progress if student information is attached
     if (typeof target === "object" && target !== null && target.studentId) {

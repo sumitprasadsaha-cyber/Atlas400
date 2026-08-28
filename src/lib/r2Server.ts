@@ -419,6 +419,79 @@ export async function uploadObjectToR2(params: {
 }
 
 /**
+ * Generates an exhaustive list of candidate storage keys to resolve legacy paths,
+ * folder renames (Module <-> Chapter), prefix variations, and filename mismatches.
+ */
+export function generateCandidateKeys(rawKey: string): string[] {
+  if (!rawKey) return [];
+  const clean = rawKey.trim().replace(/^\/+/, "");
+  if (!clean) return [];
+
+  const candidates = new Set<string>();
+
+  // 1. Exact clean key
+  candidates.add(clean);
+
+  // 2. Decoded URI key
+  try {
+    const decoded = decodeURIComponent(clean);
+    if (decoded !== clean) candidates.add(decoded);
+  } catch {}
+
+  // 3. Module <-> Chapter swap (for School renames)
+  if (clean.includes("Chapter_") || clean.includes("chapter_") || clean.includes("Chapter ") || clean.includes("chapter ")) {
+    candidates.add(clean.replace(/Chapter_/g, "Module_").replace(/chapter_/g, "module_").replace(/Chapter /g, "Module "));
+  }
+  if (clean.includes("Module_") || clean.includes("module_") || clean.includes("Module ") || clean.includes("module ")) {
+    candidates.add(clean.replace(/Module_/g, "Chapter_").replace(/module_/g, "chapter_").replace(/Module /g, "Chapter "));
+  }
+
+  // 4. notes/ prefix variants
+  if (!clean.startsWith("notes/")) {
+    candidates.add(`notes/${clean}`);
+  } else {
+    candidates.add(clean.substring(6));
+  }
+
+  // 5. class_notes/ variants
+  if (clean.startsWith("Class_") || clean.startsWith("class_")) {
+    candidates.add(`class_notes/${clean}`);
+  }
+  if (clean.startsWith("class_notes/")) {
+    candidates.add(clean.substring("class_notes/".length));
+  }
+
+  // 6. Filename variants (note.pdf vs original filename or document.pdf)
+  const lastSlash = clean.lastIndexOf("/");
+  if (lastSlash !== -1) {
+    const dirName = clean.substring(0, lastSlash);
+    const baseName = clean.substring(lastSlash + 1);
+    if (baseName.toLowerCase() !== "note.pdf") {
+      candidates.add(`${dirName}/note.pdf`);
+    }
+    if (baseName.toLowerCase() !== "note.png") {
+      candidates.add(`${dirName}/note.png`);
+    }
+    if (baseName.toLowerCase() !== "note.jpg") {
+      candidates.add(`${dirName}/note.jpg`);
+    }
+    if (baseName.toLowerCase() !== "document.pdf") {
+      candidates.add(`${dirName}/document.pdf`);
+    }
+  }
+
+  // 7. Space vs Underscore variants
+  if (clean.includes(" ")) {
+    candidates.add(clean.replace(/ /g, "_"));
+  }
+  if (clean.includes("_")) {
+    candidates.add(clean.replace(/_/g, " "));
+  }
+
+  return Array.from(candidates);
+}
+
+/**
  * Retrieves an object stream from Cloudflare R2 bucket or local disk fallback.
  */
 export async function getObjectFromR2(params: {
@@ -433,17 +506,16 @@ export async function getObjectFromR2(params: {
   lastModified?: Date;
   etag?: string;
   metadata?: Record<string, string>;
+  resolvedKey?: string;
 }> {
   const config = getR2ServerConfig();
   const bucketName = params.bucket || config.bucket;
   const cleanKey = params.key.replace(/^\/+/, "");
 
-  const candidateKeys = [cleanKey];
-  if (!cleanKey.startsWith("notes/")) {
-    candidateKeys.push(`notes/${cleanKey}`);
-  } else {
-    candidateKeys.push(cleanKey.substring(6));
-  }
+  // Resolve existence and canonical key first
+  const headCheck = await headObjectFromR2({ bucket: bucketName, key: cleanKey });
+  const effectiveKey = headCheck.exists && headCheck.resolvedKey ? headCheck.resolvedKey : cleanKey;
+  const candidateKeys = headCheck.exists && headCheck.resolvedKey ? [headCheck.resolvedKey] : generateCandidateKeys(cleanKey);
 
   if (isR2Configured()) {
     const client = getR2S3Client();
@@ -466,6 +538,7 @@ export async function getObjectFromR2(params: {
           lastModified: response.LastModified,
           etag: response.ETag,
           metadata: response.Metadata,
+          resolvedKey: cand,
         };
       } catch (err: any) {
         if (
@@ -506,6 +579,7 @@ export async function getObjectFromR2(params: {
             contentRange: `bytes ${start}-${end}/${stat.size}`,
             lastModified: stat.mtime,
             etag,
+            resolvedKey: cand,
           };
         }
 
@@ -515,6 +589,7 @@ export async function getObjectFromR2(params: {
           contentLength: stat.size,
           lastModified: stat.mtime,
           etag,
+          resolvedKey: cand,
         };
       }
     } catch (localErr) {
@@ -522,7 +597,7 @@ export async function getObjectFromR2(params: {
     }
   }
 
-  return { body: null };
+  return { body: null, resolvedKey: effectiveKey };
 }
 
 /**
@@ -540,11 +615,19 @@ export async function generateR2SignedUrl(params: {
   const cleanKey = params.key.replace(/^\/+/, "");
   const expiresIn = params.expiresIn || 3600;
   const operation = params.operation || "getObject";
-  const mimeType = params.contentType || getMimeTypeFromKey(cleanKey);
 
-  // If public URL / custom CDN domain is configured, return the direct HTTPS URL for viewing
-  if (config.publicUrl && operation === "getObject") {
-    return `${config.publicUrl.replace(/\/+$/, "")}/${cleanKey}`;
+  // Check object existence and resolve exact object key if viewing
+  let effectiveKey = cleanKey;
+  let effectiveMime = params.contentType || getMimeTypeFromKey(cleanKey);
+
+  if (operation === "getObject") {
+    try {
+      const head = await headObjectFromR2({ bucket: bucketName, key: cleanKey });
+      if (head.exists && head.resolvedKey) {
+        effectiveKey = head.resolvedKey;
+        if (head.contentType) effectiveMime = head.contentType;
+      }
+    } catch {}
   }
 
   if (isR2Configured()) {
@@ -553,8 +636,8 @@ export async function generateR2SignedUrl(params: {
       if (operation === "putObject") {
         const command = new PutObjectCommand({
           Bucket: bucketName,
-          Key: cleanKey,
-          ContentType: mimeType,
+          Key: effectiveKey,
+          ContentType: effectiveMime,
         });
         return await getSignedUrl(client, command, { expiresIn });
       }
@@ -562,9 +645,9 @@ export async function generateR2SignedUrl(params: {
       // Generate direct pre-signed URL with inline Content-Disposition so browsers/mobile OS view natively
       const command = new GetObjectCommand({
         Bucket: bucketName,
-        Key: cleanKey,
+        Key: effectiveKey,
         ResponseContentDisposition: "inline",
-        ResponseContentType: mimeType,
+        ResponseContentType: effectiveMime,
       });
       return await getSignedUrl(client, command, { expiresIn });
     } catch (err: any) {
@@ -574,12 +657,13 @@ export async function generateR2SignedUrl(params: {
     }
   }
 
-  // Fallback to public URL if configured
-  if (config.publicUrl) {
-    return `${config.publicUrl.replace(/\/+$/, "")}/${cleanKey}`;
+  // Fallback to public URL if configured and operation is getObject
+  if (config.publicUrl && operation === "getObject") {
+    return `${config.publicUrl.replace(/\/+$/, "")}/${effectiveKey}`;
   }
 
-  return "";
+  // Default reliable fallback: streaming download proxy
+  return `/api/storage?action=download&bucket=${encodeURIComponent(bucketName)}&key=${encodeURIComponent(effectiveKey)}`;
 }
 
 /**
@@ -795,12 +879,7 @@ export async function headObjectFromR2(params: {
   const bucketName = params.bucket || config.bucket;
   const cleanKey = params.key.replace(/^\/+/, "");
 
-  const candidateKeys = [cleanKey];
-  if (!cleanKey.startsWith("notes/")) {
-    candidateKeys.push(`notes/${cleanKey}`);
-  } else {
-    candidateKeys.push(cleanKey.substring(6));
-  }
+  const candidateKeys = generateCandidateKeys(cleanKey);
 
   if (isR2Configured()) {
     const client = getR2S3Client();
@@ -824,6 +903,54 @@ export async function headObjectFromR2(params: {
         // Try next candidate
       }
     }
+
+    // If direct candidate keys didn't match, check directory prefix in R2
+    const lastSlash = cleanKey.lastIndexOf("/");
+    if (lastSlash !== -1) {
+      const dirName = cleanKey.substring(0, lastSlash);
+      const dirCandidates = [
+        dirName,
+        dirName.replace(/Chapter_/g, "Module_"),
+        dirName.replace(/Module_/g, "Chapter_"),
+        `notes/${dirName}`,
+      ];
+
+      for (const dirCand of dirCandidates) {
+        try {
+          const listRes = await listObjectsFromR2({
+            bucket: bucketName,
+            prefix: dirCand.endsWith("/") ? dirCand : `${dirCand}/`,
+            maxKeys: 10,
+          });
+
+          if (listRes.objects && listRes.objects.length > 0) {
+            // Find first valid file
+            const matchedObj = listRes.objects.find(
+              (o) =>
+                !o.key.endsWith("/") &&
+                !o.key.endsWith(".empty") &&
+                (o.key.endsWith(".pdf") ||
+                  o.key.endsWith(".png") ||
+                  o.key.endsWith(".jpg") ||
+                  o.key.endsWith(".jpeg") ||
+                  o.key.endsWith(".webp") ||
+                  o.size > 0)
+            ) || listRes.objects[0];
+
+            if (matchedObj) {
+              return {
+                exists: true,
+                contentLength: matchedObj.size,
+                contentType: getMimeTypeFromKey(matchedObj.key),
+                lastModified: matchedObj.lastModified,
+                etag: matchedObj.etag,
+                resolvedKey: matchedObj.key,
+              };
+            }
+          }
+        } catch {}
+      }
+    }
   }
 
   // Check local filesystem
@@ -843,6 +970,45 @@ export async function headObjectFromR2(params: {
       }
     } catch {
       // ignore and try next
+    }
+  }
+
+  // Check local filesystem directory scan
+  const lastSlashLocal = cleanKey.lastIndexOf("/");
+  if (lastSlashLocal !== -1) {
+    const dirName = cleanKey.substring(0, lastSlashLocal);
+    const dirCandidates = [
+      dirName,
+      dirName.replace(/Chapter_/g, "Module_"),
+      dirName.replace(/Module_/g, "Chapter_"),
+      `notes/${dirName}`,
+    ];
+
+    for (const dirCand of dirCandidates) {
+      try {
+        const localDir = getSafeLocalPath(bucketName, dirCand);
+        if (fs.existsSync(localDir) && (await fs.promises.stat(localDir)).isDirectory()) {
+          const files = await fs.promises.readdir(localDir);
+          const validFile = files.find(
+            (f) =>
+              !f.startsWith(".") &&
+              (f.endsWith(".pdf") || f.endsWith(".png") || f.endsWith(".jpg") || f.endsWith(".jpeg") || f.endsWith(".webp"))
+          );
+          if (validFile) {
+            const fullFilePath = path.join(localDir, validFile);
+            const stat = await fs.promises.stat(fullFilePath);
+            const foundKey = `${dirCand.replace(/\/+$/, "")}/${validFile}`;
+            return {
+              exists: true,
+              contentLength: stat.size,
+              contentType: getMimeTypeFromKey(foundKey),
+              lastModified: stat.mtime,
+              etag: `"${stat.size}-${stat.mtimeMs}"`,
+              resolvedKey: foundKey,
+            };
+          }
+        }
+      } catch {}
     }
   }
 

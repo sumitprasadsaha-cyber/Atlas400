@@ -184,7 +184,7 @@ export default async function handler(req: any, res: any) {
         }
 
         // Generate download URL
-        const downloadUrl = `/api/files/download?key=${encodeURIComponent(canonicalMeta.storagePath)}`;
+        const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(canonicalMeta.storagePath)}`;
         const noteResult: NoteMetadata = {
           ...canonicalMeta,
           pdfUrl: downloadUrl,
@@ -284,7 +284,7 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        const downloadUrl = `/api/files/download?key=${encodeURIComponent(targetStorageKey)}`;
+        const downloadUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(targetStorageKey)}`;
 
         return res.status(200).json({
           success: true,

@@ -141,9 +141,10 @@ export async function getR2SignedUrlDetails(params: {
         const errJson = await response.json();
         errText = errJson.error || errText;
       } catch {}
-      console.warn(`[R2Client] /api/storage?action=signed-url returned status ${response.status} (${errText}), using public/direct URL fallback.`);
+      console.warn(`[R2Client] /api/storage?action=signed-url returned status ${response.status} (${errText}), using proxy URL fallback.`);
+      const proxyUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`;
       return {
-        signedUrl: getR2PublicUrl(bucket, cleanKey),
+        signedUrl: proxyUrl,
         exists: true,
         status: response.status,
         bucket,
@@ -153,8 +154,9 @@ export async function getR2SignedUrlDetails(params: {
     }
   } catch (err: any) {
     console.warn("[R2Client] Failed to fetch presigned URL from /api/storage?action=signed-url:", err);
+    const proxyUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`;
     return {
-      signedUrl: getR2PublicUrl(bucket, cleanKey),
+      signedUrl: proxyUrl,
       exists: true,
       status: 200,
       bucket,
@@ -163,8 +165,8 @@ export async function getR2SignedUrlDetails(params: {
     };
   }
 
-  // Fallback to direct public or proxy URL
-  const fallbackUrl = getR2PublicUrl(bucket, cleanKey);
+  // Fallback to direct download proxy URL
+  const fallbackUrl = `/api/storage?action=download&bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(cleanKey)}`;
   return {
     signedUrl: fallbackUrl,
     exists: true,

@@ -804,6 +804,15 @@ import aiHandler from "../api/ai";
 // Mount API route handlers for /storage, /notes, /practice-tests, /auth, /health, /students, /ai
 router.all("/storage", (req, res) => storageHandler(req, res));
 router.all("/storage.ts", (req, res) => storageHandler(req, res));
+router.all("/files/download", (req, res) => {
+  req.query.action = "download";
+  return storageHandler(req, res);
+});
+router.all("/files/*", (req, res) => storageHandler(req, res));
+router.all("/download", (req, res) => {
+  req.query.action = "download";
+  return storageHandler(req, res);
+});
 router.all("/notes", (req, res) => notesHandler(req, res));
 router.all("/notes.ts", (req, res) => notesHandler(req, res));
 router.all("/notes/upload", (req, res) => notesHandler(req, res));

@@ -280,7 +280,7 @@ export function preloadAdjacentNotes(notes: ClassNote[], currentIndex: number): 
 export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<OpenPdfResult> {
   try {
     const directUrl = await resolveDirectNoteUrl(options);
-    if (!directUrl || directUrl.includes("/api/")) {
+    if (!directUrl) {
       throw new Error("Unable to resolve direct note storage URL.");
     }
 
