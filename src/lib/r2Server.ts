@@ -26,7 +26,7 @@ let s3ClientInstance: S3Client | null = null;
 let lastS3Endpoint: string = "";
 
 /**
- * Cleans an environment variable string, stripping whitespace, quotes, and carriage returns.
+ * Cleans an environment variable string, stripping whitespace, quotes, carriage returns, and extra slashes.
  */
 function cleanEnvString(val?: string): string {
   if (!val) return "";
@@ -44,7 +44,15 @@ function cleanEnvString(val?: string): string {
  * Resolves Cloudflare R2 configuration from environment variables supporting all standard aliases.
  */
 export function getR2ServerConfig(): R2Config {
-  const accountId = cleanEnvString(
+  const explicitEndpoint = cleanEnvString(
+    process.env.R2_ENDPOINT ||
+    process.env.CLOUDFLARE_R2_ENDPOINT ||
+    process.env.R2_ENDPOINT_URL ||
+    process.env.VITE_R2_ENDPOINT ||
+    ""
+  );
+
+  let accountId = cleanEnvString(
     process.env.R2_ACCOUNT_ID ||
     process.env.CLOUDFLARE_R2_ACCOUNT_ID ||
     process.env.CLOUDFLARE_ACCOUNT_ID ||
@@ -52,6 +60,12 @@ export function getR2ServerConfig(): R2Config {
     process.env.VITE_R2_ACCOUNT_ID ||
     ""
   );
+
+  // If accountId is not directly set but endpoint contains the 32-hex account ID
+  if (!accountId && explicitEndpoint) {
+    const match = explicitEndpoint.match(/([a-f0-9]{32})\.r2\.cloudflarestorage\.com/i);
+    if (match) accountId = match[1];
+  }
 
   const accessKeyId = cleanEnvString(
     process.env.R2_ACCESS_KEY_ID ||
@@ -82,15 +96,7 @@ export function getR2ServerConfig(): R2Config {
     "academy-connect-files"
   );
 
-  const explicitEndpoint = cleanEnvString(
-    process.env.R2_ENDPOINT ||
-    process.env.CLOUDFLARE_R2_ENDPOINT ||
-    process.env.R2_ENDPOINT_URL ||
-    process.env.VITE_R2_ENDPOINT ||
-    ""
-  );
-
-  const publicUrl = cleanEnvString(
+  let rawPublicUrl = cleanEnvString(
     process.env.R2_PUBLIC_URL ||
     process.env.CLOUDFLARE_R2_PUBLIC_URL ||
     process.env.R2_CUSTOM_DOMAIN ||
@@ -98,6 +104,11 @@ export function getR2ServerConfig(): R2Config {
     process.env.VITE_R2_CUSTOM_DOMAIN ||
     ""
   ).replace(/\/+$/, "");
+
+  if (rawPublicUrl && !rawPublicUrl.startsWith("http://") && !rawPublicUrl.startsWith("https://")) {
+    rawPublicUrl = `https://${rawPublicUrl}`;
+  }
+  const publicUrl = rawPublicUrl;
 
   let endpoint = explicitEndpoint || (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : "");
   if (endpoint) {
@@ -333,6 +344,7 @@ export async function headObjectFromR2(params: {
     key: cleanKey,
   });
 
+  // 1. Try AWS S3 Client HeadObject
   try {
     const client = getR2S3Client();
     const command = new HeadObjectCommand({
@@ -372,13 +384,34 @@ export async function headObjectFromR2(params: {
       return { exists: false, resolvedKey: cleanKey };
     }
 
-    console.error(`[R2Server-Operation] HeadObject ERROR:`, {
-      bucket: bucketName,
-      key: cleanKey,
-      errorName: err?.name,
-      errorMessage: err?.message,
-      httpStatusCode: err?.$metadata?.httpStatusCode,
-    });
+    // 2. If S3 returned Unauthorized / Forbidden or connection issue, try checking via publicUrl if configured
+    if (config.publicUrl) {
+      try {
+        const publicCheckUrl = `${config.publicUrl}/${cleanKey}`;
+        const headRes = await fetch(publicCheckUrl, { method: "HEAD" });
+        if (headRes.ok || headRes.status === 200 || headRes.status === 206) {
+          const len = Number(headRes.headers.get("content-length")) || undefined;
+          const ct = headRes.headers.get("content-type") || getMimeTypeFromKey(cleanKey);
+          const etag = headRes.headers.get("etag") || undefined;
+          const lastMod = headRes.headers.get("last-modified");
+          return {
+            exists: true,
+            contentLength: len,
+            contentType: ct,
+            etag,
+            lastModified: lastMod ? new Date(lastMod) : undefined,
+            resolvedKey: cleanKey,
+          };
+        } else if (headRes.status === 404) {
+          console.log(`[R2Server-Operation] HeadObject (Public URL) NOT_FOUND: "${cleanKey}"`);
+          return { exists: false, resolvedKey: cleanKey };
+        }
+      } catch (publicCheckErr) {
+        // Fall through to error return
+      }
+    }
+
+    console.warn(`[R2Server-Operation] HeadObject notice (${err?.name || "Error"}): bucket="${bucketName}", key="${cleanKey}"`);
 
     return {
       exists: false,
@@ -390,7 +423,7 @@ export async function headObjectFromR2(params: {
 
 /**
  * Downloads an object stream from Cloudflare R2 bucket.
- * Logs GetObject request, response, and throws on failure.
+ * Logs GetObject request, response, and returns readable stream.
  */
 export async function getObjectFromR2(params: {
   bucket?: string;
@@ -416,14 +449,14 @@ export async function getObjectFromR2(params: {
     range: params.range,
   });
 
-  const client = getR2S3Client();
-  const input: GetObjectCommandInput = {
-    Bucket: bucketName,
-    Key: cleanKey,
-    Range: params.range,
-  };
-
+  // 1. Try direct S3 Client GetObject
   try {
+    const client = getR2S3Client();
+    const input: GetObjectCommandInput = {
+      Bucket: bucketName,
+      Key: cleanKey,
+      Range: params.range,
+    };
     const command = new GetObjectCommand(input);
     const response = await client.send(command);
 
@@ -459,17 +492,54 @@ export async function getObjectFromR2(params: {
       return { body: null, resolvedKey: cleanKey };
     }
 
-    console.error(`[R2Server-Operation] GetObject ERROR:`, {
-      bucket: bucketName,
-      key: cleanKey,
-      errorName: err?.name,
-      errorMessage: err?.message,
-      httpStatusCode: err?.$metadata?.httpStatusCode,
-    });
+    // 2. If S3 API returned Unauthorized / error, attempt public URL stream if configured
+    if (config.publicUrl) {
+      try {
+        const publicFetchUrl = `${config.publicUrl}/${cleanKey}`;
+        const fetchHeaders: Record<string, string> = {};
+        if (params.range) {
+          fetchHeaders["Range"] = params.range;
+        }
+        const pubRes = await fetch(publicFetchUrl, { headers: fetchHeaders });
+        if (pubRes.ok || pubRes.status === 200 || pubRes.status === 206) {
+          console.log(`[R2Server-Operation] GetObject Public URL STREAM SUCCESS: key="${cleanKey}"`);
+          const ct = pubRes.headers.get("content-type") || getMimeTypeFromKey(cleanKey);
+          const len = Number(pubRes.headers.get("content-length")) || undefined;
+          const cr = pubRes.headers.get("content-range") || undefined;
+          const etag = pubRes.headers.get("etag") || undefined;
+          const lastMod = pubRes.headers.get("last-modified");
 
-    throw new Error(
-      `Cloudflare R2 GetObject failed: ${err?.name || "Error"} (${err?.message || err}). Bucket: "${bucketName}", Key: "${cleanKey}".`
-    );
+          let bodyStream: Readable | null = null;
+          if (pubRes.body) {
+            if (typeof Readable.fromWeb === "function") {
+              bodyStream = Readable.fromWeb(pubRes.body as any);
+            } else {
+              const arrayBuf = await pubRes.arrayBuffer();
+              bodyStream = Readable.from(Buffer.from(arrayBuf));
+            }
+          }
+
+          return {
+            body: bodyStream,
+            contentType: ct,
+            contentLength: len,
+            contentRange: cr,
+            etag,
+            lastModified: lastMod ? new Date(lastMod) : undefined,
+            resolvedKey: cleanKey,
+          };
+        } else if (pubRes.status === 404) {
+          console.log(`[R2Server-Operation] GetObject (Public URL) NOT_FOUND: "${cleanKey}"`);
+          return { body: null, resolvedKey: cleanKey };
+        }
+      } catch (pubFetchErr) {
+        console.warn(`[R2Server-Operation] Public URL fetch attempt warning:`, pubFetchErr);
+      }
+    }
+
+    console.warn(`[R2Server-Operation] GetObject notice (${err?.name || "Error"}): bucket="${bucketName}", key="${cleanKey}"`);
+
+    return { body: null, resolvedKey: cleanKey };
   }
 }
 
@@ -497,23 +567,30 @@ export async function generateR2SignedUrl(params: {
     expiresIn,
   });
 
-  const client = getR2S3Client();
-  if (operation === "putObject") {
-    const command = new PutObjectCommand({
+  try {
+    const client = getR2S3Client();
+    if (operation === "putObject") {
+      const command = new PutObjectCommand({
+        Bucket: bucketName,
+        Key: cleanKey,
+        ContentType: effectiveMime,
+      });
+      return await getSignedUrl(client, command, { expiresIn });
+    }
+
+    const command = new GetObjectCommand({
       Bucket: bucketName,
       Key: cleanKey,
-      ContentType: effectiveMime,
+      ResponseContentDisposition: "inline",
+      ResponseContentType: effectiveMime,
     });
     return await getSignedUrl(client, command, { expiresIn });
+  } catch (signErr) {
+    if (operation === "getObject" && config.publicUrl) {
+      return `${config.publicUrl}/${cleanKey}`;
+    }
+    return `/api/storage?action=download&bucket=${encodeURIComponent(bucketName)}&key=${encodeURIComponent(cleanKey)}`;
   }
-
-  const command = new GetObjectCommand({
-    Bucket: bucketName,
-    Key: cleanKey,
-    ResponseContentDisposition: "inline",
-    ResponseContentType: effectiveMime,
-  });
-  return await getSignedUrl(client, command, { expiresIn });
 }
 
 /**

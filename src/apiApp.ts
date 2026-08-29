@@ -538,7 +538,7 @@ router.get("/r2/download", async (req, res) => {
     const obj = await getObjectFromR2({ bucket: actualBucket, key: cleanKey, range });
 
     if (!obj.body) {
-      console.error("=== [BACKEND R2 DOWNLOAD 404] ===", { key, actualBucket, cleanKey });
+      console.info("=== [BACKEND R2 DOWNLOAD 404] ===", { key, actualBucket, cleanKey });
       return res.status(404).send("File not found in Cloudflare R2.");
     }
 

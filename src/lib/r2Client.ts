@@ -504,9 +504,14 @@ export async function downloadFromR2(params: {
           mimeType: proxyRes.headers.get("content-type") || "application/octet-stream",
         };
       }
+    } else if (proxyRes.status === 404) {
+      throw new Error(`File not found in Cloudflare R2 (key: "${cleanKey}")`);
     }
-  } catch (proxyErr) {
-    console.warn("[R2Client] Proxy download failed, trying signed URL:", proxyErr);
+  } catch (proxyErr: any) {
+    if (proxyErr?.message?.includes("File not found")) {
+      throw proxyErr;
+    }
+    console.warn("[R2Client] Proxy download notice, attempting alternative URL:", proxyErr?.message || proxyErr);
   }
 
   // 2. Fallback to signed URL or public URL

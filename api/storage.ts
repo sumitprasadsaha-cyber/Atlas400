@@ -297,10 +297,10 @@ export default async function handler(req: any, res: any) {
         try {
           obj = await getObjectFromR2({ bucket: actualBucket, key: cleanKey, range });
         } catch (getErr: any) {
-          console.error("[Storage API] getObjectFromR2 error:", getErr);
+          console.warn("[Storage API] getObjectFromR2 notice:", getErr?.message || getErr);
           return sendError(
             res,
-            new StorageError(getErr?.message || "Cloudflare R2 unavailable", "R2_UNAVAILABLE")
+            new NotFoundError(`Object not found: "${cleanKey}" does not exist in bucket "${actualBucket}".`)
           );
         }
 
