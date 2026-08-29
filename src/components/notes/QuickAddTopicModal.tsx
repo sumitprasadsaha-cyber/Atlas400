@@ -436,7 +436,7 @@ export default function QuickAddTopicModal({
           {uploadState.isUploading && (
             <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-xl text-xs space-y-1.5">
               <div className="flex justify-between text-[11px] font-bold text-blue-700 dark:text-blue-300">
-                <span>Uploading note to Cloudflare R2...</span>
+                <span>Uploading note...</span>
                 <span>{uploadState.progress}%</span>
               </div>
               <div className="w-full h-2 bg-blue-100 dark:bg-blue-900 rounded-full overflow-hidden">

@@ -128,14 +128,14 @@ export default function NotesUploadProgressModal({
         ) : isSuccess ? (
           <div className="my-4 p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
-            <span>Note was successfully synced to Cloudflare R2 and indexed in Firestore.</span>
+            <span>Note was successfully uploaded and saved.</span>
           </div>
         ) : (
           /* Active Progress Bar */
           <div className="my-4 space-y-3">
             <div className="flex justify-between items-center text-xs font-semibold">
               <span className="text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
-                <Loader2 className="w-3.5 h-3.5 text-blue-600 animate-spin" /> Uploading to R2...
+                <Loader2 className="w-3.5 h-3.5 text-blue-600 animate-spin" /> Uploading note...
               </span>
               <span className="font-mono text-blue-600 dark:text-blue-400 font-bold">
                 {Math.round(progress)}%

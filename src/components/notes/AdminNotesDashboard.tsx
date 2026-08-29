@@ -2025,7 +2025,7 @@ export default function AdminNotesDashboard({
                 <strong className="text-slate-800 dark:text-slate-200">
                   {(deletingNote as any).topicTitle || (deletingNote as any).topicName || deletingNote.partLabel || "this note"}
                 </strong>
-                ? This permanently removes the file from Cloudflare R2 storage.
+                ? This permanently removes the topic note document.
               </p>
             </div>
 
@@ -2233,9 +2233,7 @@ export default function AdminNotesDashboard({
                 <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400 pl-1">
                   <li>All Subjects</li>
                   <li>All Chapters</li>
-                  <li>All Topic Notes</li>
-                  <li>Firestore metadata</li>
-                  <li>Cloudflare files</li>
+                  <li>All Topic Notes and Documents</li>
                 </ul>
               </div>
 
@@ -2302,9 +2300,7 @@ export default function AdminNotesDashboard({
                 <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400 pl-1">
                   <li>All Subjects</li>
                   <li>All Modules</li>
-                  <li>All Topic Notes</li>
-                  <li>Firestore metadata</li>
-                  <li>Cloudflare files</li>
+                  <li>All Topic Notes and Documents</li>
                 </ul>
               </div>
 
@@ -2370,9 +2366,7 @@ export default function AdminNotesDashboard({
                 <p className="font-semibold text-slate-700 dark:text-slate-300">This will permanently remove:</p>
                 <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400 pl-1">
                   <li>All {deletingSubject.type === "school" ? "Chapters" : "Modules"}</li>
-                  <li>All Topic Notes</li>
-                  <li>Firestore metadata</li>
-                  <li>Cloudflare files</li>
+                  <li>All Topic Notes and Documents</li>
                 </ul>
               </div>
 
@@ -2440,9 +2434,7 @@ export default function AdminNotesDashboard({
               <div className="text-xs text-slate-600 dark:text-slate-400 space-y-1">
                 <p className="font-semibold text-slate-700 dark:text-slate-300">This will permanently remove:</p>
                 <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400 pl-1">
-                  <li>All Topic Notes in this {deletingChapter.type === "school" ? "chapter" : "module"}</li>
-                  <li>Firestore metadata</li>
-                  <li>Cloudflare files</li>
+                  <li>All Topic Notes and Documents in this {deletingChapter.type === "school" ? "chapter" : "module"}</li>
                 </ul>
               </div>
 

@@ -30,6 +30,7 @@ import {
 } from "../lib/firestoreService";
 import { loadStudentTestScores } from "../lib/testScorePersistence";
 import { progressService } from "../lib/progressService";
+import { APP_VERSION } from "../config";
 
 interface LoginProps {
   onLoginSuccess: (role: "Admin" | "Student", studentId: string | null, userId: string) => void;
@@ -479,7 +480,11 @@ export default function Login({ onLoginSuccess, onInstitutionNameLoaded }: Login
         </form>
       )}
 
-
+      {/* Release Version Indicator */}
+      <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[10px] text-slate-400 dark:text-slate-500 font-mono">
+        <span className="font-bold tracking-wider uppercase">Tuition Portal</span>
+        <span className="font-bold tracking-widest uppercase">Version {APP_VERSION}</span>
+      </div>
     </div>
   );
 }

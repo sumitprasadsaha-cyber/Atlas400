@@ -18,7 +18,7 @@ export interface AppVersionInfo {
  */
 export function getAppVersionInfo(): AppVersionInfo {
   // 1. Base semver from package.json if available
-  let baseVersion = "6.0.0";
+  let baseVersion = "6.1.0";
   try {
     const pkgPath = path.resolve(process.cwd(), "package.json");
     if (fs.existsSync(pkgPath)) {
@@ -107,23 +107,16 @@ export function getAppVersionInfo(): AppVersionInfo {
   const minutes = String(dateObj.getUTCMinutes()).padStart(2, "0");
   const buildTag = `${year}${month}${day}.${hours}${minutes}`;
 
-  // 7. Automatic Version String
-  let version = "";
-  if (deploymentEnvironment === "production") {
-    version = `${baseVersion}-${gitCommitShort}.${buildTag}`;
-  } else if (deploymentEnvironment === "preview") {
-    version = `${baseVersion}-preview.${gitCommitShort}.${buildTag}`;
-  } else {
-    version = `${baseVersion}-dev.${gitCommitShort}.${buildTag}`;
-  }
+  // Automatic Version String - clean public version
+  const version = baseVersion;
 
   return {
     version,
     baseVersion,
-    gitCommit,
-    gitCommitShort,
-    gitBranch,
-    buildTime,
-    deploymentEnvironment,
+    gitCommit: "",
+    gitCommitShort: "",
+    gitBranch: "",
+    buildTime: "",
+    deploymentEnvironment: "production",
   };
 }

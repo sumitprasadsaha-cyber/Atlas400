@@ -39,7 +39,7 @@ export function markR2AuthFailed(reason?: string): void {
     console.info(
       `[R2Server] Cloudflare R2 credentials authentication notice${
         reason ? ` (${reason})` : ""
-      }. Routing storage operations to persistent local disk storage fallback.`
+      }. Gracefully routing storage operations to persistent local storage fallback.`
     );
   }
   r2AuthFailed = true;
@@ -53,16 +53,31 @@ function isAuthError(err: any): boolean {
   if (!err) return false;
   const msg = String(err.message || "").toLowerCase();
   const name = String(err.name || "").toLowerCase();
-  const code = String(err.Code || err.code || "").toLowerCase();
+  const code = String(err.Code || err.code || err?.$metadata?.errorCode || "").toLowerCase();
+  const status = Number(err?.$metadata?.httpStatusCode || err?.status || err?.statusCode || 0);
+
   return (
+    status === 401 ||
+    status === 403 ||
+    (status === 400 && (name.includes("auth") || msg.includes("auth") || msg.includes("credential"))) ||
+    msg.includes("unauthorized") ||
+    msg.includes("forbidden") ||
     msg.includes("signature") ||
     msg.includes("secret access key") ||
     msg.includes("credential") ||
     msg.includes("accessdenied") ||
+    msg.includes("access denied") ||
     msg.includes("invalidaccesskeyid") ||
-    msg.includes("forbidden") ||
+    msg.includes("invalid access key") ||
+    msg.includes("invalidtoken") ||
+    msg.includes("invalid token") ||
+    name.includes("unauthorized") ||
+    name.includes("forbidden") ||
     name.includes("signature") ||
     name.includes("auth") ||
+    name.includes("accessdenied") ||
+    code.includes("unauthorized") ||
+    code.includes("forbidden") ||
     code.includes("signature") ||
     code.includes("accessdenied") ||
     code.includes("invalidaccesskeyid")
@@ -150,7 +165,7 @@ function cleanEnvString(val?: string): string {
  */
 function isPlaceholder(val: string): boolean {
   if (!val) return true;
-  const lower = val.toLowerCase();
+  const lower = val.toLowerCase().trim();
   return (
     lower.includes("placeholder") ||
     lower.includes("your_") ||
@@ -158,10 +173,15 @@ function isPlaceholder(val: string): boolean {
     lower.includes("dummy") ||
     lower.includes("my_access") ||
     lower.includes("my_secret") ||
+    lower.includes("replace_me") ||
+    lower.includes("change_me") ||
+    lower.includes("<") ||
+    lower.includes(">") ||
     lower === "none" ||
     lower === "null" ||
     lower === "undefined" ||
-    lower === "xxx"
+    lower === "xxx" ||
+    lower.length < 5
   );
 }
 
@@ -582,6 +602,8 @@ export async function getObjectFromR2(params: {
           exactKey: cleanKey,
           bucketName,
         });
+      } else if (isAuthError(err)) {
+        markR2AuthFailed(err?.name || err?.message || "Unauthorized");
       } else {
         console.warn("[R2Server] GetObject unexpected error:", {
           httpStatus: err?.$metadata?.httpStatusCode || err?.status || 500,
@@ -592,10 +614,6 @@ export async function getObjectFromR2(params: {
           exactKey: cleanKey,
           bucketName,
         });
-
-        if (isAuthError(err)) {
-          markR2AuthFailed(err?.message);
-        }
       }
     }
   }
@@ -722,7 +740,11 @@ export async function deleteObjectFromR2(params: {
       await client.send(command);
       console.log(`[R2Server] Successfully deleted object from Cloudflare R2: bucket="${bucketName}", key="${cleanKey}"`);
     } catch (err: any) {
-      console.warn(`[R2Server] R2 DeleteObject notice for "${cleanKey}":`, err?.message || err);
+      if (isAuthError(err)) {
+        markR2AuthFailed(err?.name || err?.message || "Unauthorized");
+      } else {
+        console.warn(`[R2Server] R2 DeleteObject notice for "${cleanKey}":`, err?.message || err);
+      }
     }
   }
 
@@ -772,7 +794,11 @@ export async function deleteObjectsFromR2(params: {
       await client.send(command);
       console.log(`[R2Server] Successfully batch deleted ${cleanKeys.length} objects from Cloudflare R2`);
     } catch (err: any) {
-      console.warn(`[R2Server] R2 DeleteObjects notice:`, err?.message || err);
+      if (isAuthError(err)) {
+        markR2AuthFailed(err?.name || err?.message || "Unauthorized");
+      } else {
+        console.warn(`[R2Server] R2 DeleteObjects notice:`, err?.message || err);
+      }
     }
   }
 
@@ -865,7 +891,11 @@ export async function listObjectsFromR2(params: {
         isTruncated: response.IsTruncated || false,
       };
     } catch (err: any) {
-      console.warn(`[R2Server] Cloudflare R2 ListObjects notice (${err.message}), falling back to local file scan...`);
+      if (isAuthError(err)) {
+        markR2AuthFailed(err?.name || err?.message || "Unauthorized");
+      } else {
+        console.warn(`[R2Server] Cloudflare R2 ListObjects notice (${err.message}), falling back to local file scan...`);
+      }
     }
   }
 
@@ -972,6 +1002,8 @@ export async function headObjectFromR2(params: {
           exactKey: cleanKey,
           bucketName,
         });
+      } else if (isAuthError(err)) {
+        markR2AuthFailed(err?.name || err?.message || "Unauthorized");
       } else {
         console.warn("[R2Server] HeadObject unexpected error:", {
           httpStatus: err?.$metadata?.httpStatusCode || err?.status || 500,
@@ -982,10 +1014,6 @@ export async function headObjectFromR2(params: {
           exactKey: cleanKey,
           bucketName,
         });
-
-        if (isAuthError(err)) {
-          markR2AuthFailed(err?.message);
-        }
       }
     }
   }
