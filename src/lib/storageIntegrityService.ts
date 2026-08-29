@@ -1,5 +1,5 @@
 /**
- * Release 6.1.0 — Storage Integrity Verification Service
+ * Release 6.0.0 — Storage Integrity Verification Service
  *
  * Architecture-Level Non-Destructive Integrity Auditor for Topic Notes.
  * - Scans all Firestore notes collections (School & UPSC).
@@ -95,7 +95,7 @@ export async function auditStorageIntegrity(
   onProgress?: (checked: number, total: number, currentNoteTitle: string) => void
 ): Promise<StorageIntegrityReport> {
   const bucket = getR2BucketName();
-  console.log(`[Storage Integrity Audit] Starting non-destructive audit on bucket: "${bucket}" (v6.1.0)...`);
+  console.log(`[Storage Integrity Audit] Starting non-destructive audit on bucket: "${bucket}" (v6.0.0)...`);
 
   const allNotes: ClassNote[] = await fetchAllClassNotesFromFirestore();
   const total = allNotes.length;

@@ -1,5 +1,5 @@
 /**
- * Release 6.1.0 — Storage Integrity Verification CLI Tool
+ * Release 6.0.0 — Storage Integrity Verification CLI Tool
  *
  * Scans all Firestore notes and verifies that every canonical storageKey exists
  * in Cloudflare R2 via non-destructive HeadObject checks, audits metadata consistency,
@@ -13,7 +13,7 @@ import { auditStorageIntegrity } from "../src/lib/storageIntegrityService";
 
 async function main() {
   console.log("\n========================================================");
-  console.log("  RELEASE 6.1.0 — TOPIC NOTE STORAGE INTEGRITY AUDIT");
+  console.log("  RELEASE 6.0.0 — TOPIC NOTE STORAGE INTEGRITY AUDIT");
   console.log("========================================================\n");
 
   const report = await auditStorageIntegrity((checked, total, title) => {
@@ -21,7 +21,7 @@ async function main() {
   });
 
   console.log("\n\n--------------------------------------------------------");
-  console.log("  AUDIT SUMMARY (v6.1.0)");
+  console.log("  AUDIT SUMMARY (v6.0.0)");
   console.log("--------------------------------------------------------");
   console.log(`  Target Bucket:       ${report.bucket}`);
   console.log(`  Total Notes:         ${report.totalNotes}`);

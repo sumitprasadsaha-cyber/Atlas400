@@ -13,7 +13,7 @@ async function main() {
   const studentId = "student-1784378546110";
   const bucket = getBucketName();
 
-  console.log("=== Starting Topic Notes Retrieval & Storage Validation Suite (v6.1.0) ===");
+  console.log("=== Starting Topic Notes Retrieval & Storage Validation Suite (v6.0.0) ===");
 
   // --- Test 1: PDF Upload & Retrieval ---
   console.log("\n[Test 1] PDF Upload & Stream Retrieval...");
@@ -103,7 +103,7 @@ async function main() {
   await deleteObjectFromR2({ bucket, key: imgKey });
   console.log("✓ Test 5 Passed: Cleanup complete.");
 
-  console.log("\n=== ALL TOPIC NOTES PIPELINE TESTS PASSED SUCCESSFULLY (v6.1.0) ===");
+  console.log("\n=== ALL TOPIC NOTES PIPELINE TESTS PASSED SUCCESSFULLY (v6.0.0) ===");
   process.exit(0);
 }
 

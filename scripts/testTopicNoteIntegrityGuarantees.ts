@@ -1,5 +1,5 @@
 /**
- * Release 6.1.0 — Automated Regression Test Suite: Permanent Topic Notes Architecture Guarantees
+ * Release 6.0.0 — Automated Regression Test Suite: Permanent Topic Notes Architecture Guarantees
  *
  * Verifies strict, non-negotiable data integrity guarantees:
  * 1. Cloudflare R2 is the immutable source of truth for all Topic Note files.
@@ -9,7 +9,7 @@
  * 5. Atomic Delete Pipeline: R2 delete -> confirm -> Firestore doc delete -> cache invalidate.
  * 6. Non-Destructive Integrity Auditor: Audits notes, orphaned R2 objects, metadata anomalies without mutations.
  * 7. Universal Note Opener: Direct storageKey reading from document without reconstructing paths or regenerating names.
- * 8. Version Consistency: Application reports only Version 6.1.0 across all components.
+ * 8. Version Consistency: Application reports only Version 6.0.0 across all components.
  *
  * Usage:
  *   npx tsx scripts/testTopicNoteIntegrityGuarantees.ts
@@ -264,24 +264,24 @@ async function test6_UniversalNoteOpenerDirectKeyResolution() {
 }
 
 async function test7_VersionConsistencyAcrossCodebase() {
-  console.log("\n[Test 7] Release 6.1.0 Version Consistency Audit");
+  console.log("\n[Test 7] Release 6.0.0 Version Consistency Audit");
 
   const pkg = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf-8"));
-  assert(pkg.version === "6.1.0", `package.json version is 6.1.0 (found "${pkg.version}")`);
+  assert(pkg.version === "6.0.0", `package.json version is 6.0.0 (found "${pkg.version}")`);
 
   const manifest = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "public/manifest.json"), "utf-8"));
-  assert(manifest.version === "6.1.0", `manifest.json version is 6.1.0 (found "${manifest.version}")`);
+  assert(manifest.version === "6.0.0", `manifest.json version is 6.0.0 (found "${manifest.version}")`);
 
   const configContent = fs.readFileSync(path.resolve(process.cwd(), "src/config.ts"), "utf-8");
-  assert(configContent.includes('"6.1.0"'), `src/config.ts exports BASE_VERSION 6.1.0`);
+  assert(configContent.includes('"6.0.0"'), `src/config.ts exports BASE_VERSION 6.0.0`);
 
   const versionApiContent = fs.readFileSync(path.resolve(process.cwd(), "api/_lib/version.ts"), "utf-8");
-  assert(versionApiContent.includes('baseVersion = "6.1.0"'), `api/_lib/version.ts defaults to baseVersion 6.1.0`);
+  assert(versionApiContent.includes('baseVersion = "6.0.0"'), `api/_lib/version.ts defaults to baseVersion 6.0.0`);
 }
 
 async function runAllTests() {
   console.log("===================================================================");
-  console.log("  RELEASE 6.1.0 — PERMANENT TOPIC NOTES ARCHITECTURE TEST SUITE");
+  console.log("  RELEASE 6.0.0 — PERMANENT TOPIC NOTES ARCHITECTURE TEST SUITE");
   console.log("===================================================================");
 
   try {
@@ -305,7 +305,7 @@ async function runAllTests() {
     console.error("❌ Some regression tests failed!");
     process.exit(1);
   } else {
-    console.log("✨ ALL 6.1.0 ARCHITECTURE-LEVEL GUARANTEES VERIFIED SUCCESSFULLY.\n");
+    console.log("✨ ALL 6.0.0 ARCHITECTURE-LEVEL GUARANTEES VERIFIED SUCCESSFULLY.\n");
     process.exit(0);
   }
 }
