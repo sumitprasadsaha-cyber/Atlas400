@@ -2,10 +2,29 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { apiApp } from "./src/apiApp";
-import { getR2ServerConfig, isR2Configured } from "./src/lib/r2Server";
+import { getR2ServerConfig, validateR2Environment, getR2S3Client } from "./src/lib/r2Server";
 
 const app = express();
 const PORT = 3000;
+
+// Validate Cloudflare R2 Environment Variables on startup
+try {
+  console.log("[Server-Startup] Validating Cloudflare R2 environment configuration...");
+  const validation = validateR2Environment(false);
+  if (!validation.valid) {
+    console.warn(`[Server-Startup] Warning: Missing Cloudflare R2 variables: ${validation.missing.join(", ")}`);
+  } else {
+    // Attempt S3Client initialization
+    try {
+      getR2S3Client();
+      console.log(`[Server-Startup] Cloudflare R2 S3Client successfully initialized for bucket "${validation.config.bucket}"`);
+    } catch (s3InitErr: any) {
+      console.error("[Server-Startup] Failed to initialize Cloudflare R2 S3Client:", s3InitErr.message);
+    }
+  }
+} catch (envErr: any) {
+  console.error("[Server-Startup] R2 Environment Validation Exception:", envErr.message);
+}
 
 // Mount all API routes
 app.use(apiApp);
@@ -33,7 +52,7 @@ async function startServer() {
 
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`[Server] Production-ready Applet running on http://localhost:${PORT}`);
-      console.log(`[Server] Storage Backend: ${isR2Configured() ? "Cloudflare R2" : "Local Storage (R2 Fallback)"} (${getR2ServerConfig().bucket})`);
+      console.log(`[Server] Cloudflare R2 Bucket: ${getR2ServerConfig().bucket}`);
     });
   } catch (error) {
     console.error("[Server] Fatal bootstrap error:", error);

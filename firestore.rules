@@ -154,6 +154,33 @@ service cloud.firestore {
     match /content_sync_signals/{document=**} {
       allow read, write: if isSignedIn();
     }
+
+    // CURRICULUM HIERARCHY - School and UPSC classes, subjects, chapters, modules
+    match /curriculum_hierarchy/{docId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // SUBJECTS & CLASSES (Direct collections)
+    match /subjects/{subjectId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /classes/{classId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /chapters/{chapterId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /modules/{moduleId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
   }
 }
 

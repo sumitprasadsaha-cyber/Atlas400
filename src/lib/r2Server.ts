@@ -12,137 +12,18 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Readable } from "stream";
-import fs from "fs";
-import path from "path";
-import crypto from "crypto";
 
 export interface R2Config {
   accountId: string;
   accessKeyId: string;
   secretAccessKey: string;
   bucket: string;
-  endpoint?: string;
+  endpoint: string;
   publicUrl?: string;
 }
 
 let s3ClientInstance: S3Client | null = null;
 let lastS3Endpoint: string = "";
-let r2AuthFailed: boolean = false;
-let lastR2AuthErrorTime: number = 0;
-const R2_AUTH_RETRY_INTERVAL_MS = 120000; // Retry checking R2 after 2 minutes
-
-/**
- * Marks R2 credentials as having an authentication/signature issue, switching to local disk fallback.
- */
-export function markR2AuthFailed(reason?: string): void {
-  if (!r2AuthFailed) {
-    console.info(
-      `[R2Server] Cloudflare R2 credentials authentication notice${
-        reason ? ` (${reason})` : ""
-      }. Gracefully routing storage operations to persistent local storage fallback.`
-    );
-  }
-  r2AuthFailed = true;
-  lastR2AuthErrorTime = Date.now();
-}
-
-/**
- * Checks whether an error is related to authentication, signature, or invalid credentials.
- */
-function isAuthError(err: any): boolean {
-  if (!err) return false;
-  const msg = String(err.message || "").toLowerCase();
-  const name = String(err.name || "").toLowerCase();
-  const code = String(err.Code || err.code || err?.$metadata?.errorCode || "").toLowerCase();
-  const status = Number(err?.$metadata?.httpStatusCode || err?.status || err?.statusCode || 0);
-
-  return (
-    status === 401 ||
-    status === 403 ||
-    (status === 400 && (name.includes("auth") || msg.includes("auth") || msg.includes("credential"))) ||
-    msg.includes("unauthorized") ||
-    msg.includes("forbidden") ||
-    msg.includes("signature") ||
-    msg.includes("secret access key") ||
-    msg.includes("credential") ||
-    msg.includes("accessdenied") ||
-    msg.includes("access denied") ||
-    msg.includes("invalidaccesskeyid") ||
-    msg.includes("invalid access key") ||
-    msg.includes("invalidtoken") ||
-    msg.includes("invalid token") ||
-    name.includes("unauthorized") ||
-    name.includes("forbidden") ||
-    name.includes("signature") ||
-    name.includes("auth") ||
-    name.includes("accessdenied") ||
-    code.includes("unauthorized") ||
-    code.includes("forbidden") ||
-    code.includes("signature") ||
-    code.includes("accessdenied") ||
-    code.includes("invalidaccesskeyid")
-  );
-}
-
-/**
- * Dynamically resolves a writable local storage directory, respecting serverless /tmp boundaries.
- */
-function getLocalStorageDir(): string {
-  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT) {
-    return path.join(process.env.TMPDIR || "/tmp", "academy_storage");
-  }
-  return path.join(process.cwd(), "data", "storage");
-}
-
-/**
- * Ensures the target directory exists synchronously.
- */
-function ensureDirectoryExists(dirPath: string): void {
-  try {
-    if (!fs.existsSync(dirPath)) {
-      fs.mkdirSync(dirPath, { recursive: true });
-    }
-  } catch (err) {
-    console.error(`[R2Server] Failed to create directory: ${dirPath}`, err);
-  }
-}
-
-/**
- * Resolves a safe filesystem path within the local storage directory to prevent path traversal.
- */
-function getSafeLocalPath(bucket: string, key: string): string {
-  const rootDir = getLocalStorageDir();
-  const cleanBucket = (bucket || "academy-connect-files").replace(/[^a-zA-Z0-9._-]/g, "_");
-  const cleanKey = key.replace(/^\/+/, "").replace(/\.\./g, "_");
-  const fullPath = path.join(rootDir, cleanBucket, cleanKey);
-  
-  // Guard against path traversal
-  const normalizedFull = path.normalize(fullPath);
-  const normalizedRoot = path.normalize(rootDir);
-  if (!normalizedFull.startsWith(normalizedRoot)) {
-    throw new Error("Invalid storage path: Directory traversal detected.");
-  }
-  
-  return normalizedFull;
-}
-
-/**
- * Returns MIME type based on file extension.
- */
-export function getMimeTypeFromKey(key: string): string {
-  const lower = key.toLowerCase().split("?")[0].split("#")[0];
-  if (lower.endsWith(".pdf")) return "application/pdf";
-  if (lower.endsWith(".png")) return "image/png";
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
-  if (lower.endsWith(".webp")) return "image/webp";
-  if (lower.endsWith(".heic")) return "image/heic";
-  if (lower.endsWith(".heif")) return "image/heif";
-  if (lower.endsWith(".gif")) return "image/gif";
-  if (lower.endsWith(".svg")) return "image/svg+xml";
-  if (lower.endsWith(".json")) return "application/json";
-  if (lower.endsWith(".txt")) return "text/plain";
-  return "application/octet-stream";
-}
 
 /**
  * Cleans an environment variable string, stripping whitespace, quotes, and carriage returns.
@@ -150,7 +31,6 @@ export function getMimeTypeFromKey(key: string): string {
 function cleanEnvString(val?: string): string {
   if (!val) return "";
   let clean = String(val).trim().replace(/\r/g, "");
-  // Strip surrounding quotes
   if (
     (clean.startsWith('"') && clean.endsWith('"')) ||
     (clean.startsWith("'") && clean.endsWith("'"))
@@ -158,31 +38,6 @@ function cleanEnvString(val?: string): string {
     clean = clean.slice(1, -1).trim().replace(/\r/g, "");
   }
   return clean;
-}
-
-/**
- * Checks whether a credential value is an obvious placeholder or dummy string.
- */
-function isPlaceholder(val: string): boolean {
-  if (!val) return true;
-  const lower = val.toLowerCase().trim();
-  return (
-    lower.includes("placeholder") ||
-    lower.includes("your_") ||
-    lower.includes("example") ||
-    lower.includes("dummy") ||
-    lower.includes("my_access") ||
-    lower.includes("my_secret") ||
-    lower.includes("replace_me") ||
-    lower.includes("change_me") ||
-    lower.includes("<") ||
-    lower.includes(">") ||
-    lower === "none" ||
-    lower === "null" ||
-    lower === "undefined" ||
-    lower === "xxx" ||
-    lower.length < 5
-  );
 }
 
 /**
@@ -268,31 +123,79 @@ export function getR2ServerConfig(): R2Config {
 }
 
 /**
+ * Validates all required Cloudflare R2 environment variables.
+ * Aborts / throws if any are missing.
+ */
+export function validateR2Environment(abortOnError: boolean = false): {
+  valid: boolean;
+  missing: string[];
+  config: Partial<R2Config>;
+} {
+  const config = getR2ServerConfig();
+  const missing: string[] = [];
+
+  if (!config.accountId) missing.push("R2_ACCOUNT_ID");
+  if (!config.accessKeyId) missing.push("R2_ACCESS_KEY_ID");
+  if (!config.secretAccessKey) missing.push("R2_SECRET_ACCESS_KEY");
+  if (!config.endpoint) missing.push("R2_ENDPOINT");
+  if (!config.bucket) missing.push("R2_BUCKET");
+
+  const valid = missing.length === 0;
+
+  console.log(`[R2Server-Startup] Environment Validation:`, {
+    valid,
+    missing,
+    accountId: config.accountId ? `${config.accountId.substring(0, 4)}...${config.accountId.substring(config.accountId.length - 4)}` : "MISSING",
+    accessKeyId: config.accessKeyId ? `${config.accessKeyId.substring(0, 4)}...` : "MISSING",
+    secretAccessKey: config.secretAccessKey ? `[EXISTS len=${config.secretAccessKey.length}]` : "MISSING",
+    endpoint: config.endpoint || "MISSING",
+    bucket: config.bucket || "MISSING",
+    publicUrl: config.publicUrl || "(none)",
+  });
+
+  if (!valid && abortOnError) {
+    const errMsg = `[FATAL] Cloudflare R2 Startup Abort: Missing required environment variables: ${missing.join(", ")}`;
+    console.error(errMsg);
+    throw new Error(errMsg);
+  }
+
+  return {
+    valid,
+    missing,
+    config,
+  };
+}
+
+/**
  * Checks if real Cloudflare R2 credentials and endpoint are fully provided.
  */
 export function isR2Configured(): boolean {
   const config = getR2ServerConfig();
-  const hasCreds = Boolean(
+  return Boolean(
+    config.accountId &&
     config.accessKeyId &&
-    !isPlaceholder(config.accessKeyId) &&
     config.secretAccessKey &&
-    !isPlaceholder(config.secretAccessKey) &&
     config.endpoint &&
-    config.endpoint.startsWith("http")
+    config.bucket
   );
+}
 
-  if (!hasCreds) return false;
-
-  // If previous authentication failed, route to local storage fallback until retry interval expires
-  if (r2AuthFailed) {
-    if (Date.now() - lastR2AuthErrorTime > R2_AUTH_RETRY_INTERVAL_MS) {
-      r2AuthFailed = false;
-    } else {
-      return false;
-    }
-  }
-
-  return true;
+/**
+ * Returns MIME type based on file extension.
+ */
+export function getMimeTypeFromKey(key: string): string {
+  const lower = key.toLowerCase().split("?")[0].split("#")[0];
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".heic")) return "image/heic";
+  if (lower.endsWith(".heif")) return "image/heif";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  if (lower.endsWith(".json")) return "application/json";
+  if (lower.endsWith(".txt")) return "text/plain";
+  return "application/octet-stream";
 }
 
 /**
@@ -302,12 +205,7 @@ export function getR2S3Client(): S3Client {
   const config = getR2ServerConfig();
   if (!config.accessKeyId || !config.secretAccessKey || !config.endpoint) {
     throw new Error(
-      `Cloudflare R2 is not fully configured. Missing credentials or endpoint: ${JSON.stringify({
-        hasAccessKey: Boolean(config.accessKeyId),
-        hasSecretKey: Boolean(config.secretAccessKey),
-        hasEndpoint: Boolean(config.endpoint),
-        bucket: config.bucket,
-      })}`
+      `Cloudflare R2 is not configured. Missing required credentials or endpoint. Expected R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT, R2_BUCKET.`
     );
   }
 
@@ -319,61 +217,19 @@ export function getR2S3Client(): S3Client {
         accessKeyId: config.accessKeyId,
         secretAccessKey: config.secretAccessKey,
       },
-      forcePathStyle: true, // Cloudflare R2 requires path-style routing
+      forcePathStyle: true,
       requestChecksumCalculation: "WHEN_REQUIRED",
       responseChecksumValidation: "WHEN_REQUIRED",
     });
     lastS3Endpoint = config.endpoint;
+    console.log(`[R2Server] S3Client initialized successfully for endpoint: "${config.endpoint}", bucket: "${config.bucket}"`);
   }
   return s3ClientInstance;
 }
 
 /**
- * Saves buffer or stream to local storage directory.
- */
-async function saveToLocalStorage(
-  bucket: string,
-  key: string,
-  body: Buffer | Uint8Array | string | Readable
-): Promise<string> {
-  try {
-    const filePath = getSafeLocalPath(bucket, key);
-    ensureDirectoryExists(path.dirname(filePath));
-
-    if (body instanceof Readable) {
-      return await new Promise<string>((resolve, reject) => {
-        const writeStream = fs.createWriteStream(filePath);
-        const hash = crypto.createHash("md5");
-        body.on("data", (chunk) => hash.update(chunk));
-        body.pipe(writeStream);
-        writeStream.on("finish", () => resolve(`"${hash.digest("hex")}"`));
-        writeStream.on("error", (err) => {
-          console.warn("[R2Server] Stream disk write failed:", err);
-          resolve(`"${Date.now()}"`);
-        });
-      });
-    } else {
-      const buffer = Buffer.isBuffer(body)
-        ? body
-        : typeof body === "string"
-        ? Buffer.from(body, "utf-8")
-        : Buffer.from(body);
-      try {
-        await fs.promises.writeFile(filePath, buffer);
-      } catch (fsErr) {
-        console.warn("[R2Server] Local filesystem write warning:", fsErr);
-      }
-      const hash = crypto.createHash("md5").update(buffer).digest("hex");
-      return `"${hash}"`;
-    }
-  } catch (err) {
-    console.warn("[R2Server] saveToLocalStorage caught non-fatal error:", err);
-    return `"${Date.now()}"`;
-  }
-}
-
-/**
- * Uploads an object directly to Cloudflare R2 bucket, or smoothly falls back to local disk storage.
+ * Uploads an object directly to Cloudflare R2 bucket.
+ * Logs PutObject request, response, and throws on failure (NO silent fallbacks).
  */
 export async function uploadObjectToR2(params: {
   bucket?: string;
@@ -384,139 +240,157 @@ export async function uploadObjectToR2(params: {
   metadata?: Record<string, string>;
 }): Promise<{ bucket: string; key: string; etag?: string }> {
   const config = getR2ServerConfig();
-  const bucketName = params.bucket || config.bucket;
+  const bucketName = (params.bucket || config.bucket || "academy-connect-files").trim();
   const cleanKey = params.key.replace(/^\/+/, "");
+  const contentType = params.contentType || getMimeTypeFromKey(cleanKey);
+  const cacheControl = params.cacheControl || "public, max-age=31536000, immutable";
 
-  if (isR2Configured()) {
-    try {
-      const client = getR2S3Client();
-      const input: PutObjectCommandInput = {
-        Bucket: bucketName,
-        Key: cleanKey,
-        Body: params.body,
-        ContentType: params.contentType || getMimeTypeFromKey(cleanKey),
-        CacheControl: params.cacheControl || "public, max-age=31536000, immutable",
-        Metadata: params.metadata,
-      };
+  const bodyLength = Buffer.isBuffer(params.body)
+    ? params.body.length
+    : typeof params.body === "string"
+    ? Buffer.byteLength(params.body)
+    : undefined;
 
-      const command = new PutObjectCommand(input);
-      const response = await client.send(command);
-
-      console.log(`[R2Server] PutObject successful to Cloudflare R2: bucket="${bucketName}", key="${cleanKey}", ETag=${response.ETag}`);
-
-      // Also create local cache backup in background if body is a Buffer
-      if (Buffer.isBuffer(params.body)) {
-        saveToLocalStorage(bucketName, cleanKey, params.body).catch(() => {});
-      }
-
-      return {
-        bucket: bucketName,
-        key: cleanKey,
-        etag: response.ETag,
-      };
-    } catch (err: any) {
-      if (isAuthError(err)) {
-        markR2AuthFailed(err?.message);
-      } else {
-        console.warn(`[R2Server] Cloudflare R2 upload fallback for "${cleanKey}":`, err?.message || err);
-      }
-      const etag = await saveToLocalStorage(bucketName, cleanKey, params.body);
-      return {
-        bucket: bucketName,
-        key: cleanKey,
-        etag,
-      };
-    }
-  }
-
-  // Cloudflare R2 credentials not active: Use seamless local disk storage
-  const etag = await saveToLocalStorage(bucketName, cleanKey, params.body);
-  return {
+  console.log(`[R2Server-Operation] PutObject START:`, {
     bucket: bucketName,
     key: cleanKey,
-    etag,
+    contentType,
+    bodyLengthBytes: bodyLength,
+    endpoint: config.endpoint,
+  });
+
+  const client = getR2S3Client();
+  const input: PutObjectCommandInput = {
+    Bucket: bucketName,
+    Key: cleanKey,
+    Body: params.body,
+    ContentType: contentType,
+    CacheControl: cacheControl,
+    Metadata: params.metadata,
   };
-}
 
-/**
- * Generates an exhaustive list of candidate storage keys to resolve legacy paths,
- * folder renames (Module <-> Chapter), prefix variations, and filename mismatches.
- */
-export function generateCandidateKeys(rawKey: string): string[] {
-  if (!rawKey) return [];
-  const clean = rawKey.trim().replace(/^\/+/, "");
-  if (!clean) return [];
-
-  const candidates = new Set<string>();
-
-  // 1. Exact clean key
-  candidates.add(clean);
-
-  // 2. Decoded URI key
   try {
-    const decoded = decodeURIComponent(clean);
-    if (decoded !== clean) candidates.add(decoded);
-  } catch {}
+    const command = new PutObjectCommand(input);
+    const response = await client.send(command);
 
-  // 3. Module <-> Chapter swap (for School renames)
-  if (clean.includes("Chapter_") || clean.includes("chapter_") || clean.includes("Chapter ") || clean.includes("chapter ")) {
-    candidates.add(clean.replace(/Chapter_/g, "Module_").replace(/chapter_/g, "module_").replace(/Chapter /g, "Module "));
-  }
-  if (clean.includes("Module_") || clean.includes("module_") || clean.includes("Module ") || clean.includes("module ")) {
-    candidates.add(clean.replace(/Module_/g, "Chapter_").replace(/module_/g, "chapter_").replace(/Module /g, "Chapter "));
-  }
+    console.log(`[R2Server-Operation] PutObject SUCCESS:`, {
+      bucket: bucketName,
+      key: cleanKey,
+      etag: response.ETag,
+      httpStatusCode: response.$metadata?.httpStatusCode || 200,
+      requestId: response.$metadata?.requestId || response.$metadata?.cfId,
+    });
 
-  // 4. notes/ prefix variants
-  if (!clean.startsWith("notes/")) {
-    candidates.add(`notes/${clean}`);
-  } else {
-    candidates.add(clean.substring(6));
-  }
+    return {
+      bucket: bucketName,
+      key: cleanKey,
+      etag: response.ETag,
+    };
+  } catch (err: any) {
+    const errorDetails = {
+      bucket: bucketName,
+      key: cleanKey,
+      errorName: err?.name || "Error",
+      errorCode: err?.Code || err?.code || err?.$metadata?.errorCode,
+      errorMessage: err?.message || String(err),
+      httpStatusCode: err?.$metadata?.httpStatusCode || 500,
+    };
 
-  // 5. class_notes/ variants
-  if (clean.startsWith("Class_") || clean.startsWith("class_")) {
-    candidates.add(`class_notes/${clean}`);
+    console.error(`[R2Server-Operation] PutObject FAILED:`, errorDetails);
+    throw new Error(
+      `Cloudflare R2 PutObject failed (${errorDetails.errorName}: ${errorDetails.errorMessage}, HTTP ${errorDetails.httpStatusCode}). Bucket: "${bucketName}", Key: "${cleanKey}".`
+    );
   }
-  if (clean.startsWith("class_notes/")) {
-    candidates.add(clean.substring("class_notes/".length));
-  }
-
-  // 6. Filename variants (note.pdf vs original filename or document.pdf)
-  const lastSlash = clean.lastIndexOf("/");
-  if (lastSlash !== -1) {
-    const dirName = clean.substring(0, lastSlash);
-    const baseName = clean.substring(lastSlash + 1);
-    if (baseName.toLowerCase() !== "note.pdf") {
-      candidates.add(`${dirName}/note.pdf`);
-    }
-    if (baseName.toLowerCase() !== "note.png") {
-      candidates.add(`${dirName}/note.png`);
-    }
-    if (baseName.toLowerCase() !== "note.jpg") {
-      candidates.add(`${dirName}/note.jpg`);
-    }
-    if (baseName.toLowerCase() !== "document.pdf") {
-      candidates.add(`${dirName}/document.pdf`);
-    }
-  }
-
-  // 7. Space vs Underscore variants
-  if (clean.includes(" ")) {
-    candidates.add(clean.replace(/ /g, "_"));
-  }
-  if (clean.includes("_")) {
-    candidates.add(clean.replace(/_/g, " "));
-  }
-
-  return Array.from(candidates);
 }
 
 /**
- * Retrieves an object stream from Cloudflare R2 bucket or local disk fallback.
+ * Checks metadata / existence of an object in Cloudflare R2 bucket.
+ * Logs HeadObject request, response, and returns exact status.
  */
+export async function headObjectFromR2(params: {
+  bucket?: string;
+  key: string;
+}): Promise<{
+  exists: boolean;
+  contentLength?: number;
+  contentType?: string;
+  lastModified?: Date;
+  etag?: string;
+  metadata?: Record<string, string>;
+  resolvedKey?: string;
+  error?: string;
+}> {
+  const config = getR2ServerConfig();
+  const bucketName = (params.bucket || config.bucket || "academy-connect-files").trim();
+  const cleanKey = (params.key || "").trim().replace(/^\/+/, "");
+
+  if (!cleanKey) {
+    return { exists: false };
+  }
+
+  console.log(`[R2Server-Operation] HeadObject START:`, {
+    bucket: bucketName,
+    key: cleanKey,
+  });
+
+  try {
+    const client = getR2S3Client();
+    const command = new HeadObjectCommand({
+      Bucket: bucketName,
+      Key: cleanKey,
+    });
+    const response = await client.send(command);
+
+    console.log(`[R2Server-Operation] HeadObject SUCCESS:`, {
+      bucket: bucketName,
+      key: cleanKey,
+      contentLength: response.ContentLength,
+      contentType: response.ContentType,
+      etag: response.ETag,
+      httpStatusCode: response.$metadata?.httpStatusCode || 200,
+    });
+
+    return {
+      exists: true,
+      contentLength: response.ContentLength,
+      contentType: response.ContentType || getMimeTypeFromKey(cleanKey),
+      lastModified: response.LastModified,
+      etag: response.ETag,
+      metadata: response.Metadata,
+      resolvedKey: cleanKey,
+    };
+  } catch (err: any) {
+    const isNotFound =
+      err?.name === "NoSuchKey" ||
+      err?.name === "NotFound" ||
+      err?.$metadata?.httpStatusCode === 404 ||
+      err?.code === "NoSuchKey" ||
+      err?.code === "NotFound";
+
+    if (isNotFound) {
+      console.log(`[R2Server-Operation] HeadObject NOT_FOUND: bucket="${bucketName}", key="${cleanKey}"`);
+      return { exists: false, resolvedKey: cleanKey };
+    }
+
+    console.error(`[R2Server-Operation] HeadObject ERROR:`, {
+      bucket: bucketName,
+      key: cleanKey,
+      errorName: err?.name,
+      errorMessage: err?.message,
+      httpStatusCode: err?.$metadata?.httpStatusCode,
+    });
+
+    return {
+      exists: false,
+      resolvedKey: cleanKey,
+      error: err?.message || String(err),
+    };
+  }
+}
+
 /**
- * Fetches an object stream directly from Cloudflare R2 bucket or local disk fallback.
- * Strictly O(1) single-key retrieval.
+ * Downloads an object stream from Cloudflare R2 bucket.
+ * Logs GetObject request, response, and throws on failure.
  */
 export async function getObjectFromR2(params: {
   bucket?: string;
@@ -530,139 +404,77 @@ export async function getObjectFromR2(params: {
   lastModified?: Date;
   etag?: string;
   metadata?: Record<string, string>;
-  resolvedKey?: string;
+  resolvedKey: string;
 }> {
   const config = getR2ServerConfig();
-  const bucketName = params.bucket || config.bucket;
+  const bucketName = (params.bucket || config.bucket || "academy-connect-files").trim();
   const cleanKey = (params.key || "").trim().replace(/^\/+/, "");
 
-  if (!cleanKey) {
-    return { body: null, resolvedKey: "" };
-  }
-
-  const maskedAccountId = config.accountId ? `${config.accountId.slice(0, 4)}...${config.accountId.slice(-4)}` : "(not-set)";
-  const r2Configured = isR2Configured();
-
-  console.log("[R2Server-Diagnostic] Pre-GetObjectCommand Check:", {
-    bucketName,
-    endpoint: config.endpoint,
-    accountIdMasked: maskedAccountId,
-    region: "auto",
-    exactKey: cleanKey,
-    keyLength: cleanKey.length,
-    keyJsonStringified: JSON.stringify(cleanKey),
-    isR2Configured: r2Configured,
-    willAttemptR2: r2Configured,
-    localFallbackAvailable: true,
+  console.log(`[R2Server-Operation] GetObject START:`, {
+    bucket: bucketName,
+    key: cleanKey,
+    range: params.range,
   });
 
-  if (r2Configured) {
-    try {
-      const client = getR2S3Client();
-      const input: GetObjectCommandInput = {
-        Bucket: bucketName,
-        Key: cleanKey,
-        Range: params.range,
-      };
+  const client = getR2S3Client();
+  const input: GetObjectCommandInput = {
+    Bucket: bucketName,
+    Key: cleanKey,
+    Range: params.range,
+  };
 
-      const command = new GetObjectCommand(input);
-      const response = await client.send(command);
-
-      console.log("[R2Server-Diagnostic] Post-GetObjectCommand SUCCESS:", {
-        httpStatus: response.$metadata?.httpStatusCode || 200,
-        requestId: response.$metadata?.requestId || response.$metadata?.cfId || "(none)",
-        exactKey: cleanKey,
-        contentLength: response.ContentLength,
-        contentType: response.ContentType,
-        etag: response.ETag,
-      });
-
-      return {
-        body: (response.Body as unknown as Readable) || null,
-        contentType: response.ContentType || getMimeTypeFromKey(cleanKey),
-        contentLength: response.ContentLength,
-        contentRange: response.ContentRange,
-        lastModified: response.LastModified,
-        etag: response.ETag,
-        metadata: response.Metadata,
-        resolvedKey: cleanKey,
-      };
-    } catch (err: any) {
-      const isNotFound =
-        err?.name === "NoSuchKey" ||
-        err?.name === "NotFound" ||
-        err?.name === "UnknownError" ||
-        err?.$metadata?.httpStatusCode === 404 ||
-        err?.code === "NoSuchKey" ||
-        err?.code === "NotFound" ||
-        (err?.message && (err.message.includes("NoSuchKey") || err.message.includes("NotFound") || err.message.includes("UnknownError")));
-
-      if (isNotFound) {
-        console.log("[R2Server] GetObject: Key not present in remote R2, checking local fallback:", {
-          exactKey: cleanKey,
-          bucketName,
-        });
-      } else if (isAuthError(err)) {
-        markR2AuthFailed(err?.name || err?.message || "Unauthorized");
-      } else {
-        console.warn("[R2Server] GetObject unexpected error:", {
-          httpStatus: err?.$metadata?.httpStatusCode || err?.status || 500,
-          requestId: err?.$metadata?.requestId || err?.$metadata?.cfId || "(none)",
-          errorName: err?.name || "Error",
-          errorCode: err?.code || err?.$metadata?.errorCode || err?.name || "(none)",
-          message: err?.message || String(err),
-          exactKey: cleanKey,
-          bucketName,
-        });
-      }
-    }
-  }
-
-  // Check local filesystem storage fallback
   try {
-    const filePath = getSafeLocalPath(bucketName, cleanKey);
-    if (fs.existsSync(filePath)) {
-      const stat = await fs.promises.stat(filePath);
-      const contentType = getMimeTypeFromKey(cleanKey);
-      const etag = `"${stat.size}-${stat.mtimeMs}"`;
+    const command = new GetObjectCommand(input);
+    const response = await client.send(command);
 
-      if (params.range && stat.size > 0) {
-        const parts = params.range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10) || 0;
-        const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
-        const chunkSize = end - start + 1;
-        const fileStream = fs.createReadStream(filePath, { start, end });
+    console.log(`[R2Server-Operation] GetObject SUCCESS:`, {
+      bucket: bucketName,
+      key: cleanKey,
+      contentLength: response.ContentLength,
+      contentType: response.ContentType,
+      etag: response.ETag,
+      httpStatusCode: response.$metadata?.httpStatusCode || 200,
+    });
 
-        return {
-          body: fileStream,
-          contentType,
-          contentLength: chunkSize,
-          contentRange: `bytes ${start}-${end}/${stat.size}`,
-          lastModified: stat.mtime,
-          etag,
-          resolvedKey: cleanKey,
-        };
-      }
+    return {
+      body: (response.Body as unknown as Readable) || null,
+      contentType: response.ContentType || getMimeTypeFromKey(cleanKey),
+      contentLength: response.ContentLength,
+      contentRange: response.ContentRange,
+      lastModified: response.LastModified,
+      etag: response.ETag,
+      metadata: response.Metadata,
+      resolvedKey: cleanKey,
+    };
+  } catch (err: any) {
+    const isNotFound =
+      err?.name === "NoSuchKey" ||
+      err?.name === "NotFound" ||
+      err?.$metadata?.httpStatusCode === 404 ||
+      err?.code === "NoSuchKey" ||
+      err?.code === "NotFound";
 
-      return {
-        body: fs.createReadStream(filePath),
-        contentType,
-        contentLength: stat.size,
-        lastModified: stat.mtime,
-        etag,
-        resolvedKey: cleanKey,
-      };
+    if (isNotFound) {
+      console.log(`[R2Server-Operation] GetObject NOT_FOUND: bucket="${bucketName}", key="${cleanKey}"`);
+      return { body: null, resolvedKey: cleanKey };
     }
-  } catch (localErr) {
-    // Ignore local error
-  }
 
-  return { body: null, resolvedKey: cleanKey };
+    console.error(`[R2Server-Operation] GetObject ERROR:`, {
+      bucket: bucketName,
+      key: cleanKey,
+      errorName: err?.name,
+      errorMessage: err?.message,
+      httpStatusCode: err?.$metadata?.httpStatusCode,
+    });
+
+    throw new Error(
+      `Cloudflare R2 GetObject failed: ${err?.name || "Error"} (${err?.message || err}). Bucket: "${bucketName}", Key: "${cleanKey}".`
+    );
+  }
 }
 
 /**
- * Generates a presigned URL or proxy streaming URL for downloading or uploading to Cloudflare R2 / Local Storage.
- * Deterministic, instant O(1) presigned URL generation.
+ * Generates a presigned URL for downloading or uploading to Cloudflare R2.
  */
 export async function generateR2SignedUrl(params: {
   bucket?: string;
@@ -672,50 +484,40 @@ export async function generateR2SignedUrl(params: {
   contentType?: string;
 }): Promise<string> {
   const config = getR2ServerConfig();
-  const bucketName = params.bucket || config.bucket || "academy-connect-files";
+  const bucketName = (params.bucket || config.bucket || "academy-connect-files").trim();
   const cleanKey = (params.key || "").trim().replace(/^\/+/, "");
   const expiresIn = params.expiresIn || 3600;
   const operation = params.operation || "getObject";
   const effectiveMime = params.contentType || getMimeTypeFromKey(cleanKey);
 
-  if (isR2Configured()) {
-    try {
-      const client = getR2S3Client();
-      if (operation === "putObject") {
-        const command = new PutObjectCommand({
-          Bucket: bucketName,
-          Key: cleanKey,
-          ContentType: effectiveMime,
-        });
-        return await getSignedUrl(client, command, { expiresIn });
-      }
+  console.log(`[R2Server-Operation] GenerateSignedUrl:`, {
+    bucket: bucketName,
+    key: cleanKey,
+    operation,
+    expiresIn,
+  });
 
-      // Generate direct pre-signed URL with inline Content-Disposition so browsers/mobile OS view natively
-      const command = new GetObjectCommand({
-        Bucket: bucketName,
-        Key: cleanKey,
-        ResponseContentDisposition: "inline",
-        ResponseContentType: effectiveMime,
-      });
-      return await getSignedUrl(client, command, { expiresIn });
-    } catch (err: any) {
-      if (isAuthError(err)) {
-        markR2AuthFailed(err?.message);
-      }
-    }
+  const client = getR2S3Client();
+  if (operation === "putObject") {
+    const command = new PutObjectCommand({
+      Bucket: bucketName,
+      Key: cleanKey,
+      ContentType: effectiveMime,
+    });
+    return await getSignedUrl(client, command, { expiresIn });
   }
 
-  // Fallback to public URL if configured and operation is getObject
-  if (config.publicUrl && operation === "getObject") {
-    return `${config.publicUrl.replace(/\/+$/, "")}/${cleanKey}`;
-  }
-
-  // Default reliable fallback: streaming download proxy
-  return `/api/storage?action=download&bucket=${encodeURIComponent(bucketName)}&key=${encodeURIComponent(cleanKey)}`;
+  const command = new GetObjectCommand({
+    Bucket: bucketName,
+    Key: cleanKey,
+    ResponseContentDisposition: "inline",
+    ResponseContentType: effectiveMime,
+  });
+  return await getSignedUrl(client, command, { expiresIn });
 }
 
 /**
- * Deletes an object from Cloudflare R2 bucket and local storage.
+ * Deletes an object from Cloudflare R2 bucket.
  */
 export async function deleteObjectFromR2(params: {
   bucket?: string;
@@ -729,45 +531,44 @@ export async function deleteObjectFromR2(params: {
     return { success: true, bucket: bucketName, key: "" };
   }
 
-  if (isR2Configured()) {
-    try {
-      const client = getR2S3Client();
-      const input: DeleteObjectCommandInput = {
-        Bucket: bucketName,
-        Key: cleanKey,
-      };
-      const command = new DeleteObjectCommand(input);
-      await client.send(command);
-      console.log(`[R2Server] Successfully deleted object from Cloudflare R2: bucket="${bucketName}", key="${cleanKey}"`);
-    } catch (err: any) {
-      if (isAuthError(err)) {
-        markR2AuthFailed(err?.name || err?.message || "Unauthorized");
-      } else {
-        console.warn(`[R2Server] R2 DeleteObject notice for "${cleanKey}":`, err?.message || err);
-      }
-    }
-  }
-
-  // Also remove from local disk storage if exists
-  try {
-    const filePath = getSafeLocalPath(bucketName, cleanKey);
-    if (fs.existsSync(filePath)) {
-      await fs.promises.unlink(filePath);
-      console.log(`[R2Server] Removed local storage copy: ${cleanKey}`);
-    }
-  } catch (localErr) {
-    // Ignore local deletion error
-  }
-
-  return {
-    success: true,
+  console.log(`[R2Server-Operation] DeleteObject START:`, {
     bucket: bucketName,
     key: cleanKey,
+  });
+
+  const client = getR2S3Client();
+  const input: DeleteObjectCommandInput = {
+    Bucket: bucketName,
+    Key: cleanKey,
   };
+
+  try {
+    const command = new DeleteObjectCommand(input);
+    const response = await client.send(command);
+
+    console.log(`[R2Server-Operation] DeleteObject SUCCESS:`, {
+      bucket: bucketName,
+      key: cleanKey,
+      httpStatusCode: response.$metadata?.httpStatusCode || 204,
+    });
+
+    return {
+      success: true,
+      bucket: bucketName,
+      key: cleanKey,
+    };
+  } catch (err: any) {
+    console.error(`[R2Server-Operation] DeleteObject ERROR:`, {
+      bucket: bucketName,
+      key: cleanKey,
+      error: err?.message,
+    });
+    throw new Error(`Cloudflare R2 DeleteObject failed for key "${cleanKey}": ${err?.message || err}`);
+  }
 }
 
 /**
- * Deletes multiple objects from Cloudflare R2 bucket and local storage.
+ * Deletes multiple objects from Cloudflare R2 bucket.
  */
 export async function deleteObjectsFromR2(params: {
   bucket?: string;
@@ -781,77 +582,32 @@ export async function deleteObjectsFromR2(params: {
   const config = getR2ServerConfig();
   const bucketName = (params.bucket || config.bucket || "academy-connect-files").trim();
 
-  if (isR2Configured()) {
-    try {
-      const client = getR2S3Client();
-      const command = new DeleteObjectsCommand({
-        Bucket: bucketName,
-        Delete: {
-          Objects: cleanKeys.map((k) => ({ Key: k })),
-          Quiet: false,
-        },
-      });
-      await client.send(command);
-      console.log(`[R2Server] Successfully batch deleted ${cleanKeys.length} objects from Cloudflare R2`);
-    } catch (err: any) {
-      if (isAuthError(err)) {
-        markR2AuthFailed(err?.name || err?.message || "Unauthorized");
-      } else {
-        console.warn(`[R2Server] R2 DeleteObjects notice:`, err?.message || err);
-      }
-    }
-  }
+  console.log(`[R2Server-Operation] DeleteObjects START: count=${cleanKeys.length}, bucket="${bucketName}"`);
 
-  // Also delete from local storage
-  for (const key of cleanKeys) {
-    try {
-      const filePath = getSafeLocalPath(bucketName, key);
-      if (fs.existsSync(filePath)) {
-        await fs.promises.unlink(filePath);
-      }
-    } catch {
-      // ignore
-    }
-  }
+  const client = getR2S3Client();
+  try {
+    const command = new DeleteObjectsCommand({
+      Bucket: bucketName,
+      Delete: {
+        Objects: cleanKeys.map((k) => ({ Key: k })),
+        Quiet: false,
+      },
+    });
+    const response = await client.send(command);
 
-  return {
-    success: true,
-    deleted: cleanKeys,
-  };
+    console.log(`[R2Server-Operation] DeleteObjects SUCCESS: count=${response.Deleted?.length || cleanKeys.length}`);
+    return {
+      success: true,
+      deleted: (response.Deleted || []).map((d) => d.Key!).filter(Boolean),
+    };
+  } catch (err: any) {
+    console.error(`[R2Server-Operation] DeleteObjects ERROR:`, err);
+    throw new Error(`Cloudflare R2 DeleteObjects failed: ${err?.message || err}`);
+  }
 }
 
 /**
- * Recursively lists all files in a local directory.
- */
-async function scanLocalFiles(
-  baseDir: string,
-  currentDir: string = baseDir
-): Promise<Array<{ key: string; size: number; lastModified?: Date; etag?: string }>> {
-  let results: Array<{ key: string; size: number; lastModified?: Date; etag?: string }> = [];
-  if (!fs.existsSync(currentDir)) return results;
-
-  const entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(currentDir, entry.name);
-    if (entry.isDirectory()) {
-      const subResults = await scanLocalFiles(baseDir, fullPath);
-      results = results.concat(subResults);
-    } else if (entry.isFile()) {
-      const relativeKey = path.relative(baseDir, fullPath).replace(/\\/g, "/");
-      const stat = await fs.promises.stat(fullPath);
-      results.push({
-        key: relativeKey,
-        size: stat.size,
-        lastModified: stat.mtime,
-        etag: `"${stat.size}-${stat.mtimeMs}"`,
-      });
-    }
-  }
-  return results;
-}
-
-/**
- * Lists objects in Cloudflare R2 bucket matching a prefix, or falls back to local storage listing.
+ * Lists objects in Cloudflare R2 bucket matching a prefix.
  */
 export async function listObjectsFromR2(params: {
   bucket?: string;
@@ -864,179 +620,53 @@ export async function listObjectsFromR2(params: {
   isTruncated: boolean;
 }> {
   const config = getR2ServerConfig();
-  const bucketName = params.bucket || config.bucket;
+  const bucketName = (params.bucket || config.bucket || "academy-connect-files").trim();
   const cleanPrefix = (params.prefix || "").replace(/^\/+/, "");
 
-  if (isR2Configured()) {
-    try {
-      const client = getR2S3Client();
-      const command = new ListObjectsV2Command({
-        Bucket: bucketName,
-        Prefix: cleanPrefix,
-        MaxKeys: params.maxKeys || 1000,
-        ContinuationToken: params.continuationToken,
-      });
+  console.log(`[R2Server-Operation] ListObjectsV2 START: bucket="${bucketName}", prefix="${cleanPrefix}"`);
 
-      const response = await client.send(command);
-      const objects = (response.Contents || []).map((item) => ({
-        key: item.Key || "",
-        size: item.Size || 0,
-        lastModified: item.LastModified,
-        etag: item.ETag,
-      }));
-
-      return {
-        objects,
-        nextContinuationToken: response.NextContinuationToken,
-        isTruncated: response.IsTruncated || false,
-      };
-    } catch (err: any) {
-      if (isAuthError(err)) {
-        markR2AuthFailed(err?.name || err?.message || "Unauthorized");
-      } else {
-        console.warn(`[R2Server] Cloudflare R2 ListObjects notice (${err.message}), falling back to local file scan...`);
-      }
-    }
-  }
-
-  // Scan local directory
+  const client = getR2S3Client();
   try {
-    const bucketDir = path.join(getLocalStorageDir(), bucketName.replace(/[^a-zA-Z0-9._-]/g, "_"));
-    const allLocal = await scanLocalFiles(bucketDir);
-    const filtered = cleanPrefix
-      ? allLocal.filter((item) => item.key.startsWith(cleanPrefix))
-      : allLocal;
+    const command = new ListObjectsV2Command({
+      Bucket: bucketName,
+      Prefix: cleanPrefix,
+      MaxKeys: params.maxKeys || 1000,
+      ContinuationToken: params.continuationToken,
+    });
 
-    const limit = params.maxKeys || 1000;
+    const response = await client.send(command);
+    const objects = (response.Contents || []).map((item) => ({
+      key: item.Key || "",
+      size: item.Size || 0,
+      lastModified: item.LastModified,
+      etag: item.ETag,
+    }));
+
+    console.log(`[R2Server-Operation] ListObjectsV2 SUCCESS: found ${objects.length} objects`);
+
     return {
-      objects: filtered.slice(0, limit),
-      isTruncated: filtered.length > limit,
+      objects,
+      nextContinuationToken: response.NextContinuationToken,
+      isTruncated: response.IsTruncated || false,
     };
-  } catch (localErr) {
-    return {
-      objects: [],
-      isTruncated: false,
-    };
+  } catch (err: any) {
+    console.error(`[R2Server-Operation] ListObjectsV2 ERROR:`, err);
+    throw new Error(`Cloudflare R2 ListObjects failed: ${err?.message || err}`);
   }
 }
 
 /**
- * Checks metadata/existence of an object in Cloudflare R2 bucket or local disk fallback.
- * Strictly O(1) direct single-key verification.
+ * Helper to generate candidate keys for path fallback.
  */
-export async function headObjectFromR2(params: {
-  bucket?: string;
-  key: string;
-}): Promise<{
-  exists: boolean;
-  contentLength?: number;
-  contentType?: string;
-  lastModified?: Date;
-  etag?: string;
-  metadata?: Record<string, string>;
-  resolvedKey?: string;
-}> {
-  const config = getR2ServerConfig();
-  const bucketName = params.bucket || config.bucket;
-  const cleanKey = (params.key || "").trim().replace(/^\/+/, "");
-
-  if (!cleanKey) {
-    return { exists: false };
-  }
-
-  const maskedAccountId = config.accountId ? `${config.accountId.slice(0, 4)}...${config.accountId.slice(-4)}` : "(not-set)";
-  const r2Configured = isR2Configured();
-
-  console.log("[R2Server-Diagnostic] Pre-HeadObjectCommand Check:", {
-    bucketName,
-    endpoint: config.endpoint,
-    accountIdMasked: maskedAccountId,
-    region: "auto",
-    exactKey: cleanKey,
-    keyLength: cleanKey.length,
-    keyJsonStringified: JSON.stringify(cleanKey),
-    isR2Configured: r2Configured,
-    willAttemptR2: r2Configured,
-    localFallbackAvailable: true,
-  });
-
-  if (r2Configured) {
-    try {
-      const client = getR2S3Client();
-      const command = new HeadObjectCommand({
-        Bucket: bucketName,
-        Key: cleanKey,
-      });
-      const response = await client.send(command);
-
-      console.log("[R2Server-Diagnostic] Post-HeadObjectCommand SUCCESS:", {
-        httpStatus: response.$metadata?.httpStatusCode || 200,
-        requestId: response.$metadata?.requestId || response.$metadata?.cfId || "(none)",
-        exactKey: cleanKey,
-        contentLength: response.ContentLength,
-        contentType: response.ContentType,
-        etag: response.ETag,
-      });
-
-      return {
-        exists: true,
-        contentLength: response.ContentLength,
-        contentType: response.ContentType || getMimeTypeFromKey(cleanKey),
-        lastModified: response.LastModified,
-        etag: response.ETag,
-        metadata: response.Metadata,
-        resolvedKey: cleanKey,
-      };
-    } catch (err: any) {
-      const isNotFound =
-        err?.name === "NoSuchKey" ||
-        err?.name === "NotFound" ||
-        err?.name === "UnknownError" ||
-        err?.$metadata?.httpStatusCode === 404 ||
-        err?.code === "NoSuchKey" ||
-        err?.code === "NotFound" ||
-        (err?.message && (err.message.includes("NoSuchKey") || err.message.includes("NotFound") || err.message.includes("UnknownError")));
-
-      if (isNotFound) {
-        console.log("[R2Server] HeadObject: Key not present in remote R2, checking local fallback:", {
-          exactKey: cleanKey,
-          bucketName,
-        });
-      } else if (isAuthError(err)) {
-        markR2AuthFailed(err?.name || err?.message || "Unauthorized");
-      } else {
-        console.warn("[R2Server] HeadObject unexpected error:", {
-          httpStatus: err?.$metadata?.httpStatusCode || err?.status || 500,
-          requestId: err?.$metadata?.requestId || err?.$metadata?.cfId || "(none)",
-          errorName: err?.name || "Error",
-          errorCode: err?.code || err?.$metadata?.errorCode || err?.name || "(none)",
-          message: err?.message || String(err),
-          exactKey: cleanKey,
-          bucketName,
-        });
-      }
-    }
-  }
-
-  // Check local filesystem storage fallback
+export function generateCandidateKeys(rawKey: string): string[] {
+  if (!rawKey) return [];
+  const clean = rawKey.trim().replace(/^\/+/, "");
+  if (!clean) return [];
+  const candidates = new Set<string>();
+  candidates.add(clean);
   try {
-    const filePath = getSafeLocalPath(bucketName, cleanKey);
-    if (fs.existsSync(filePath)) {
-      const stat = await fs.promises.stat(filePath);
-      return {
-        exists: true,
-        contentLength: stat.size,
-        contentType: getMimeTypeFromKey(cleanKey),
-        lastModified: stat.mtime,
-        etag: `"${stat.size}-${stat.mtimeMs}"`,
-        resolvedKey: cleanKey,
-      };
-    }
-  } catch {
-    // Ignore local error
-  }
-
-  return { exists: false, resolvedKey: cleanKey };
+    const decoded = decodeURIComponent(clean);
+    if (decoded !== clean) candidates.add(decoded);
+  } catch {}
+  return Array.from(candidates);
 }
-
-
